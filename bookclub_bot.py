@@ -18,6 +18,7 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union, Sequence
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -32,6 +33,7 @@ from telegram.ext import (
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 DB_PATH = "bookclub.db"
+ADMIN_IDS = ["123456789", "987654321"]  # Add admin user IDs here as strings
 
 # Conversation states
 ADDING_TITLE, ADDING_AUTHOR, ADDING_DESCRIPTION = range(3)
@@ -81,6 +83,7 @@ T = {
         "editing": "✏️ Editing *{title}*\n\nCurrent description:\n_{desc}_\n\nSend the new description:",
         "deleted": "🗑 *{title}* has been deleted\\.",
         "votes_label": lambda n: f"({n} vote{'s' if n != 1 else ''})",
+        "no_permission": "❌ You don't have permission to perform this action\\.",
     },
     "ru": {
         "welcome": (
@@ -121,15 +124,16 @@ T = {
             f"({n} оценки)" if 2 <= n <= 4 else
             f"({n} оценок)"
         ),
+        "no_permission": "❌ У вас нет прав для выполнения этого действия\\.",
     },
 }
 
 
-def get_lang(ctx):
+def get_lang(ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return ctx.user_data.get("lang", "en")
 
 
-def tr(ctx_or_lang, key, **kwargs):
+def tr(ctx_or_lang: Union[ContextTypes.DEFAULT_TYPE, str], key: str, **kwargs: Any) -> str:
     lang = ctx_or_lang if isinstance(ctx_or_lang, str) else get_lang(ctx_or_lang)
     val = T[lang][key]
     if callable(val):
@@ -137,8 +141,12 @@ def tr(ctx_or_lang, key, **kwargs):
     return val.format(**kwargs) if kwargs else val
 
 
+def is_admin(user_id: Union[int, str]) -> bool:
+    return str(user_id) in ADMIN_IDS
+
+
 # ── Database ───────────────────────────────────────────────────────────────────
-def init_db():
+def init_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
@@ -146,14 +154,14 @@ def init_db():
                 title         TEXT NOT NULL,
                 author        TEXT NOT NULL,
                 description   TEXT DEFAULT '',
-                added_by      INTEGER NOT NULL,
+                added_by      TEXT NOT NULL,
                 added_by_name TEXT NOT NULL,
                 added_at      TEXT NOT NULL
             )
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
-                user_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
                 book_id INTEGER NOT NULL,
                 stars   INTEGER NOT NULL,
                 PRIMARY KEY (user_id, book_id),
@@ -163,7 +171,7 @@ def init_db():
         conn.commit()
 
 
-def db_add_book(title, author, description, user_id, user_name):
+def db_add_book(title: str, author: str, description: str, user_id: str, user_name: str) -> int:
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.execute(
             "INSERT INTO books (title,author,description,added_by,added_by_name,added_at) VALUES (?,?,?,?,?,?)",
@@ -172,7 +180,7 @@ def db_add_book(title, author, description, user_id, user_name):
         return cur.lastrowid
 
 
-def db_get_books():
+def db_get_books() -> List[sqlite3.Row]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute("""
@@ -186,7 +194,7 @@ def db_get_books():
         """).fetchall()
 
 
-def db_get_book(book_id):
+def db_get_book(book_id: int) -> Optional[sqlite3.Row]:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute("""
@@ -200,19 +208,19 @@ def db_get_book(book_id):
         """, (book_id,)).fetchone()
 
 
-def db_update_description(book_id, description):
+def db_update_description(book_id: int, description: str) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("UPDATE books SET description=? WHERE id=?", (description, book_id))
         conn.commit()
 
 
-def db_delete_book(book_id):
+def db_delete_book(book_id: int) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
 
 
-def db_cast_vote(user_id, book_id, stars):
+def db_cast_vote(user_id: str, book_id: int, stars: int) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO votes (user_id,book_id,stars) VALUES (?,?,?) "
@@ -222,7 +230,7 @@ def db_cast_vote(user_id, book_id, stars):
         conn.commit()
 
 
-def db_get_user_vote(user_id, book_id):
+def db_get_user_vote(user_id: str, book_id: int) -> Optional[int]:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT stars FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
@@ -237,13 +245,13 @@ def escape(text: str) -> str:
     return text
 
 
-def stars_display(avg, count, lang="en"):
+def stars_display(avg: float, count: int, lang: str = "en") -> str:
     filled = round(avg)
     bar = "⭐" * filled + "☆" * (5 - filled)
     return f"{bar} {avg:.1f}/5 {T[lang]['votes_label'](count)}"
 
 
-def book_card(book, lang="en"):
+def book_card(book: Union[sqlite3.Row, Dict[str, Any]], lang: str = "en") -> str:
     lines = [
         f"📖 *{escape(book['title'])}*",
         f"✍️ {escape(book['author'])}",
@@ -255,7 +263,7 @@ def book_card(book, lang="en"):
     return "\n".join(lines)
 
 
-def books_keyboard(books, prefix, cancel_label):
+def books_keyboard(books: Sequence[Union[sqlite3.Row, Dict[str, Any]]], prefix: str, cancel_label: str) -> InlineKeyboardMarkup:
     buttons = []
     for b in books:
         label = f"{b['title']} — {b['author']}"
@@ -266,7 +274,7 @@ def books_keyboard(books, prefix, cancel_label):
     return InlineKeyboardMarkup(buttons)
 
 
-def stars_keyboard(book_id, cancel_label, current=None):
+def stars_keyboard(book_id: int, cancel_label: str, current: Optional[int] = None) -> InlineKeyboardMarkup:
     row = [
         InlineKeyboardButton(
             "⭐" * i + (" ✓" if current == i else ""),
@@ -278,100 +286,118 @@ def stars_keyboard(book_id, cancel_label, current=None):
 
 
 # ── Handlers ───────────────────────────────────────────────────────────────────
-async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     new_lang = "ru" if get_lang(ctx) == "en" else "en"
     ctx.user_data["lang"] = new_lang
-    await update.message.reply_text(tr(ctx, "lang_set"), parse_mode="MarkdownV2")
+    if update.message:
+        await update.message.reply_text(tr(ctx, "lang_set"), parse_mode="MarkdownV2")
 
 
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(tr(ctx, "welcome"), parse_mode="MarkdownV2")
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message:
+        await update.message.reply_text(tr(ctx, "welcome"), parse_mode="MarkdownV2")
 
 
-async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_start(update, ctx)
 
 
-async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_lang(ctx)
     books = db_get_books()
     if not books:
-        await update.message.reply_text(tr(ctx, "no_books"), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(tr(ctx, "no_books"), parse_mode="MarkdownV2")
         return
     for book in books:
-        await update.message.reply_text(book_card(book, lang), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(book_card(book, lang), parse_mode="MarkdownV2")
 
 
-async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_lang(ctx)
     voted = [b for b in db_get_books() if b["vote_count"] > 0]
     if not voted:
-        await update.message.reply_text(tr(ctx, "no_votes"), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(tr(ctx, "no_votes"), parse_mode="MarkdownV2")
         return
     text = tr(ctx, "top_title")
     for i, book in enumerate(voted[:5], 1):
         text += f"{i}\\. *{escape(book['title'])}* — {escape(book['author'])}\n"
         text += f"   {stars_display(book['avg_stars'], book['vote_count'], lang)}\n\n"
-    await update.message.reply_text(text, parse_mode="MarkdownV2")
+    if update.message:
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
 # /add
-async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(tr(ctx, "ask_title"), parse_mode="MarkdownV2")
+async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message:
+        await update.message.reply_text(tr(ctx, "ask_title"), parse_mode="MarkdownV2")
     return ADDING_TITLE
 
-async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["new_book"] = {"title": update.message.text.strip()}
-    await update.message.reply_text(tr(ctx, "ask_author"), parse_mode="MarkdownV2")
+async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message and update.message.text:
+        ctx.user_data["new_book"] = {"title": update.message.text.strip()}
+        await update.message.reply_text(tr(ctx, "ask_author"), parse_mode="MarkdownV2")
     return ADDING_AUTHOR
 
-async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["new_book"]["author"] = update.message.text.strip()
-    await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode="MarkdownV2")
+async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message and update.message.text:
+        ctx.user_data["new_book"]["author"] = update.message.text.strip()
+        await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode="MarkdownV2")
     return ADDING_DESCRIPTION
 
-async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
-    text = update.message.text.strip()
-    desc = "" if text == "/skip" else text
-    nb = ctx.user_data["new_book"]
-    user = update.effective_user
-    book_id = db_add_book(nb["title"], nb["author"], desc, user.id, user.full_name)
-    book = db_get_book(book_id)
-    await update.message.reply_text(
-        f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}", parse_mode="MarkdownV2"
-    )
+    if update.message and update.message.text:
+        text = update.message.text.strip()
+        desc = "" if text == "/skip" else text
+        nb = ctx.user_data["new_book"]
+        user = update.effective_user
+        if user:
+            book_id = db_add_book(nb["title"], nb["author"], desc, str(user.id), user.full_name)
+            book = db_get_book(book_id)
+            if book:
+                await update.message.reply_text(
+                    f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}", parse_mode="MarkdownV2"
+                )
     ctx.user_data.pop("new_book", None)
     return ConversationHandler.END
 
-async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(tr(ctx, "cancelled"), parse_mode="MarkdownV2")
+async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message:
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode="MarkdownV2")
     ctx.user_data.clear()
     return ConversationHandler.END
 
 
 # /vote
-async def cmd_vote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_vote(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     books = db_get_books()
     if not books:
-        await update.message.reply_text(tr(ctx, "no_books"), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(tr(ctx, "no_books"), parse_mode="MarkdownV2")
         return
-    await update.message.reply_text(
-        tr(ctx, "choose_vote"),
-        reply_markup=books_keyboard(books, "vote_pick", tr(ctx, "cancel_btn")),
-    )
+    if update.message:
+        await update.message.reply_text(
+            tr(ctx, "choose_vote"),
+            reply_markup=books_keyboard(books, "vote_pick", tr(ctx, "cancel_btn")),
+        )
 
-async def vote_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def vote_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+    if not query: return
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
-    if book_id == "cancel":
+    if not query.data: return
+    _, book_id_str = query.data.split(":", 1)
+    if book_id_str == "cancel":
         await query.edit_message_text(T[lang]["cancelled"].replace("\\", ""))
         return
-    book_id = int(book_id)
+    book_id = int(book_id_str)
     book = db_get_book(book_id)
-    current = db_get_user_vote(query.from_user.id, book_id)
+    if not book: return
+    current = db_get_user_vote(str(query.from_user.id), book_id)
     current_str = ("⭐" * current) if current else T[lang]["none_vote"]
     await query.edit_message_text(
         f"{T[lang]['rate_book'].format(title=escape(book['title']))}\n"
@@ -380,17 +406,20 @@ async def vote_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="MarkdownV2",
     )
 
-async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+    if not query: return
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id, stars = query.data.split(":")
-    if book_id == "cancel":
+    if not query.data: return
+    _, book_id_str, stars_str = query.data.split(":")
+    if book_id_str == "cancel":
         await query.edit_message_text(T[lang]["cancelled"].replace("\\", ""))
         return
-    book_id, stars = int(book_id), int(stars)
-    db_cast_vote(query.from_user.id, book_id, stars)
+    book_id, stars = int(book_id_str), int(stars_str)
+    db_cast_vote(str(query.from_user.id), book_id, stars)
     book = db_get_book(book_id)
+    if not book: return
     await query.edit_message_text(
         f"✅ {'⭐' * stars} *{escape(book['title'])}*\\!\n\n"
         f"{stars_display(book['avg_stars'], book['vote_count'], lang)}",
@@ -399,28 +428,47 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # /edit
-async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    books = db_get_books()
+async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    if not user: return ConversationHandler.END
+    user_id = str(user.id)
+    all_books = db_get_books()
+    if is_admin(user_id):
+        books = all_books
+    else:
+        books = [b for b in all_books if b["added_by"] == user_id]
+
     if not books:
-        await update.message.reply_text(tr(ctx, "no_books_edit"), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(tr(ctx, "no_books_edit"), parse_mode="MarkdownV2")
         return ConversationHandler.END
-    await update.message.reply_text(
-        tr(ctx, "choose_edit"),
-        reply_markup=books_keyboard(books, "edit_pick", tr(ctx, "cancel_btn")),
-    )
+    if update.message:
+        await update.message.reply_text(
+            tr(ctx, "choose_edit"),
+            reply_markup=books_keyboard(books, "edit_pick", tr(ctx, "cancel_btn")),
+        )
     return EDITING_CHOOSE
 
-async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    if not query: return ConversationHandler.END
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
-    if book_id == "cancel":
+    user_id = str(query.from_user.id)
+    if not query.data: return ConversationHandler.END
+    _, book_id_str = query.data.split(":", 1)
+    if book_id_str == "cancel":
         await query.edit_message_text(T[lang]["cancelled"].replace("\\", ""))
         return ConversationHandler.END
-    book_id = int(book_id)
-    ctx.user_data["edit_book_id"] = book_id
+    book_id = int(book_id_str)
     book = db_get_book(book_id)
+    if not book: return ConversationHandler.END
+
+    if not is_admin(user_id) and book["added_by"] != user_id:
+        await query.edit_message_text(T[lang]["no_permission"].replace("\\", ""))
+        return ConversationHandler.END
+
+    ctx.user_data["edit_book_id"] = book_id
     no_desc = "none" if lang == "en" else "нет"
     await query.edit_message_text(
         T[lang]["editing"].format(
@@ -431,40 +479,61 @@ async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return EDITING_DESCRIPTION
 
-async def edit_description_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_description_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
     book_id = ctx.user_data.get("edit_book_id")
-    db_update_description(book_id, update.message.text.strip())
-    book = db_get_book(book_id)
-    await update.message.reply_text(
-        f"{tr(ctx, 'desc_updated')}\n\n{book_card(book, lang)}", parse_mode="MarkdownV2"
-    )
+    if update.message and update.message.text and book_id is not None:
+        db_update_description(book_id, update.message.text.strip())
+        book = db_get_book(book_id)
+        if book:
+            await update.message.reply_text(
+                f"{tr(ctx, 'desc_updated')}\n\n{book_card(book, lang)}", parse_mode="MarkdownV2"
+            )
     ctx.user_data.pop("edit_book_id", None)
     return ConversationHandler.END
 
 
 # /delete
-async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    books = db_get_books()
+async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    if not user: return ConversationHandler.END
+    user_id = str(user.id)
+    all_books = db_get_books()
+    if is_admin(user_id):
+        books = all_books
+    else:
+        books = [b for b in all_books if b["added_by"] == user_id]
+
     if not books:
-        await update.message.reply_text(tr(ctx, "no_books_delete"), parse_mode="MarkdownV2")
+        if update.message:
+            await update.message.reply_text(tr(ctx, "no_books_delete"), parse_mode="MarkdownV2")
         return ConversationHandler.END
-    await update.message.reply_text(
-        tr(ctx, "choose_delete"),
-        reply_markup=books_keyboard(books, "del_pick", tr(ctx, "cancel_btn")),
-    )
+    if update.message:
+        await update.message.reply_text(
+            tr(ctx, "choose_delete"),
+            reply_markup=books_keyboard(books, "del_pick", tr(ctx, "cancel_btn")),
+        )
     return DELETING_CHOOSE
 
-async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    if not query: return ConversationHandler.END
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
-    if book_id == "cancel":
+    user_id = str(query.from_user.id)
+    if not query.data: return ConversationHandler.END
+    _, book_id_str = query.data.split(":", 1)
+    if book_id_str == "cancel":
         await query.edit_message_text(T[lang]["cancelled"].replace("\\", ""))
         return ConversationHandler.END
-    book_id = int(book_id)
+    book_id = int(book_id_str)
     book = db_get_book(book_id)
+    if not book: return ConversationHandler.END
+
+    if not is_admin(user_id) and book["added_by"] != user_id:
+        await query.edit_message_text(T[lang]["no_permission"].replace("\\", ""))
+        return ConversationHandler.END
+
     title = book["title"]
     db_delete_book(book_id)
     await query.edit_message_text(
