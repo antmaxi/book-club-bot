@@ -25,7 +25,7 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -440,13 +440,54 @@ def parse_date(text: str):
 
 
 # ── Handlers ───────────────────────────────────────────────────────────────────
+# ── Per-language command menus ─────────────────────────────────────────────────
+COMMANDS = {
+    "en": [
+        BotCommand("add",           "➕ Add a book"),
+        BotCommand("list",          "📋 List all books"),
+        BotCommand("vote",          "⭐ Rate a book"),
+        BotCommand("top",           "🏆 Top rated books"),
+        BotCommand("discussed",     "✅ Books already discussed"),
+        BotCommand("edit",          "✏️ Edit a book description"),
+        BotCommand("delete",        "🗑 Delete a book"),
+        BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
+        BotCommand("language",      "🌐 Switch to Russian"),
+        BotCommand("help",          "❓ Show help"),
+        BotCommand("cancel",        "❌ Cancel current action"),
+    ],
+    "ru": [
+        BotCommand("add",           "➕ Добавить книгу"),
+        BotCommand("list",          "📋 Список книг"),
+        BotCommand("vote",          "⭐ Оценить книгу"),
+        BotCommand("top",           "🏆 Топ книг"),
+        BotCommand("discussed",     "✅ Обсуждённые книги"),
+        BotCommand("edit",          "✏️ Редактировать описание"),
+        BotCommand("delete",        "🗑 Удалить книгу"),
+        BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
+        BotCommand("language",      "🌐 Switch to English"),
+        BotCommand("help",          "❓ Показать помощь"),
+        BotCommand("cancel",        "❌ Отменить действие"),
+    ],
+}
+
+
+async def set_user_commands(bot, chat_id: int, lang: str) -> None:
+    """Set the command menu for a specific user in their chosen language."""
+    await bot.set_my_commands(
+        COMMANDS[lang],
+        scope=BotCommandScopeChat(chat_id=chat_id),
+    )
+
+
 async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     new_lang = "ru" if get_lang(ctx) == "en" else "en"
     ctx.user_data["lang"] = new_lang
+    await set_user_commands(ctx.bot, update.effective_chat.id, new_lang)
     await update.message.reply_text(tr(ctx, "lang_set"), parse_mode=PM)
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await set_user_commands(ctx.bot, update.effective_chat.id, get_lang(ctx))
     await update.message.reply_text(tr(ctx, "welcome"), parse_mode=PM)
 
 
@@ -809,23 +850,10 @@ def main():
     app.add_handler(CallbackQueryHandler(vote_pick_cb, pattern=r"^vote_pick:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
 
-    # ── Register command menu (shown in the "/" button for all users) ──────────
-    commands = [
-        BotCommand("add",            "➕ Add a book"),
-        BotCommand("list",           "📋 List all books"),
-        BotCommand("vote",           "⭐ Rate a book"),
-        BotCommand("top",            "🏆 Top rated books"),
-        BotCommand("discussed",      "✅ Books already discussed"),
-        BotCommand("edit",           "✏️ Edit a book description"),
-        BotCommand("delete",         "🗑 Delete a book"),
-        BotCommand("markdiscussed",  "📌 Mark as discussed (admin)"),
-        BotCommand("language",       "🌐 Switch language EN/RU"),
-        BotCommand("help",           "❓ Show help"),
-        BotCommand("cancel",         "❌ Cancel current action"),
-    ]
+    # ── Register default command menu in Russian (fallback for all users) ───────
     import asyncio
     asyncio.get_event_loop().run_until_complete(
-        app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        app.bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
     )
 
     logger.info("Bot is running...")
