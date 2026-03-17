@@ -217,7 +217,7 @@ def is_admin(user_id: int) -> bool:
 
 
 def get_lang(ctx):
-    return ctx.user_data.get("lang", "en")
+    return ctx.user_data.get("lang", "ru")
 
 
 def tr(ctx_or_lang, key, **kwargs):
