@@ -25,7 +25,7 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -808,6 +808,25 @@ def main():
 
     app.add_handler(CallbackQueryHandler(vote_pick_cb, pattern=r"^vote_pick:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
+
+    # ── Register command menu (shown in the "/" button for all users) ──────────
+    commands = [
+        BotCommand("add",            "➕ Add a book"),
+        BotCommand("list",           "📋 List all books"),
+        BotCommand("vote",           "⭐ Rate a book"),
+        BotCommand("top",            "🏆 Top rated books"),
+        BotCommand("discussed",      "✅ Books already discussed"),
+        BotCommand("edit",           "✏️ Edit a book description"),
+        BotCommand("delete",         "🗑 Delete a book"),
+        BotCommand("markdiscussed",  "📌 Mark as discussed (admin)"),
+        BotCommand("language",       "🌐 Switch language EN/RU"),
+        BotCommand("help",           "❓ Show help"),
+        BotCommand("cancel",         "❌ Cancel current action"),
+    ]
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(
+        app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    )
 
     logger.info("Bot is running...")
     app.run_polling()
