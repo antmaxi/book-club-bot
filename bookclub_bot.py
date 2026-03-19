@@ -92,16 +92,16 @@ T = {
         "book_added":          "✅ Book added!",
         "no_books":            "📭 No books yet. Use /add to add one!",
         "no_undiscussed":      "📭 No undiscussed books — use /discussed to see past reads.",
-        "no_votes":            "No votes yet. Use /vote to start rating!",
+        "no_votes":            "No votes yet. Use /vote to express interest!",
         "no_books_edit":       "📭 No books to edit yet.",
         "no_books_delete":     "📭 No books to delete yet.",
         "cancelled":           "❌ Cancelled.",
-        "choose_vote":         "⭐ Choose a book to rate:",
+        "choose_vote":         "📊 Choose a book to vote on:",
         "choose_edit":         "✏️ Choose a book to edit:",
         "choose_delete":       "🗑 Choose a book to delete:",
-        "your_vote":           "Your current rating",
-        "none_vote":           "none",
-        "rate_book":           "⭐ Rate <b>{title}</b>",
+        "your_vote":           "Your current vote",
+        "none_vote":           "—",
+        "rate_book":           "📊 Vote on <b>{title}</b>",
         "desc_updated":        "✅ Description updated!",
         "top_title":           "🏆 <b>Top Books</b>\n\n",
         "added_by":            "Added by",
@@ -114,6 +114,13 @@ T = {
         "fiction_label":       "Fiction",
         "nonfiction_label":    "Non-fiction",
         "votes_label":         lambda n: f"({n} vote{'s' if n != 1 else ''})",
+        "want_label":          "✅ want to read",
+        "meh_label":           "😐 don't care",
+        "no_label":            "❌ don't want to read",
+        "want_btn":            "✅ Want to read",
+        "meh_btn":             "😐 Don't care",
+        "no_btn":              "❌ Don't want to read",
+        "voted_msg":           "✅ Vote saved for <b>{title}</b>",
         "no_permission":       "⛔ You can only edit or delete books you added.",
         "no_own_books":        "📭 You have no books to edit or delete.",
         "admin_only":          "⛔ This command is for admins only.",
@@ -154,16 +161,16 @@ T = {
         "book_added":          "✅ Книга добавлена!",
         "no_books":            "📭 Книг пока нет. Используйте /add, чтобы добавить!",
         "no_undiscussed":      "📭 Необсуждённых книг нет — используйте /discussed для просмотра прочитанных.",
-        "no_votes":            "Оценок пока нет. Используйте /vote!",
+        "no_votes":            "Голосов пока нет. Используйте /vote!",
         "no_books_edit":       "📭 Нет книг для редактирования.",
         "no_books_delete":     "📭 Нет книг для удаления.",
         "cancelled":           "❌ Отменено.",
-        "choose_vote":         "⭐ Выберите книгу для оценки:",
+        "choose_vote":         "📊 Выберите книгу для голосования:",
         "choose_edit":         "✏️ Выберите книгу для редактирования:",
         "choose_delete":       "🗑 Выберите книгу для удаления:",
-        "your_vote":           "Ваша текущая оценка",
-        "none_vote":           "нет",
-        "rate_book":           "⭐ Оцените <b>{title}</b>",
+        "your_vote":           "Ваш текущий голос",
+        "none_vote":           "—",
+        "rate_book":           "📊 Голосование: <b>{title}</b>",
         "desc_updated":        "✅ Описание обновлено!",
         "top_title":           "🏆 <b>Топ книг</b>\n\n",
         "added_by":            "Добавил",
@@ -248,24 +255,30 @@ def init_db():
                 added_at          TEXT NOT NULL
             )
         """)
-        # Migrate existing DB: add columns if missing
+        # Migrate existing DB: add book columns if missing
         for col, definition in [
-            ("pages",        "INTEGER NOT NULL DEFAULT 0"),
-            ("fiction",      "INTEGER NOT NULL DEFAULT 1"),
-            ("review_link",  "TEXT NOT NULL DEFAULT ''"),
-            ("discussed",    "INTEGER NOT NULL DEFAULT 0"),
-            ("discussed_at",       "TEXT DEFAULT NULL"),
-            ("added_by_username",  "TEXT DEFAULT NULL"),
+            ("pages",             "INTEGER NOT NULL DEFAULT 0"),
+            ("fiction",           "INTEGER NOT NULL DEFAULT 1"),
+            ("review_link",       "TEXT NOT NULL DEFAULT ''"),
+            ("discussed",         "INTEGER NOT NULL DEFAULT 0"),
+            ("discussed_at",      "TEXT DEFAULT NULL"),
+            ("added_by_username", "TEXT DEFAULT NULL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
             except sqlite3.OperationalError:
                 pass
+        # Migrate votes table: rename stars→score, clear old 1-5 data
+        try:
+            conn.execute("ALTER TABLE votes RENAME COLUMN stars TO score")
+        except Exception:
+            pass
+        conn.execute("DELETE FROM votes WHERE score NOT IN (-1, 0, 1)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 user_id INTEGER NOT NULL,
                 book_id INTEGER NOT NULL,
-                stars   INTEGER NOT NULL,
+                score   INTEGER NOT NULL,
                 PRIMARY KEY (user_id, book_id),
                 FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
             )
@@ -286,11 +299,14 @@ def db_add_book(title, author, pages, fiction, review_link, description, user_id
         return cur.lastrowid
 
 
-def _books_query(extra_where="", order="avg_stars DESC, b.added_at DESC"):
+def _books_query(extra_where="", order="avg_score DESC, b.added_at DESC"):
     return f"""
         SELECT b.*,
-               COALESCE(AVG(v.stars), 0) AS avg_stars,
-               COUNT(v.user_id)           AS vote_count
+               COALESCE(AVG(v.score), 0)                          AS avg_score,
+               COUNT(v.user_id)                                    AS vote_count,
+               COALESCE(SUM(CASE WHEN v.score=1  THEN 1 ELSE 0 END),0) AS votes_yes,
+               COALESCE(SUM(CASE WHEN v.score=0  THEN 1 ELSE 0 END),0) AS votes_meh,
+               COALESCE(SUM(CASE WHEN v.score=-1 THEN 1 ELSE 0 END),0) AS votes_no
         FROM books b
         LEFT JOIN votes v ON b.id = v.book_id
         {extra_where}
@@ -306,7 +322,7 @@ def db_get_books(discussed=False):
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query("WHERE b.discussed = ?",
-                         "b.discussed_at DESC" if discussed else "avg_stars DESC, b.added_at DESC"),
+                         "b.discussed_at DESC" if discussed else "avg_score DESC, b.added_at DESC"),
             (flag,)
         ).fetchall()
 
@@ -340,12 +356,13 @@ def db_delete_book(book_id):
         conn.commit()
 
 
-def db_cast_vote(user_id, book_id, stars):
+def db_cast_vote(user_id, book_id, score):
+    """score: -1 = don't want, 0 = don't care, 1 = want to read"""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO votes (user_id,book_id,stars) VALUES (?,?,?) "
-            "ON CONFLICT(user_id,book_id) DO UPDATE SET stars=excluded.stars",
-            (user_id, book_id, stars),
+            "INSERT INTO votes (user_id,book_id,score) VALUES (?,?,?) "
+            "ON CONFLICT(user_id,book_id) DO UPDATE SET score=excluded.score",
+            (user_id, book_id, score),
         )
         conn.commit()
 
@@ -353,7 +370,7 @@ def db_cast_vote(user_id, book_id, stars):
 def db_get_user_vote(user_id, book_id):
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT stars FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
+            "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
         ).fetchone()
         return row[0] if row else None
 
@@ -371,31 +388,44 @@ def h(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def stars_display(avg, count, lang="en"):
-    filled = round(avg)
-    bar = "⭐" * filled + "☆" * (5 - filled)
-    return f"{bar} {avg:.1f}/5 {T[lang]['votes_label'](count)}"
+SCORE_EMOJI = {1: "✅", 0: "😐", -1: "❌", None: "—"}
 
 
-def book_card(book, lang="en"):
+def score_display(book, lang="en"):
+    """Show vote tally: ✅12  😐3  ❌2  (N votes)"""
+    yes   = book["votes_yes"]
+    meh   = book["votes_meh"]
+    no    = book["votes_no"]
+    total = book["vote_count"]
+    if total == 0:
+        return f"({T[lang]['votes_label'](0)})"
+    return f"✅ {yes}  😐 {meh}  ❌ {no}  {T[lang]['votes_label'](total)}"
+
+
+def book_card(book, lang="en", user_vote=None):
     fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
     lines = [
         f"📖 <b>{h(book['title'])}</b>",
         f"✍️ {h(book['author'])}",
         f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(T[lang]['pages_label'])}",
-        stars_display(book["avg_stars"], book["vote_count"], lang),
+        score_display(book, lang),
     ]
+    if user_vote is not None:
+        vote_label = T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[user_vote]]
+        lines[-1] += f"  <i>({h(T[lang]['your_vote'])}: {SCORE_EMOJI[user_vote]} {h(vote_label)})</i>"
     if book["review_link"]:
-        lines.append(f"🔗 <a href=\"{h(book['review_link'])}\">{h(T[lang]['review_label'])}</a>")
+        lines.append(f'🔗 <a href="{h(book["review_link"])}">{h(T[lang]["review_label"])}</a>')
     if book["description"]:
         lines += ["", f"<i>{h(book['description'])}</i>"]
-    meta = f"<i>{h(T[lang]['added_by'])}: {h(format_user(book))}  •  {h(T[lang]['added_on'])}: {h(book['added_at'])}"
+    meta = (
+        f"<i>{h(T[lang]['added_by'])}: {h(format_user(book))}"
+        f"  •  {h(T[lang]['added_on'])}: {h(book['added_at'])}"
+    )
     if book["discussed"] and book["discussed_at"]:
         meta += f"  •  ✅ {h(T[lang]['discussed_on'])}: {h(book['discussed_at'])}"
     meta += "</i>"
     lines += ["", meta]
     return "\n".join(lines)
-
 
 def books_keyboard(books, prefix, cancel_label):
     buttons = []
@@ -415,13 +445,18 @@ def fiction_keyboard(lang):
     ]])
 
 
-def stars_keyboard(book_id, cancel_label, current=None):
+def score_keyboard(book_id, lang, cancel_label, current=None):
+    options = [
+        (1,  T[lang]["want_btn"]),
+        (0,  T[lang]["meh_btn"]),
+        (-1, T[lang]["no_btn"]),
+    ]
     row = [
         InlineKeyboardButton(
-            "⭐" * i + (" ✓" if current == i else ""),
-            callback_data=f"vote_cast:{book_id}:{i}"
+            label + (" ✓" if current == score else ""),
+            callback_data=f"vote_cast:{book_id}:{score}"
         )
-        for i in range(1, 6)
+        for score, label in options
     ]
     return InlineKeyboardMarkup([row, [InlineKeyboardButton(cancel_label, callback_data="vote_cast:cancel:0")]])
 
@@ -497,12 +532,14 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
+    user_id = update.effective_user.id
     books = db_get_books(discussed=False)
     if not books:
         await update.message.reply_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
         return
     for book in books:
-        await update.message.reply_text(book_card(book, lang), parse_mode=PM)
+        uv = db_get_user_vote(user_id, book["id"])
+        await update.message.reply_text(book_card(book, lang, user_vote=uv), parse_mode=PM)
 
 
 async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -512,9 +549,11 @@ async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(tr(ctx, "no_discussed"), parse_mode=PM)
         return
     text = tr(ctx, "discussed_title")
+    user_id = update.effective_user.id
     await update.message.reply_text(text, parse_mode=PM)
     for book in books:
-        await update.message.reply_text(book_card(book, lang), parse_mode=PM)
+        uv = db_get_user_vote(user_id, book["id"])
+        await update.message.reply_text(book_card(book, lang, user_vote=uv), parse_mode=PM)
 
 
 async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -528,7 +567,7 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
         text += f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
         text += f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}\n"
-        text += f"   {stars_display(book['avg_stars'], book['vote_count'], lang)}\n\n"
+        text += f"   {score_display(book, lang)}\n\n"
     await update.message.reply_text(text, parse_mode=PM)
 
 
@@ -631,11 +670,14 @@ async def vote_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     book_id = int(book_id)
     book = db_get_book(book_id)
     current = db_get_user_vote(query.from_user.id, book_id)
-    current_str = ("⭐" * current) if current else T[lang]["none_vote"]
+    current_label = (
+        T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[current]]
+        if current is not None else T[lang]["none_vote"]
+    )
     await query.edit_message_text(
         f"{T[lang]['rate_book'].format(title=h(book['title']))}\n"
-        f"{h(T[lang]['your_vote'])}: {current_str}",
-        reply_markup=stars_keyboard(book_id, T[lang]["cancel_btn"], current),
+        f"{h(T[lang]['your_vote'])}: {SCORE_EMOJI.get(current, '—')} {h(current_label)}",
+        reply_markup=score_keyboard(book_id, lang, T[lang]["cancel_btn"], current),
         parse_mode=PM,
     )
 
@@ -644,16 +686,16 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id, stars = query.data.split(":")
+    _, book_id, score = query.data.split(":")
     if book_id == "cancel":
         await query.edit_message_text(T[lang]["cancelled"])
         return
-    book_id, stars = int(book_id), int(stars)
-    db_cast_vote(query.from_user.id, book_id, stars)
+    book_id, score = int(book_id), int(score)
+    db_cast_vote(query.from_user.id, book_id, score)
     book = db_get_book(book_id)
     await query.edit_message_text(
-        f"✅ {'⭐' * stars} <b>{h(book['title'])}</b>\n\n"
-        f"{stars_display(book['avg_stars'], book['vote_count'], lang)}",
+        T[lang]["voted_msg"].format(title=h(book["title"])) + "\n\n" +
+        score_display(book, lang),
         parse_mode=PM,
     )
 
