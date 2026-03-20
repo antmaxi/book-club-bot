@@ -12,7 +12,6 @@ Commands:
   /language        - Switch language (EN <-> RU)
   /add             - Add a new book
   /list            - List all undiscussed books
-  /vote            - Rate an undiscussed book
   /edit            - Edit a book's description (owner/admin only)
   /delete          - Delete a book (owner/admin only)
   /top             - Top rated undiscussed books
@@ -52,7 +51,8 @@ DB_PATH = "bookclub.db"
     ADDING_REVIEW,
     ADDING_DESCRIPTION,
 ) = range(6)
-EDITING_CHOOSE, EDITING_DESCRIPTION = range(6, 8)
+EDITING_CHOOSE = 6
+EDITING_FIELD  = 7   # waiting for new value of current field
 DELETING_CHOOSE = 8
 MARKING_CHOOSE, MARKING_DATE = range(9, 11)
 
@@ -69,7 +69,6 @@ T = {
             "📚 <b>Welcome to the Book Club Bot!</b>\n\n"
             "➕ /add — Add a book\n"
             "📋 /list — See all books\n"
-            "⭐ /vote — Rate a book\n"
             "✏️ /edit — Edit a description\n"
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
@@ -92,7 +91,7 @@ T = {
         "book_added":          "✅ Book added!",
         "no_books":            "📭 No books yet. Use /add to add one!",
         "no_undiscussed":      "📭 No undiscussed books — use /discussed to see past reads.",
-        "no_votes":            "No votes yet. Use /vote to express interest!",
+        "no_votes":            "No votes yet. Use /list to see books and vote inline!",
         "no_books_edit":       "📭 No books to edit yet.",
         "no_books_delete":     "📭 No books to delete yet.",
         "cancelled":           "❌ Cancelled.",
@@ -109,7 +108,19 @@ T = {
         "pages_label":         "Pages",
         "review_label":        "Review",
         "cancel_btn":          "❌ Cancel",
-        "editing":             "✏️ Editing <b>{title}</b>\n\nCurrent description:\n<i>{desc}</i>\n\nSend the new description:",
+        "edit_field_prompt":   "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
+        "edit_yes_btn":        "✏️ Yes, change it",
+        "edit_no_btn":         "⏭ Skip",
+        "edit_ask_new":        "Send the new value for <b>{field}</b>:",
+        "edit_done":           "✅ Book updated!",
+        "edit_invalid_pages":  "⚠️ Must be a positive number. Send again:",
+        "edit_invalid_url":    "⚠️ Must start with http:// or https://. Send again:",
+        "field_title":         "Title",
+        "field_author":        "Author",
+        "field_pages":         "Pages",
+        "field_fiction":       "Fiction / Non-fiction",
+        "field_review":        "Review link",
+        "field_description":   "Description",
         "deleted":             "🗑 <b>{title}</b> has been deleted.",
         "fiction_label":       "Fiction",
         "nonfiction_label":    "Non-fiction",
@@ -138,7 +149,6 @@ T = {
             "📚 <b>Добро пожаловать в Книжный клуб!</b>\n\n"
             "➕ /add — Добавить книгу\n"
             "📋 /list — Список книг\n"
-            "⭐ /vote — Оценить книгу\n"
             "✏️ /edit — Редактировать описание\n"
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
@@ -161,7 +171,7 @@ T = {
         "book_added":          "✅ Книга добавлена!",
         "no_books":            "📭 Книг пока нет. Используйте /add, чтобы добавить!",
         "no_undiscussed":      "📭 Необсуждённых книг нет — используйте /discussed для просмотра прочитанных.",
-        "no_votes":            "Голосов пока нет. Используйте /vote!",
+        "no_votes":            "Голосов пока нет. Используйте /list для голосования!",
         "no_books_edit":       "📭 Нет книг для редактирования.",
         "no_books_delete":     "📭 Нет книг для удаления.",
         "cancelled":           "❌ Отменено.",
@@ -178,10 +188,22 @@ T = {
         "pages_label":         "Страниц",
         "review_label":        "Рецензия",
         "cancel_btn":          "❌ Отмена",
-        "editing":             "✏️ Редактирование <b>{title}</b>\n\nТекущее описание:\n<i>{desc}</i>\n\nОтправьте новое описание:",
+        "edit_field_prompt":   "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
+        "edit_yes_btn":        "✏️ Да, изменить",
+        "edit_no_btn":         "⏭ Пропустить",
+        "edit_ask_new":        "Отправьте новое значение для <b>{field}</b>:",
+        "edit_done":           "✅ Книга обновлена!",
+        "edit_invalid_pages":  "⚠️ Должно быть положительным числом. Отправьте снова:",
+        "edit_invalid_url":    "⚠️ Должна начинаться с http:// или https://. Отправьте снова:",
+        "field_title":         "Название",
+        "field_author":        "Автор",
+        "field_pages":         "Страниц",
+        "field_fiction":       "Fiction / Non-fiction",
+        "field_review":        "Ссылка на рецензию",
+        "field_description":   "Описание",
         "deleted":             "🗑 <b>{title}</b> удалена.",
-        "fiction_label":       "Худ. литература",
-        "nonfiction_label":    "Нехуд. литература",
+        "fiction_label":       "Fiction",
+        "nonfiction_label":    "Non-fiction",
         "votes_label":         lambda n: (
             f"({n} оценка)" if n == 1 else
             f"({n} оценки)" if 2 <= n <= 4 else
@@ -342,9 +364,13 @@ def db_get_book(book_id):
         ).fetchone()
 
 
-def db_update_description(book_id, description):
+def db_update_book_field(book_id, field, value):
+    """Update a single whitelisted field."""
+    allowed = {"title", "author", "pages", "fiction", "review_link", "description"}
+    if field not in allowed:
+        raise ValueError(f"Field {field!r} not editable")
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("UPDATE books SET description=? WHERE id=?", (description, book_id))
+        conn.execute(f"UPDATE books SET {field}=? WHERE id=?", (value, book_id))
         conn.commit()
 
 
@@ -384,12 +410,11 @@ def db_get_user_vote(user_id, book_id):
 
 # ── Formatting ─────────────────────────────────────────────────────────────────
 def format_user(book) -> str:
-    """Return display name, appending @username if available."""
-    name = book["added_by_name"] or ""
+    """Return @username if available, otherwise fall back to display name."""
     username = book["added_by_username"]
     if username:
-        return f"{name} (@{username})"
-    return name
+        return f"@{username}"
+    return book["added_by_name"] or "unknown"
 
 def h(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -405,7 +430,7 @@ def score_display(book, lang="en"):
     no    = book["votes_no"]
     total = book["vote_count"]
     if total == 0:
-        return f"({T[lang]['votes_label'](0)})"
+        return T[lang]['votes_label'](0)
     return f"✅ {yes}  😐 {meh}  ❌ {no}  {T[lang]['votes_label'](total)}"
 
 
@@ -419,7 +444,7 @@ def book_card(book, lang="en", user_vote=None):
     ]
     if user_vote is not None:
         vote_label = T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[user_vote]]
-        lines[-1] += f"  <i>({h(T[lang]['your_vote'])}: {SCORE_EMOJI[user_vote]} {h(vote_label)})</i>"
+        lines[-1] += f"  <i>({h(T[lang]['your_vote'])}: {h(vote_label)})</i>"
     if book["review_link"]:
         lines.append(f'🔗 <a href="{h(book["review_link"])}">{h(T[lang]["review_label"])}</a>')
     if book["description"]:
@@ -452,7 +477,8 @@ def fiction_keyboard(lang):
     ]])
 
 
-def score_keyboard(book_id, lang, cancel_label, current=None):
+def score_keyboard(book_id, lang, current=None):
+    """Compact 3-button vote row to attach directly to book cards."""
     options = [
         (1,  T[lang]["want_btn"]),
         (0,  T[lang]["meh_btn"]),
@@ -465,7 +491,7 @@ def score_keyboard(book_id, lang, cancel_label, current=None):
         )
         for score, label in options
     ]
-    return InlineKeyboardMarkup([row, [InlineKeyboardButton(cancel_label, callback_data="vote_cast:cancel:0")]])
+    return InlineKeyboardMarkup([row])
 
 
 def is_valid_url(text: str) -> bool:
@@ -486,8 +512,7 @@ def parse_date(text: str):
 COMMANDS = {
     "en": [
         BotCommand("add",           "➕ Add a book"),
-        BotCommand("list",          "📋 List all books"),
-        BotCommand("vote",          "⭐ Rate a book"),
+        BotCommand("list",          "📋 List books & vote inline"),
         BotCommand("top",           "🏆 Top rated books"),
         BotCommand("discussed",     "✅ Books already discussed"),
         BotCommand("edit",          "✏️ Edit a book description"),
@@ -499,8 +524,7 @@ COMMANDS = {
     ],
     "ru": [
         BotCommand("add",           "➕ Добавить книгу"),
-        BotCommand("list",          "📋 Список книг"),
-        BotCommand("vote",          "⭐ Оценить книгу"),
+        BotCommand("list",          "📋 Список книг и голосование"),
         BotCommand("top",           "🏆 Топ книг"),
         BotCommand("discussed",     "✅ Обсуждённые книги"),
         BotCommand("edit",          "✏️ Редактировать описание"),
@@ -546,7 +570,11 @@ async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])
-        await update.message.reply_text(book_card(book, lang, user_vote=uv), parse_mode=PM)
+        await update.message.reply_text(
+            book_card(book, lang, user_vote=uv),
+            parse_mode=PM,
+            reply_markup=score_keyboard(book["id"], lang, uv),
+        )
 
 
 async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -654,39 +682,7 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── /vote ──────────────────────────────────────────────────────────────────────
-async def cmd_vote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    books = db_get_books(discussed=False)
-    if not books:
-        await update.message.reply_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
-        return
-    await update.message.reply_text(
-        tr(ctx, "choose_vote"),
-        reply_markup=books_keyboard(books, "vote_pick", tr(ctx, "cancel_btn")),
-    )
-
-
-async def vote_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
-    if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
-        return
-    book_id = int(book_id)
-    book = db_get_book(book_id)
-    current = db_get_user_vote(query.from_user.id, book_id)
-    current_label = (
-        T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[current]]
-        if current is not None else T[lang]["none_vote"]
-    )
-    await query.edit_message_text(
-        f"{T[lang]['rate_book'].format(title=h(book['title']))}\n"
-        f"{h(T[lang]['your_vote'])}: {SCORE_EMOJI.get(current, '—')} {h(current_label)}",
-        reply_markup=score_keyboard(book_id, lang, T[lang]["cancel_btn"], current),
-        parse_mode=PM,
-    )
+# ── /vote removed — voting now done inline in /list ──────────────────────────
 
 
 async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -700,10 +696,13 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     book_id, score = int(book_id), int(score)
     db_cast_vote(query.from_user.id, book_id, score)
     book = db_get_book(book_id)
+    user_id = query.from_user.id
+    uv = db_get_user_vote(user_id, book_id)
+    # Update the book card in-place with refreshed tally and user's vote marked
     await query.edit_message_text(
-        T[lang]["voted_msg"].format(title=h(book["title"])) + "\n\n" +
-        score_display(book, lang),
+        book_card(book, lang, user_vote=uv),
         parse_mode=PM,
+        reply_markup=score_keyboard(book_id, lang, uv),
     )
 
 
@@ -756,11 +755,81 @@ async def mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── /edit ──────────────────────────────────────────────────────────────────────
+# ── /edit — sequential field-by-field editor ──────────────────────────────────
+# Fields edited in order: title, author, pages, fiction, review_link, description
+EDIT_FIELDS = ["title", "author", "pages", "fiction", "review_link", "description"]
+
+
+def edit_field_key(field):
+    return f"field_{field.replace('_link', '').replace('review', 'review')}"
+
+
+def edit_current_value(book, field, lang):
+    """Return human-readable current value for a field."""
+    if field == "fiction":
+        return T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
+    if field == "review_link":
+        return book["review_link"] or ("—" if lang == "en" else "—")
+    if field == "description":
+        return book["description"] or ("—" if lang == "en" else "—")
+    return str(book[field])
+
+
+def edit_yn_keyboard(lang):
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(T[lang]["edit_yes_btn"], callback_data="edit_yn:yes"),
+        InlineKeyboardButton(T[lang]["edit_no_btn"],  callback_data="edit_yn:no"),
+    ]])
+
+
+def edit_fiction_keyboard(lang):
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(T[lang]["fiction_btn"],    callback_data="edit_fiction:1"),
+        InlineKeyboardButton(T[lang]["nonfiction_btn"], callback_data="edit_fiction:0"),
+    ]])
+
+
+async def _ask_edit_field(update_or_query, ctx, is_callback=False):
+    """Ask user about the next field to edit. Returns next state or END."""
+    lang = get_lang(ctx)
+    fields = ctx.user_data.get("edit_fields", [])
+    if not fields:
+        # All fields done — save and show result
+        book_id = ctx.user_data.pop("edit_book_id")
+        changes = ctx.user_data.pop("edit_changes", {})
+        for field, value in changes.items():
+            db_update_book_field(book_id, field, value)
+        book = db_get_book(book_id)
+        text = f"{T[lang]['edit_done']}\n\n{book_card(book, lang)}"
+        if is_callback:
+            await update_or_query.edit_message_text(text, parse_mode=PM)
+        else:
+            await update_or_query.message.reply_text(text, parse_mode=PM)
+        ctx.user_data.pop("edit_fields", None)
+        return ConversationHandler.END
+
+    field = fields[0]
+    book = db_get_book(ctx.user_data["edit_book_id"])
+    field_name = T[lang][f"field_{field}" if field != "review_link" else "field_review"]
+    current    = edit_current_value(book, field, lang)
+    text       = T[lang]["edit_field_prompt"].format(field=field_name, value=h(current))
+
+    if is_callback:
+        await update_or_query.edit_message_text(
+            text, parse_mode=PM, reply_markup=edit_yn_keyboard(lang)
+        )
+    else:
+        await update_or_query.message.reply_text(
+            text, parse_mode=PM, reply_markup=edit_yn_keyboard(lang)
+        )
+    return EDITING_FIELD
+
+
 async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    uname   = update.effective_user.username
     all_books = db_get_books(discussed=False) + list(db_get_books(discussed=True))
-    books = [b for b in all_books if can_modify(user_id, b)]
+    books = [b for b in all_books if can_modify(user_id, b, uname)]
     if not books:
         await update.message.reply_text(tr(ctx, "no_own_books"), parse_mode=PM)
         return ConversationHandler.END
@@ -780,32 +849,80 @@ async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(T[lang]["cancelled"])
         return ConversationHandler.END
     book_id = int(book_id)
-    book = db_get_book(book_id)
+    book    = db_get_book(book_id)
     if not can_modify(query.from_user.id, book, query.from_user.username):
         await query.edit_message_text(T[lang]["no_permission"], parse_mode=PM)
         return ConversationHandler.END
     ctx.user_data["edit_book_id"] = book_id
-    no_desc = "none" if lang == "en" else "нет"
+    ctx.user_data["edit_fields"]  = list(EDIT_FIELDS)
+    ctx.user_data["edit_changes"] = {}
+    return await _ask_edit_field(query, ctx, is_callback=True)
+
+
+async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """User clicked Yes or No on whether to edit the current field."""
+    query = update.callback_query
+    await query.answer()
+    lang    = get_lang(ctx)
+    _, ans  = query.data.split(":")
+    field   = ctx.user_data["edit_fields"][0]
+
+    if ans == "no":
+        ctx.user_data["edit_fields"].pop(0)
+        return await _ask_edit_field(query, ctx, is_callback=True)
+
+    # ans == "yes" — ask for new value
+    if field == "fiction":
+        await query.edit_message_text(
+            T[lang]["edit_ask_new"].format(
+                field=T[lang]["field_fiction"]
+            ),
+            parse_mode=PM,
+            reply_markup=edit_fiction_keyboard(lang),
+        )
+        return EDITING_FIELD  # handled by edit_fiction_cb
+
+    field_name = T[lang][f"field_{field}" if field != "review_link" else "field_review"]
     await query.edit_message_text(
-        T[lang]["editing"].format(
-            title=h(book["title"]),
-            desc=h(book["description"] or no_desc),
-        ),
+        T[lang]["edit_ask_new"].format(field=field_name),
         parse_mode=PM,
     )
-    return EDITING_DESCRIPTION
+    return EDITING_FIELD
 
 
-async def edit_description_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    lang = get_lang(ctx)
-    book_id = ctx.user_data.get("edit_book_id")
-    db_update_description(book_id, update.message.text.strip())
-    book = db_get_book(book_id)
-    await update.message.reply_text(
-        f"{tr(ctx, 'desc_updated')}\n\n{book_card(book, lang)}", parse_mode=PM
-    )
-    ctx.user_data.pop("edit_book_id", None)
-    return ConversationHandler.END
+async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """User picked Fiction/Non-fiction via inline button."""
+    query = update.callback_query
+    await query.answer()
+    _, value = query.data.split(":")
+    ctx.user_data["edit_changes"]["fiction"] = int(value)
+    ctx.user_data["edit_fields"].pop(0)
+    return await _ask_edit_field(query, ctx, is_callback=True)
+
+
+async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """User typed a new value for the current field."""
+    lang  = get_lang(ctx)
+    text  = update.message.text.strip()
+    field = ctx.user_data["edit_fields"][0]
+
+    # Validate
+    if field == "pages":
+        if not text.isdigit() or int(text) <= 0:
+            await update.message.reply_text(tr(ctx, "edit_invalid_pages"), parse_mode=PM)
+            return EDITING_FIELD
+        value = int(text)
+    elif field == "review_link":
+        if not is_valid_url(text):
+            await update.message.reply_text(tr(ctx, "edit_invalid_url"), parse_mode=PM)
+            return EDITING_FIELD
+        value = text
+    else:
+        value = text
+
+    ctx.user_data["edit_changes"][field] = value
+    ctx.user_data["edit_fields"].pop(0)
+    return await _ask_edit_field(update, ctx, is_callback=False)
 
 
 # ── /delete ────────────────────────────────────────────────────────────────────
@@ -874,8 +991,12 @@ def main():
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("edit", cmd_edit)],
         states={
-            EDITING_CHOOSE:      [CallbackQueryHandler(edit_pick_cb, pattern=r"^edit_pick:")],
-            EDITING_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_description_handler)],
+            EDITING_CHOOSE: [CallbackQueryHandler(edit_pick_cb, pattern=r"^edit_pick:")],
+            EDITING_FIELD:  [
+                CallbackQueryHandler(edit_yn_cb,      pattern=r"^edit_yn:"),
+                CallbackQueryHandler(edit_fiction_cb, pattern=r"^edit_fiction:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
+            ],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
     ))
@@ -892,11 +1013,9 @@ def main():
     app.add_handler(CommandHandler("help",           cmd_help))
     app.add_handler(CommandHandler("list",           cmd_list))
     app.add_handler(CommandHandler("top",            cmd_top))
-    app.add_handler(CommandHandler("vote",           cmd_vote))
     app.add_handler(CommandHandler("discussed",      cmd_discussed))
     app.add_handler(CommandHandler("language",       cmd_language))
 
-    app.add_handler(CallbackQueryHandler(vote_pick_cb, pattern=r"^vote_pick:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
 
     # ── Register default command menu in Russian (fallback for all users) ───────
