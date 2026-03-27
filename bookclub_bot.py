@@ -24,9 +24,10 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeChatMember
 from telegram.ext import (
     Application,
+    PicklePersistence,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
@@ -128,9 +129,9 @@ T = {
         "want_label":          "✅ want to read",
         "meh_label":           "😐 don't care",
         "no_label":            "❌ don't want to read",
-        "want_btn":            "✅ Want to read",
+        "want_btn":            "✅ Want",
         "meh_btn":             "😐 Don't care",
-        "no_btn":              "❌ Don't want to read",
+        "no_btn":              "❌ Don't want",
         "voted_msg":           "✅ Vote saved for <b>{title}</b>",
         "no_permission":       "⛔ You can only edit or delete books you added.",
         "no_own_books":        "📭 You have no books to edit or delete.",
@@ -212,9 +213,9 @@ T = {
         "want_label":          "✅ хочу читать",
         "meh_label":           "😐 всё равно",
         "no_label":            "❌ не хочу читать",
-        "want_btn":            "✅ Хочу читать",
+        "want_btn":            "✅ Хочу",
         "meh_btn":             "😐 Всё равно",
-        "no_btn":              "❌ Не хочу читать",
+        "no_btn":              "❌ Не хочу",
         "voted_msg":           "✅ Голос сохранён для <b>{title}</b>",
         "no_permission":       "⛔ Вы можете редактировать или удалять только добавленные вами книги.",
         "no_own_books":        "📭 У вас нет книг для редактирования или удаления.",
@@ -328,7 +329,7 @@ def db_add_book(title, author, pages, fiction, review_link, description, user_id
         return cur.lastrowid
 
 
-def _books_query(extra_where="", order="avg_score DESC, b.added_at DESC"):
+def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added_at DESC"):
     return f"""
         SELECT b.*,
                COALESCE(AVG(v.score), 0)                          AS avg_score,
@@ -351,7 +352,7 @@ def db_get_books(discussed=False):
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query("WHERE b.discussed = ?",
-                         "b.discussed_at DESC" if discussed else "avg_score DESC, b.added_at DESC"),
+                         "b.discussed_at DESC" if discussed else "avg_score DESC, vote_count DESC, b.added_at DESC"),
             (flag,)
         ).fetchall()
 
@@ -537,23 +538,35 @@ COMMANDS = {
 }
 
 
-async def set_user_commands(bot, chat_id: int, lang: str) -> None:
-    """Set the command menu for a specific user in their chosen language."""
-    await bot.set_my_commands(
-        COMMANDS[lang],
-        scope=BotCommandScopeChat(chat_id=chat_id),
-    )
+async def set_user_commands(bot, update: "Update", lang: str) -> None:
+    """Set the command menu for a specific user in their chosen language.
+    Uses BotCommandScopeChatMember for groups, BotCommandScopeChat for private."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    try:
+        if update.effective_chat.type == "private":
+            await bot.set_my_commands(
+                COMMANDS[lang],
+                scope=BotCommandScopeChat(chat_id=chat_id),
+            )
+        else:
+            await bot.set_my_commands(
+                COMMANDS[lang],
+                scope=BotCommandScopeChatMember(chat_id=chat_id, user_id=user_id),
+            )
+    except Exception as e:
+        logger.warning(f"Could not set commands for user {user_id}: {e}")
 
 
 async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     new_lang = "ru" if get_lang(ctx) == "en" else "en"
     ctx.user_data["lang"] = new_lang
-    await set_user_commands(ctx.bot, update.effective_chat.id, new_lang)
+    await set_user_commands(ctx.bot, update, new_lang)
     await update.message.reply_text(tr(ctx, "lang_set"), parse_mode=PM)
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await set_user_commands(ctx.bot, update.effective_chat.id, get_lang(ctx))
+    await set_user_commands(ctx.bot, update, get_lang(ctx))
     await update.message.reply_text(tr(ctx, "welcome"), parse_mode=PM)
 
 
@@ -593,17 +606,36 @@ async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
-    voted = [b for b in db_get_books(discussed=False) if b["vote_count"] > 0]
-    if not voted:
-        await update.message.reply_text(tr(ctx, "no_votes"), parse_mode=PM)
+    books = db_get_books(discussed=False)[:5]
+    if not books:
+        await update.message.reply_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
         return
-    text = tr(ctx, "top_title")
-    for i, book in enumerate(voted[:5], 1):
+
+    lines = [tr(ctx, "top_title")]
+    for i, book in enumerate(books, 1):
         fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
-        text += f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
-        text += f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}\n"
-        text += f"   {score_display(book, lang)}\n\n"
-    await update.message.reply_text(text, parse_mode=PM)
+        lines.append(
+            f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
+            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}\n"
+            f"   {score_display(book, lang)}"
+        )
+
+    # Send as one message; if it exceeds Telegram's limit split into chunks
+    MAX = 4000
+    message = "\n\n".join(lines)
+    if len(message) <= MAX:
+        await update.message.reply_text(message, parse_mode=PM)
+    else:
+        chunk = ""
+        for line in lines:
+            candidate = (chunk + "\n\n" + line).lstrip("\n")
+            if len(candidate) > MAX:
+                await update.message.reply_text(chunk, parse_mode=PM)
+                chunk = line
+            else:
+                chunk = candidate
+        if chunk:
+            await update.message.reply_text(chunk, parse_mode=PM)
 
 
 # ── /add conversation ──────────────────────────────────────────────────────────
@@ -964,7 +996,8 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+    persistence = PicklePersistence(filepath="bot_persistence")
+    app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
 
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("add", cmd_add)],
