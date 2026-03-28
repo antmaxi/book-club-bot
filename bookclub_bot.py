@@ -642,15 +642,13 @@ async def set_user_commands(bot, update: "Update", lang: str) -> None:
     user_id = update.effective_user.id
     try:
         if update.effective_chat.type == "private":
-            await bot.set_my_commands(
-                COMMANDS[lang],
-                scope=BotCommandScopeChat(chat_id=chat_id),
-            )
+            scope = BotCommandScopeChat(chat_id=chat_id)
+            await bot.delete_my_commands(scope=scope)
+            await bot.set_my_commands(COMMANDS[lang], scope=scope)
         else:
-            await bot.set_my_commands(
-                COMMANDS[lang],
-                scope=BotCommandScopeChatMember(chat_id=chat_id, user_id=user_id),
-            )
+            scope = BotCommandScopeChatMember(chat_id=chat_id, user_id=user_id)
+            await bot.delete_my_commands(scope=scope)
+            await bot.set_my_commands(COMMANDS[lang], scope=scope)
     except Exception as e:
         logger.warning(f"Could not set commands for user {user_id}: {e}")
 
@@ -1401,9 +1399,11 @@ def main():
 
     # ── Register default command menu in Russian (fallback for all users) ───────
     import asyncio
-    asyncio.get_event_loop().run_until_complete(
-        app.bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
-    )
+    async def set_default_commands(bot):
+        await bot.delete_my_commands(scope=BotCommandScopeDefault())
+        await bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
+
+    asyncio.get_event_loop().run_until_complete(set_default_commands(app.bot))
 
     logger.info("Bot is running...")
     app.run_polling()

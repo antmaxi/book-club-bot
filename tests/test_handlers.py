@@ -45,6 +45,18 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Welcome", args[0])
         mock_set_commands.assert_called_once()
 
+    @patch("bookclub_bot.BotCommandScopeChat")
+    async def test_set_user_commands_deletes(self, mock_scope_class):
+        mock_scope = MagicMock()
+        mock_scope_class.return_value = mock_scope
+        mock_bot = AsyncMock()
+        self.update.effective_chat.type = "private"
+        
+        await bot.set_user_commands(mock_bot, self.update, "en")
+        
+        mock_bot.delete_my_commands.assert_called_once_with(scope=mock_scope)
+        mock_bot.set_my_commands.assert_called_once_with(bot.COMMANDS["en"], scope=mock_scope)
+
     @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
     async def test_settings_toggle_lang(self, mock_set_commands):
         self.context.user_data["lang"] = "en"
