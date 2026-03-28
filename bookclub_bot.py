@@ -103,7 +103,7 @@ T = {
         "none_vote":           "—",
         "rate_book":           "📊 Vote on <b>{title}</b>",
         "desc_updated":        "✅ Description updated!",
-        "top_title":           "🏆 <b>Top Books</b>\n\n",
+        "top_title":           "🏆 <b>Top Books</b>\nSorted by average score and then by vote count.\n\n",
         "added_by":            "Added by",
         "added_on":            "Added on",
         "pages_label":         "Pages",
@@ -147,6 +147,8 @@ T = {
         "list_prompt":         "📋 <b>List of Books</b>\nShow all books or only those you haven't voted for yet?",
         "list_all_btn":        "📚 All books",
         "list_unvoted_btn":    "🗳 Unvoted only",
+        "score_calc_btn":      "📊 How a score is calculated",
+        "score_calc_info":     "The score is calculated as follows:\n\n✅ Want: +1 point\n😐 Don't care: 0 points\n❌ Don't want: -1 point\n\nThe average score is the sum of points divided by the number of votes.\n\nBooks are sorted by average score, then by the total number of votes, and then by the date added.",
     },
     "ru": {
         "welcome": (
@@ -186,7 +188,7 @@ T = {
         "none_vote":           "—",
         "rate_book":           "📊 Голосование: <b>{title}</b>",
         "desc_updated":        "✅ Описание обновлено!",
-        "top_title":           "🏆 <b>Топ книг</b>\n\n",
+        "top_title":           "🏆 <b>Топ книг</b>\nСортировка по среднему баллу и по количеству голосов.\n\n",
         "added_by":            "Добавил",
         "added_on":            "Добавлено",
         "pages_label":         "Страниц",
@@ -234,6 +236,8 @@ T = {
         "list_prompt":         "📋 <b>Список книг</b>\nПоказать все книги или только те, за которые вы ещё не голосовали?",
         "list_all_btn":        "📚 Все книги",
         "list_unvoted_btn":    "🗳 Только без моего голоса",
+        "score_calc_btn":      "📊 Как рассчитывается балл",
+        "score_calc_info":     "Балл рассчитывается следующим образом:\n\n✅ Хочу: +1 балл\n😐 Всё равно: 0 баллов\n❌ Не хочу: -1 балл\n\nСредний балл — это сумма баллов, делённая на количество голосов.\n\nКниги сортируются по среднему баллу, затем по общему количеству голосов и затем по дате добавления.",
     },
 }
 
@@ -661,13 +665,27 @@ async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
-    books = db_get_books(discussed=False)[:5]
+    books = db_get_books(discussed=False)
     if not books:
         await update.message.reply_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
         return
 
+    # Show top 5, but if there's a tie for the 5th place, show all tied books.
+    # Sorting is already done in db_get_books by (avg_score DESC, vote_count DESC, added_at DESC)
+    top_books = []
+    for i, book in enumerate(books):
+        if i < 5:
+            top_books.append(book)
+        else:
+            # Check if this book has the same score and vote count as the 5th one (index 4)
+            fifth = books[4]
+            if book["avg_score"] == fifth["avg_score"] and book["vote_count"] == fifth["vote_count"]:
+                top_books.append(book)
+            else:
+                break
+
     lines = [tr(ctx, "top_title")]
-    for i, book in enumerate(books, 1):
+    for i, book in enumerate(top_books, 1):
         fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
         lines.append(
             f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
@@ -691,6 +709,24 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 chunk = candidate
         if chunk:
             await update.message.reply_text(chunk, parse_mode=PM)
+
+    # Add "How a score is calculated" button
+    reply_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton(tr(ctx, "score_calc_btn"), callback_data="score_calc_info")
+    ]])
+    await update.message.reply_text(
+        "---", # Visual separator or just a small text
+        reply_markup=reply_markup,
+        parse_mode=PM
+    )
+
+
+async def score_calc_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer(
+        text=tr(ctx, "score_calc_info"),
+        show_alert=True
+    )
 
 
 # ── /add conversation ──────────────────────────────────────────────────────────
@@ -1106,6 +1142,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
+    app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
 
     # ── Register default command menu in Russian (fallback for all users) ───────
     import asyncio

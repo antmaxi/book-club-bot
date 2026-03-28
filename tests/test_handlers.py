@@ -113,5 +113,78 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.message.reply_text.assert_called_once()
         self.assertIn("valid number", self.message.reply_text.call_args[0][0])
 
+    async def test_cmd_top(self):
+        # Create 6 books, with 5th and 6th having the same score/votes
+        for i in range(1, 7):
+            book_id = bot.db_add_book(f"Book {i}", f"Author {i}", 100, True, "", "", i, f"u{i}")
+            # Give same score to all
+            bot.db_cast_vote(1001, book_id, 1) # All have 1 vote with score 1
+        
+        await bot.cmd_top(self.update, self.context)
+        
+        # Should have called reply_text twice: once for the list, once for the button
+        self.assertEqual(self.message.reply_text.call_count, 2)
+        text = self.message.reply_text.call_args_list[0][0][0]
+        self.assertIn("Top Books", text)
+        self.assertIn("Sorted by average score", text)
+        # Should show all 6 books because they all have the same score
+        for i in range(1, 7):
+            self.assertIn(f"Book {i}", text)
+
+    async def test_cmd_top_score_calc_btn(self):
+        bot.db_add_book("Book 1", "Author 1", 100, True, "", "", 1, "u1")
+        await bot.cmd_top(self.update, self.context)
+        
+        # Should have called reply_text twice: once for the list, once for the button
+        self.assertEqual(self.message.reply_text.call_count, 2)
+        
+        # Second call should have the button
+        args, kwargs = self.message.reply_text.call_args_list[1]
+        self.assertEqual(args[0], "---")
+        self.assertIn("reply_markup", kwargs)
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].callback_data, "score_calc_info")
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].text, "📊 How a score is calculated")
+
+    async def test_score_calc_cb(self):
+        query = AsyncMock()
+        query.data = "score_calc_info"
+        self.update.callback_query = query
+        
+        await bot.score_calc_cb(self.update, self.context)
+        
+        query.answer.assert_called_once()
+        kwargs = query.answer.call_args[1]
+        self.assertTrue(kwargs["show_alert"])
+        self.assertIn("score is calculated as follows", kwargs["text"])
+
+    async def test_cmd_top_cut_off(self):
+        # Create 7 books, 1-5 have score 1, 6-7 have score 0.5
+        for i in range(1, 6):
+            book_id = bot.db_add_book(f"Book {i}", f"Author {i}", 100, True, "", "", i, f"u{i}")
+            bot.db_cast_vote(1001, book_id, 1)
+        
+        for i in range(6, 8):
+            book_id = bot.db_add_book(f"Book {i}", f"Author {i}", 100, True, "", "", i, f"u{i}")
+            bot.db_cast_vote(1001, book_id, 0)
+            
+        await bot.cmd_top(self.update, self.context)
+        
+        self.assertEqual(self.message.reply_text.call_count, 2)
+        text = self.message.reply_text.call_args_list[0][0][0]
+        # Should show only first 5
+        for i in range(1, 6):
+            self.assertIn(f"Book {i}", text)
+        self.assertNotIn("Book 6", text)
+        self.assertNotIn("Book 7", text)
+
+    async def test_cmd_top_ru(self):
+        self.context.user_data["lang"] = "ru"
+        bot.db_add_book("Книга 1", "Автор 1", 100, True, "", "", 1, "u1")
+        await bot.cmd_top(self.update, self.context)
+        self.assertEqual(self.message.reply_text.call_count, 2)
+        text = self.message.reply_text.call_args_list[0][0][0]
+        self.assertIn("Топ книг", text)
+        self.assertIn("Сортировка по среднему баллу", text)
+
 if __name__ == "__main__":
     unittest.main()
