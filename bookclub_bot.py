@@ -159,6 +159,7 @@ T = {
         "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new books?",
         "notify_optin_yes":    "🔔 Yes, notify me",
         "notify_optin_no":     "🔕 No, thanks",
+        "notify_optin_success": "✅ Settings saved!",
         "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
         "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
     },
@@ -260,6 +261,7 @@ T = {
         "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые книги?",
         "notify_optin_yes":    "🔔 Да, уведомлять",
         "notify_optin_no":     "🔕 Нет, спасибо",
+        "notify_optin_success": "✅ Настройки сохранены!",
         "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
         "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
     },
@@ -667,11 +669,11 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     data = query.data.split(":")
     
     if data[1] == "toggle_notify":
+        await query.answer()
         current = db_get_user_setting(user_id, "notify_new_books")
         new_val = 1 if current <= 0 else 0
         db_set_user_setting(user_id, "notify_new_books", new_val)
@@ -685,9 +687,9 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data[1] == "optin":
         val = int(data[2])
         db_set_user_setting(user_id, "notify_new_books", val)
-        await query.delete_message()
-        # After choosing, we continue with the list if possible? 
-        # Actually, the opt-in was triggered by /list. 
+        await query.answer(tr(ctx, "notify_optin_success"))
+        # After choosing, we continue with the list if possible?
+        # Actually, the opt-in was triggered by /list.
         # Let's just say "Settings saved" and let them run /list again or just finish.
         # But the prompt said "ask... first time one runs list command".
         # Better to show the list after they choose.
@@ -727,6 +729,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # or we could have stored it in user_data.
         choice = ctx.user_data.get("pending_list_choice", "all")
         user_id = query.from_user.id
+        # We don't call query.answer() here because it was already answered in settings_choice_cb
     else:
         await query.answer()
         user_id = query.from_user.id
@@ -758,11 +761,24 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 text = "✅ " + ("You've voted on all books!" if lang == "en" else "Вы проголосовали за все книги!")
         else:
             text = tr(ctx, "no_undiscussed")
-        await query.edit_message_text(text, parse_mode=PM)
+        
+        try:
+            await query.edit_message_text(text, parse_mode=PM)
+        except Exception as e:
+            if "Message to edit not found" in str(e):
+                await ctx.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode=PM)
+            else:
+                raise
         return
 
     # Delete the prompt message
-    await query.delete_message()
+    try:
+        await query.delete_message()
+    except Exception as e:
+        if "Message to delete not found" in str(e):
+            pass
+        else:
+            raise
 
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])

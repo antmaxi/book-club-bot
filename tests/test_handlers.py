@@ -249,6 +249,8 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         
         # Should set the setting
         self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"), 1)
+        # Should answer with success message
+        query.answer.assert_called_once_with("✅ Settings saved!")
         # Should continue to list (which should send message because Book 1 is unvoted)
         self.context.bot.send_message.assert_called_once()
         self.assertIn("Book 1", self.context.bot.send_message.call_args[1]["text"])
