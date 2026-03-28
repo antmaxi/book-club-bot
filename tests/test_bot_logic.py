@@ -115,6 +115,28 @@ class TestDatabase(unittest.TestCase):
         book = bot.db_get_book(book_id)
         self.assertIsNone(book)
 
+    def test_db_user_settings(self):
+        # Default value
+        self.assertEqual(bot.db_get_user_setting(1, "test_key", default=5), 5)
+        self.assertEqual(bot.db_get_user_setting(1, "test_key"), -1)
+
+        # Set and get
+        bot.db_set_user_setting(1, "test_key", 10)
+        self.assertEqual(bot.db_get_user_setting(1, "test_key"), 10)
+
+        # Update
+        bot.db_set_user_setting(1, "test_key", 20)
+        self.assertEqual(bot.db_get_user_setting(1, "test_key"), 20)
+
+        # Get multiple users
+        bot.db_set_user_setting(2, "test_key", 20)
+        bot.db_set_user_setting(3, "test_key", 30)
+        users = bot.db_get_users_with_setting("test_key", 20)
+        self.assertIn(1, users)
+        self.assertIn(2, users)
+        self.assertNotIn(3, users)
+        self.assertEqual(len(users), 2)
+
 class TestUtils(unittest.TestCase):
     def test_is_valid_url(self):
         self.assertTrue(bot.is_valid_url("http://google.com"))

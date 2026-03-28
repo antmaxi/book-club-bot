@@ -70,6 +70,8 @@ T = {
             "📚 <b>Welcome to the Book Club Bot!</b>\n\n"
             "➕ /add — Add a book\n"
             "📋 /list — See all books\n"
+            "🏆 /top — Top rated books\n"
+            "⚙️ /settings — Notification settings\n"
             "✏️ /edit — Edit a description\n"
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
@@ -149,12 +151,24 @@ T = {
         "list_unvoted_btn":    "🗳 Unvoted only",
         "score_calc_btn":      "📊 How a score is calculated",
         "score_calc_info":     "✅ Want: +1 point\n😐 Don't care: 0 points\n❌ Don't want: -1 point\n\nSorted by average score, then by the total number of votes, and then by the date added.",
+        "settings_title":      "⚙️ <b>Settings</b>",
+        "settings_notify_label": "Notifications for new books:",
+        "settings_notify_on":   "🔔 Enabled (10 min delay)",
+        "settings_notify_off":  "🔕 Disabled",
+        "settings_notify_btn":  "Toggle Notifications",
+        "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new books?",
+        "notify_optin_yes":    "🔔 Yes, notify me",
+        "notify_optin_no":     "🔕 No, thanks",
+        "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
+        "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
     },
     "ru": {
         "welcome": (
             "📚 <b>Добро пожаловать в Книжный клуб!</b>\n\n"
             "➕ /add — Добавить книгу\n"
             "📋 /list — Список книг\n"
+            "🏆 /top — Топ книг\n"
+            "⚙️ /settings — Настройки уведомлений\n"
             "✏️ /edit — Редактировать описание\n"
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
@@ -238,6 +252,16 @@ T = {
         "list_unvoted_btn":    "🗳 Только без моего голоса",
         "score_calc_btn":      "📊 Как рассчитывается балл",
         "score_calc_info":     "✅ Хочу: +1 балл\n😐 Всё равно: 0 баллов\n❌ Не хочу: -1 балл\n\nСортировка по среднему баллу, затем по количеству голосов и затем по дате добавления.",
+        "settings_title":      "⚙️ <b>Настройки</b>",
+        "settings_notify_label": "Уведомления о новых книгах:",
+        "settings_notify_on":   "🔔 Включены (задержка 10 мин)",
+        "settings_notify_off":  "🔕 Выключены",
+        "settings_notify_btn":  "Переключить уведомления",
+        "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые книги?",
+        "notify_optin_yes":    "🔔 Да, уведомлять",
+        "notify_optin_no":     "🔕 Нет, спасибо",
+        "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
+        "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
     },
 }
 
@@ -323,6 +347,14 @@ def init_db():
                 score   INTEGER NOT NULL,
                 PRIMARY KEY (user_id, book_id),
                 FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id      INTEGER NOT NULL,
+                setting_key  TEXT NOT NULL,
+                setting_val  INTEGER NOT NULL,
+                PRIMARY KEY (user_id, setting_key)
             )
         """)
         conn.commit()
@@ -427,6 +459,34 @@ def db_get_user_vote(user_id, book_id):
             "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
         ).fetchone()
         return row[0] if row else None
+
+
+def db_get_user_setting(user_id, key, default=-1):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT setting_val FROM user_settings WHERE user_id=? AND setting_key=?",
+            (user_id, key),
+        ).fetchone()
+        return row[0] if row is not None else default
+
+
+def db_set_user_setting(user_id, key, value):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO user_settings (user_id, setting_key, setting_val) VALUES (?,?,?) "
+            "ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_val=excluded.setting_val",
+            (user_id, key, value),
+        )
+        conn.commit()
+
+
+def db_get_users_with_setting(key, value):
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM user_settings WHERE setting_key=? AND setting_val=?",
+            (key, value),
+        ).fetchall()
+        return [r[0] for r in rows]
 
 
 # ── Formatting ─────────────────────────────────────────────────────────────────
@@ -538,6 +598,7 @@ COMMANDS = {
         BotCommand("add",           "➕ Add a book"),
         BotCommand("list",          "📋 List books & vote inline"),
         BotCommand("top",           "🏆 Top rated books"),
+        BotCommand("settings",      "⚙️ Notification settings"),
         BotCommand("discussed",     "✅ Books already discussed"),
         BotCommand("edit",          "✏️ Edit a book description"),
         BotCommand("delete",        "🗑 Delete a book"),
@@ -550,6 +611,7 @@ COMMANDS = {
         BotCommand("add",           "➕ Добавить книгу"),
         BotCommand("list",          "📋 Список книг и голосование"),
         BotCommand("top",           "🏆 Топ книг"),
+        BotCommand("settings",      "⚙️ Настройки уведомлений"),
         BotCommand("discussed",     "✅ Обсуждённые книги"),
         BotCommand("edit",          "✏️ Редактировать описание"),
         BotCommand("delete",        "🗑 Удалить книгу"),
@@ -588,6 +650,50 @@ async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(tr(ctx, "lang_set"), parse_mode=PM)
 
 
+async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    notify = db_get_user_setting(user_id, "notify_new_books")
+    
+    # -1 means not set, we'll treat it as Off (0) for the UI if they just run /settings
+    # but the logic for /list will still trigger the opt-in if it's -1.
+    val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
+    
+    text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")
+    ]])
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
+
+
+async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data.split(":")
+    
+    if data[1] == "toggle_notify":
+        current = db_get_user_setting(user_id, "notify_new_books")
+        new_val = 1 if current <= 0 else 0
+        db_set_user_setting(user_id, "notify_new_books", new_val)
+        
+        val_str = tr(ctx, "settings_notify_on" if new_val == 1 else "settings_notify_off")
+        text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")
+        ]])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
+    elif data[1] == "optin":
+        val = int(data[2])
+        db_set_user_setting(user_id, "notify_new_books", val)
+        await query.delete_message()
+        # After choosing, we continue with the list if possible? 
+        # Actually, the opt-in was triggered by /list. 
+        # Let's just say "Settings saved" and let them run /list again or just finish.
+        # But the prompt said "ask... first time one runs list command".
+        # Better to show the list after they choose.
+        await list_choice_cb(update, ctx)
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await set_user_commands(ctx.bot, update, get_lang(ctx))
     await update.message.reply_text(tr(ctx, "welcome"), parse_mode=PM)
@@ -614,10 +720,29 @@ async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    # We might be called from settings_choice_cb, so query might be None-ish or already answered
+    if query.data.startswith("settings:optin:"):
+        # We need to recover the original list choice if we want to be seamless.
+        # But for simplicity, let's just show 'all' if they just opted in,
+        # or we could have stored it in user_data.
+        choice = ctx.user_data.get("pending_list_choice", "all")
+        user_id = query.from_user.id
+    else:
+        await query.answer()
+        user_id = query.from_user.id
+        _, choice = query.data.split(":")
+
+    # Check for notification opt-in
+    if db_get_user_setting(user_id, "notify_new_books") == -1:
+        ctx.user_data["pending_list_choice"] = choice
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(tr(ctx, "notify_optin_yes"), callback_data="settings:optin:1")],
+            [InlineKeyboardButton(tr(ctx, "notify_optin_no"), callback_data="settings:optin:0")]
+        ])
+        await query.edit_message_text(tr(ctx, "notify_optin_prompt"), reply_markup=keyboard, parse_mode=PM)
+        return
+
     lang = get_lang(ctx)
-    user_id = query.from_user.id
-    _, choice = query.data.split(":")
 
     user_id_unvoted = user_id if choice == "unvoted" else None
     books = db_get_books(discussed=False, user_id_unvoted=user_id_unvoted)
@@ -792,11 +917,57 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         nb["review_link"], desc, user.id, user.full_name, user.username,
     )
     book = db_get_book(book_id)
-    await update.message.reply_text(
-        f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}", parse_mode=PM
-    )
+    
+    # Mention the 10-minute delay in the confirmation message
+    confirm_text = f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}{tr(ctx, 'new_book_delay_note')}"
+    
+    await update.message.reply_text(confirm_text, parse_mode=PM)
     ctx.user_data.pop("new_book", None)
+    
+    # Schedule notifications for others
+    ctx.job_queue.run_once(
+        notify_new_book_job,
+        when=600, # 10 minutes
+        data={"book_id": book_id, "adder_id": user.id},
+        name=f"notify_book_{book_id}"
+    )
+    
     return ConversationHandler.END
+
+
+async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
+    job = ctx.job
+    book_id = job.data["book_id"]
+    adder_id = job.data["adder_id"]
+    
+    book = db_get_book(book_id)
+    if not book or book["discussed"]:
+        return # Book was deleted or already discussed?
+        
+    # Get all users who want notifications
+    user_ids = db_get_users_with_setting("notify_new_books", 1)
+    
+    for user_id in user_ids:
+        if user_id == adder_id:
+            continue
+            
+        # We need to know the user's language. 
+        # Persistence might have it, or we default to Russian as in get_lang.
+        # Since we don't have a 'ctx' for each user here, we check persistence.
+        user_data = ctx.application.user_data.get(user_id, {})
+        lang = user_data.get("lang", "ru")
+        
+        try:
+            uv = db_get_user_vote(user_id, book_id)
+            text = tr(lang, "new_book_notification") + book_card(book, lang, user_vote=uv)
+            await ctx.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode=PM,
+                reply_markup=score_keyboard(book_id, lang, uv)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send notification to {user_id}: {e}")
 
 
 async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1136,11 +1307,13 @@ def main():
     app.add_handler(CommandHandler("start",          cmd_start))
     app.add_handler(CommandHandler("help",           cmd_help))
     app.add_handler(CommandHandler("list",           cmd_list))
+    app.add_handler(CommandHandler("settings",       cmd_settings))
     app.add_handler(CommandHandler("top",            cmd_top))
     app.add_handler(CommandHandler("discussed",      cmd_discussed))
     app.add_handler(CommandHandler("language",       cmd_language))
 
     app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
+    app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
 

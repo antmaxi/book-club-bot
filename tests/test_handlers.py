@@ -11,6 +11,11 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         bot.DB_PATH = self.db_file
         bot.init_db()
         
+        # Set default settings to "Off" (0) so list doesn't trigger opt-in by default in existing tests
+        # or we can set it in specific tests. 
+        # Actually, it's better to set it to 0 for users in setUp.
+        bot.db_set_user_setting(67890, "notify_new_books", 0)
+
         # Mocking update and context
         self.update = MagicMock(spec=Update)
         self.context = MagicMock()
@@ -185,6 +190,90 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         text = self.message.reply_text.call_args_list[0][0][0]
         self.assertIn("Топ книг", text)
         self.assertIn("Сортировка по среднему баллу", text)
+
+    async def test_cmd_settings(self):
+        await bot.cmd_settings(self.update, self.context)
+        self.message.reply_text.assert_called_once()
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Settings", text)
+        self.assertIn("Notifications", text)
+
+    async def test_settings_toggle_notify(self):
+        # Initial is -1
+        query = AsyncMock()
+        query.data = "settings:toggle_notify"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        
+        # 1st toggle: -1 -> 1
+        await bot.settings_choice_cb(self.update, self.context)
+        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"), 1)
+        
+        # 2nd toggle: 1 -> 0
+        await bot.settings_choice_cb(self.update, self.context)
+        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"), 0)
+
+    async def test_list_triggers_optin(self):
+        # Clear setting for this test
+        with sqlite3.connect(bot.DB_PATH) as conn:
+            conn.execute("DELETE FROM user_settings WHERE user_id=?", (self.update.effective_user.id,))
+        
+        # No setting yet
+        query = AsyncMock()
+        query.data = "list:all"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        
+        await bot.list_choice_cb(self.update, self.context)
+        
+        query.edit_message_text.assert_called_once()
+        self.assertIn("Would you like to receive notifications", query.edit_message_text.call_args[0][0])
+        self.assertEqual(self.context.user_data["pending_list_choice"], "all")
+
+    async def test_optin_callback(self):
+        # Clear setting for this test
+        with sqlite3.connect(bot.DB_PATH) as conn:
+            conn.execute("DELETE FROM user_settings WHERE user_id=?", (self.update.effective_user.id,))
+
+        # Mock choice after opt-in
+        query = AsyncMock()
+        query.data = "settings:optin:1"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        self.context.user_data["pending_list_choice"] = "unvoted"
+        
+        # Adding a book so list has something to show
+        bot.db_add_book("Book 1", "Author 1", 100, True, "", "", 1, "u1")
+        
+        await bot.settings_choice_cb(self.update, self.context)
+        
+        # Should set the setting
+        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"), 1)
+        # Should continue to list (which should send message because Book 1 is unvoted)
+        self.context.bot.send_message.assert_called_once()
+        self.assertIn("Book 1", self.context.bot.send_message.call_args[1]["text"])
+
+    async def test_add_description_schedules_job(self):
+        self.context.user_data["new_book"] = {
+            "title": "Title", "author": "Author", "pages": 100, "fiction": True, "review_link": "http://x.com"
+        }
+        self.message.text = "Description"
+        self.context.job_queue = MagicMock()
+        
+        # Use real strings for fields that go to DB
+        self.update.effective_user.full_name = "Test User"
+        self.update.effective_user.username = "testuser"
+        
+        await bot.add_description(self.update, self.context)
+        
+        self.context.job_queue.run_once.assert_called_once()
+        args, kwargs = self.context.job_queue.run_once.call_args
+        self.assertEqual(kwargs["when"], 600)
+        self.assertEqual(kwargs["data"]["adder_id"], self.update.effective_user.id)
+        
+        # Verify message mentions 10 mins
+        confirm_text = self.message.reply_text.call_args[0][0]
+        self.assertIn("10 minutes", confirm_text)
 
 if __name__ == "__main__":
     unittest.main()
