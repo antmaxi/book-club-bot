@@ -298,12 +298,14 @@ def init_db():
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
             except sqlite3.OperationalError:
                 pass
+
         # Migrate votes table: rename stars→score, clear old 1-5 data
         try:
             conn.execute("ALTER TABLE votes RENAME COLUMN stars TO score")
-        except Exception:
+            conn.execute("DELETE FROM votes WHERE score NOT IN (-1, 0, 1)")
+        except sqlite3.OperationalError:
             pass
-        conn.execute("DELETE FROM votes WHERE score NOT IN (-1, 0, 1)")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 user_id INTEGER NOT NULL,
@@ -500,12 +502,15 @@ def is_valid_url(text: str) -> bool:
 
 
 def parse_date(text: str):
-    """Return date string if valid YYYY-MM-DD, else None."""
-    try:
-        datetime.strptime(text.strip(), "%Y-%m-%d")
-        return text.strip()
-    except ValueError:
-        return None
+    """Return date string if valid YYYY-MM-DD, DD.MM.YYYY, or DD/MM/YYYY, else None."""
+    text = text.strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        try:
+            dt = datetime.strptime(text, fmt)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
 
 
 # ── Handlers ───────────────────────────────────────────────────────────────────
