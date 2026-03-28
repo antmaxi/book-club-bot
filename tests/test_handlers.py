@@ -46,12 +46,19 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         mock_set_commands.assert_called_once()
 
     @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
-    async def test_cmd_language(self, mock_set_commands):
+    async def test_settings_toggle_lang(self, mock_set_commands):
         self.context.user_data["lang"] = "en"
-        await bot.cmd_language(self.update, self.context)
+        query = AsyncMock()
+        query.data = "settings:toggle_lang"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        
+        await bot.settings_choice_cb(self.update, self.context)
+        
         self.assertEqual(self.context.user_data["lang"], "ru")
-        self.message.reply_text.assert_called_once()
+        query.answer.assert_called_once_with("🇷🇺 Язык установлен: Русский.")
         mock_set_commands.assert_called_once_with(self.context.bot, self.update, "ru")
+        query.edit_message_text.assert_called_once()
 
     async def test_cmd_list(self):
         # Now cmd_list only shows a prompt
@@ -276,6 +283,29 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         # Verify message mentions 10 mins
         confirm_text = self.message.reply_text.call_args[0][0]
         self.assertIn("10 minutes", confirm_text)
+
+    async def test_settings_in_menu(self):
+        # Verify COMMANDS structure directly
+        self.assertIn("settings", [c.command for c in bot.COMMANDS["en"]])
+        self.assertIn("settings", [c.command for c in bot.COMMANDS["ru"]])
+        self.assertNotIn("language", [c.command for c in bot.COMMANDS["en"]])
+        self.assertNotIn("language", [c.command for c in bot.COMMANDS["ru"]])
+        
+        # Find the descriptions
+        en_desc = next(c.description for c in bot.COMMANDS["en"] if c.command == "settings")
+        ru_desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "settings")
+        
+        self.assertEqual(en_desc, "⚙️ Settings")
+        self.assertEqual(ru_desc, "⚙️ Настройки")
+
+    async def test_cmd_start_sets_menu(self):
+        from unittest.mock import patch
+        with patch("bookclub_bot.set_user_commands") as mock_set:
+            await bot.cmd_start(self.update, self.context)
+            mock_set.assert_called_once()
+            args = mock_set.call_args[0]
+            # args: (bot, update, lang)
+            self.assertEqual(args[2], "en") # default in setUp is en
 
 if __name__ == "__main__":
     unittest.main()

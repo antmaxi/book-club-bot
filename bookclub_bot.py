@@ -7,17 +7,25 @@ Fields per book:
   - added_at, added_by
   - discussed (flag, admin-only), discussed_at (date)
 
+Features:
+  - Bilingual support (English and Russian).
+  - Add and manage books for the club.
+  - Vote on books: "Want", "Don't care", "Don't want".
+  - Ranking system (Top books) based on average score and vote count.
+  - New book notifications: receive a voting card for new books after 10 minutes.
+  - User settings to opt-in or out of notifications.
+
 Commands:
-  /start / /help   - Welcome + command list
-  /language        - Switch language (EN <-> RU)
-  /add             - Add a new book
-  /list            - List all undiscussed books
-  /edit            - Edit a book's description (owner/admin only)
+  /start / /help   - Welcome message and command overview
+  /add             - Add a new book (with 10-minute delayed notification to others)
+  /list            - List all undiscussed books (all or only unvoted)
+  /top             - View top-rated undiscussed books
+  /settings        - Manage notification and language preferences
+  /edit            - Edit a book's details (owner/admin only)
   /delete          - Delete a book (owner/admin only)
-  /top             - Top rated undiscussed books
-  /discussed       - List books already discussed (admin-only to mark)
+  /discussed       - View the archive of discussed books
   /markdiscussed   - Admin: mark a book as discussed (with date)
-  /cancel          - Cancel current action
+  /cancel          - Cancel the current operation
 """
 
 import logging
@@ -71,13 +79,12 @@ T = {
             "➕ /add — Add a book\n"
             "📋 /list — See all books\n"
             "🏆 /top — Top rated books\n"
-            "⚙️ /settings — Notification settings\n"
+            "⚙️ /settings — Settings\n"
             "✏️ /edit — Edit a description\n"
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
             "✅ /discussed — Books already discussed\n"
             "📌 /markdiscussed — Mark a book as discussed (admin)\n"
-            "🌐 /language — Switch to Russian\n"
             "❓ /help — Show this message"
         ),
         "lang_set":            "🇬🇧 Language set to English.",
@@ -156,6 +163,7 @@ T = {
         "settings_notify_on":   "🔔 Enabled (10 min delay)",
         "settings_notify_off":  "🔕 Disabled",
         "settings_notify_btn":  "Toggle Notifications",
+        "settings_lang_btn":    "🌐 Switch to Russian",
         "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new books?",
         "notify_optin_yes":    "🔔 Yes, notify me",
         "notify_optin_no":     "🔕 No, thanks",
@@ -169,13 +177,12 @@ T = {
             "➕ /add — Добавить книгу\n"
             "📋 /list — Список книг\n"
             "🏆 /top — Топ книг\n"
-            "⚙️ /settings — Настройки уведомлений\n"
+            "⚙️ /settings — Настройки\n"
             "✏️ /edit — Редактировать описание\n"
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
             "✅ /discussed — Обсуждённые книги\n"
             "📌 /markdiscussed — Отметить книгу как обсуждённую (админ)\n"
-            "🌐 /language — Switch to English\n"
             "❓ /help — Показать это сообщение"
         ),
         "lang_set":            "🇷🇺 Язык установлен: Русский.",
@@ -258,6 +265,7 @@ T = {
         "settings_notify_on":   "🔔 Включены (задержка 10 мин)",
         "settings_notify_off":  "🔕 Выключены",
         "settings_notify_btn":  "Переключить уведомления",
+        "settings_lang_btn":    "🌐 Switch to English",
         "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые книги?",
         "notify_optin_yes":    "🔔 Да, уведомлять",
         "notify_optin_no":     "🔕 Нет, спасибо",
@@ -600,12 +608,11 @@ COMMANDS = {
         BotCommand("add",           "➕ Add a book"),
         BotCommand("list",          "📋 List books & vote inline"),
         BotCommand("top",           "🏆 Top rated books"),
-        BotCommand("settings",      "⚙️ Notification settings"),
+        BotCommand("settings",      "⚙️ Settings"),
         BotCommand("discussed",     "✅ Books already discussed"),
         BotCommand("edit",          "✏️ Edit a book description"),
         BotCommand("delete",        "🗑 Delete a book"),
         BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
-        BotCommand("language",      "🌐 Switch to Russian"),
         BotCommand("help",          "❓ Show help"),
         BotCommand("cancel",        "❌ Cancel current action"),
     ],
@@ -613,12 +620,11 @@ COMMANDS = {
         BotCommand("add",           "➕ Добавить книгу"),
         BotCommand("list",          "📋 Список книг и голосование"),
         BotCommand("top",           "🏆 Топ книг"),
-        BotCommand("settings",      "⚙️ Настройки уведомлений"),
+        BotCommand("settings",      "⚙️ Настройки"),
         BotCommand("discussed",     "✅ Обсуждённые книги"),
         BotCommand("edit",          "✏️ Редактировать описание"),
         BotCommand("delete",        "🗑 Удалить книгу"),
         BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
-        BotCommand("language",      "🌐 Switch to English"),
         BotCommand("help",          "❓ Показать помощь"),
         BotCommand("cancel",        "❌ Отменить действие"),
     ],
@@ -645,13 +651,6 @@ async def set_user_commands(bot, update: "Update", lang: str) -> None:
         logger.warning(f"Could not set commands for user {user_id}: {e}")
 
 
-async def cmd_language(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    new_lang = "ru" if get_lang(ctx) == "en" else "en"
-    ctx.user_data["lang"] = new_lang
-    await set_user_commands(ctx.bot, update, new_lang)
-    await update.message.reply_text(tr(ctx, "lang_set"), parse_mode=PM)
-
-
 async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     notify = db_get_user_setting(user_id, "notify_new_books")
@@ -661,9 +660,10 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
     
     text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")
-    ]])
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
+        [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
+    ])
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
 
 
@@ -680,9 +680,24 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         
         val_str = tr(ctx, "settings_notify_on" if new_val == 1 else "settings_notify_off")
         text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")
-        ]])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
+            [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
+        ])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
+    elif data[1] == "toggle_lang":
+        new_lang = "ru" if get_lang(ctx) == "en" else "en"
+        ctx.user_data["lang"] = new_lang
+        await set_user_commands(ctx.bot, update, new_lang)
+        await query.answer(tr(ctx, "lang_set"))
+        
+        notify = db_get_user_setting(user_id, "notify_new_books")
+        val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
+        text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
+            [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
+        ])
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
     elif data[1] == "optin":
         val = int(data[2])
@@ -1326,7 +1341,6 @@ def main():
     app.add_handler(CommandHandler("settings",       cmd_settings))
     app.add_handler(CommandHandler("top",            cmd_top))
     app.add_handler(CommandHandler("discussed",      cmd_discussed))
-    app.add_handler(CommandHandler("language",       cmd_language))
 
     app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
