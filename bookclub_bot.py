@@ -939,8 +939,15 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
-    text = update.message.text.strip()
+    text = update.message.text.strip() if update.message and update.message.text else ""
     desc = "" if text == "/skip" else text
+    
+    if "new_book" not in ctx.user_data:
+        # Should not happen in normal conversation, but could if user sends message after timeout
+        logger.warning(f"User {update.effective_user.id} tried to add description but 'new_book' is missing.")
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+
     nb = ctx.user_data["new_book"]
     user = update.effective_user
     book_id = db_add_book(
@@ -956,12 +963,15 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.pop("new_book", None)
     
     # Schedule notifications for others
-    ctx.job_queue.run_once(
-        notify_new_book_job,
-        when=600, # 10 minutes
-        data={"book_id": book_id, "adder_id": user.id},
-        name=f"notify_book_{book_id}"
-    )
+    if ctx.job_queue:
+        ctx.job_queue.run_once(
+            notify_new_book_job,
+            when=600, # 10 minutes
+            data={"book_id": book_id, "adder_id": user.id},
+            name=f"notify_book_{book_id}"
+        )
+    else:
+        logger.warning("JobQueue is not available. New book notification skipped.")
     
     return ConversationHandler.END
 

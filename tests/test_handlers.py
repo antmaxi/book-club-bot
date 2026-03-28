@@ -284,6 +284,35 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         confirm_text = self.message.reply_text.call_args[0][0]
         self.assertIn("10 minutes", confirm_text)
 
+    async def test_add_description_no_job_queue(self):
+        self.context.user_data["new_book"] = {
+            "title": "Title 2", "author": "Author 2", "pages": 100, "fiction": True, "review_link": "http://x.com"
+        }
+        self.message.text = "Description"
+        self.context.job_queue = None
+        
+        # Ensure user fields are strings
+        self.update.effective_user.full_name = "Test User"
+        self.update.effective_user.username = "testuser"
+        
+        await bot.add_description(self.update, self.context)
+        
+        # Should not crash and should confirm book added
+        self.message.reply_text.assert_called_once()
+        self.assertIn("Book added", self.message.reply_text.call_args[0][0])
+
+    async def test_add_description_missing_new_book(self):
+        self.context.user_data = {}
+        self.context.user_data["lang"] = "en" # Force English for assertion
+        self.message.text = "Something"
+        self.context.job_queue = MagicMock()
+        
+        await bot.add_description(self.update, self.context)
+        
+        # Should not crash, should show cancelled/error message
+        self.message.reply_text.assert_called_once()
+        self.assertIn("Cancelled", self.message.reply_text.call_args[0][0])
+
     async def test_settings_in_menu(self):
         # Verify COMMANDS structure directly
         self.assertIn("settings", [c.command for c in bot.COMMANDS["en"]])
