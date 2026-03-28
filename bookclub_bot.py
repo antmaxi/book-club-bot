@@ -46,9 +46,9 @@ from telegram.ext import (
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-ADMIN_IDS  = set(
+ADMIN_IDS = [
     int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
-)
+]
 DB_PATH = "bookclub.db"
 
 # Conversation states
@@ -170,6 +170,8 @@ T = {
         "notify_optin_success": "✅ Settings saved!",
         "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
         "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
+        "bot_started": "🚀 <b>Bot is up!</b>",
+        "bot_stopped": "🛑 <b>Bot is down.</b>",
     },
     "ru": {
         "welcome": (
@@ -272,6 +274,8 @@ T = {
         "notify_optin_success": "✅ Настройки сохранены!",
         "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
         "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
+        "bot_started": "🚀 <b>Бот запущен!</b>",
+        "bot_stopped": "🛑 <b>Бот остановлен.</b>",
     },
 }
 
@@ -1296,11 +1300,49 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def bot_notify_startup(app: Application):
+    """Notify first admin that bot has started."""
+    if not ADMIN_IDS:
+        return
+    admin_id = ADMIN_IDS[0]
+    try:
+        # We don't have user_data here, default to English for system notifications.
+        await app.bot.send_message(
+            chat_id=admin_id,
+            text=T["en"]["bot_started"],
+            parse_mode=PM
+        )
+    except Exception as e:
+        logger.error(f"Failed to send startup notification: {e}")
+
+
+async def bot_notify_shutdown(app: Application):
+    """Notify first admin that bot is shutting down."""
+    if not ADMIN_IDS:
+        return
+    admin_id = ADMIN_IDS[0]
+    try:
+        await app.bot.send_message(
+            chat_id=admin_id,
+            text=T["en"]["bot_stopped"],
+            parse_mode=PM
+        )
+    except Exception as e:
+        logger.error(f"Failed to send shutdown notification: {e}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
     persistence = PicklePersistence(filepath="bot_persistence")
-    app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .persistence(persistence)
+        .post_init(bot_notify_startup)
+        .post_stop(bot_notify_shutdown)
+        .build()
+    )
 
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("add", cmd_add)],

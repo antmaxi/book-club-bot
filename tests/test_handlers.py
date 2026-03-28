@@ -336,5 +336,47 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
             # args: (bot, update, lang)
             self.assertEqual(args[2], "en") # default in setUp is en
 
+    async def test_bot_notify_startup(self):
+        # Backup ADMIN_IDS
+        old_admins = bot.ADMIN_IDS
+        bot.ADMIN_IDS = [123, 456]
+        try:
+            app = MagicMock()
+            app.bot = AsyncMock()
+            await bot.bot_notify_startup(app)
+            app.bot.send_message.assert_called_once()
+            args, kwargs = app.bot.send_message.call_args
+            self.assertEqual(kwargs["chat_id"], 123)
+            self.assertIn("Bot is up", kwargs["text"])
+        finally:
+            bot.ADMIN_IDS = old_admins
+
+    async def test_bot_notify_shutdown(self):
+        # Backup ADMIN_IDS
+        old_admins = bot.ADMIN_IDS
+        bot.ADMIN_IDS = [456, 123]
+        try:
+            app = MagicMock()
+            app.bot = AsyncMock()
+            await bot.bot_notify_shutdown(app)
+            app.bot.send_message.assert_called_once()
+            args, kwargs = app.bot.send_message.call_args
+            self.assertEqual(kwargs["chat_id"], 456)
+            self.assertIn("Bot is down", kwargs["text"])
+        finally:
+            bot.ADMIN_IDS = old_admins
+
+    async def test_bot_notify_no_admins(self):
+        # Backup ADMIN_IDS
+        old_admins = bot.ADMIN_IDS
+        bot.ADMIN_IDS = []
+        try:
+            app = MagicMock()
+            app.bot = AsyncMock()
+            await bot.bot_notify_startup(app)
+            app.bot.send_message.assert_not_called()
+        finally:
+            bot.ADMIN_IDS = old_admins
+
 if __name__ == "__main__":
     unittest.main()
