@@ -144,6 +144,9 @@ T = {
         "discussed_title":     "✅ <b>Discussed Books</b>\n\n",
         "no_discussed":        "📭 No books have been discussed yet.",
         "discussed_on":        "Discussed on",
+        "list_prompt":         "📋 <b>List of Books</b>\nShow all books or only those you haven't voted for yet?",
+        "list_all_btn":        "📚 All books",
+        "list_unvoted_btn":    "🗳 Unvoted only",
     },
     "ru": {
         "welcome": (
@@ -228,6 +231,9 @@ T = {
         "discussed_title":     "✅ <b>Обсуждённые книги</b>\n\n",
         "no_discussed":        "📭 Пока ни одна книга не была обсуждена.",
         "discussed_on":        "Обсуждено",
+        "list_prompt":         "📋 <b>Список книг</b>\nПоказать все книги или только те, за которые вы ещё не голосовали?",
+        "list_all_btn":        "📚 Все книги",
+        "list_unvoted_btn":    "🗳 Только без моего голоса",
     },
 }
 
@@ -347,15 +353,23 @@ def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added
     """
 
 
-def db_get_books(discussed=False):
-    """Return books. discussed=False → undiscussed, discussed=True → discussed."""
+def db_get_books(discussed=False, user_id_unvoted=None):
+    """Return books. discussed=False → undiscussed, discussed=True → discussed.
+    If user_id_unvoted is provided, only return books that this user has NOT voted for yet.
+    """
     flag = 1 if discussed else 0
+    where = "WHERE b.discussed = ?"
+    params = [flag]
+    if user_id_unvoted:
+        where += " AND b.id NOT IN (SELECT book_id FROM votes WHERE user_id = ?)"
+        params.append(user_id_unvoted)
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
-            _books_query("WHERE b.discussed = ?",
+            _books_query(where,
                          "b.discussed_at DESC" if discussed else "avg_score DESC, vote_count DESC, b.added_at DESC"),
-            (flag,)
+            tuple(params)
         ).fetchall()
 
 
@@ -581,15 +595,51 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
-    user_id = update.effective_user.id
-    books = db_get_books(discussed=False)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(tr(ctx, "list_all_btn"), callback_data="list:all"),
+            InlineKeyboardButton(tr(ctx, "list_unvoted_btn"), callback_data="list:unvoted"),
+        ]
+    ])
+    await update.message.reply_text(
+        tr(ctx, "list_prompt"),
+        reply_markup=keyboard,
+        parse_mode=PM
+    )
+
+
+async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    user_id = query.from_user.id
+    _, choice = query.data.split(":")
+
+    user_id_unvoted = user_id if choice == "unvoted" else None
+    books = db_get_books(discussed=False, user_id_unvoted=user_id_unvoted)
+
     if not books:
-        await update.message.reply_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        if choice == "unvoted":
+            # Check if there are ANY books at all
+            all_undiscussed = db_get_books(discussed=False)
+            if not all_undiscussed:
+                text = tr(ctx, "no_undiscussed")
+            else:
+                # User has voted on everything
+                text = "✅ " + ("You've voted on all books!" if lang == "en" else "Вы проголосовали за все книги!")
+        else:
+            text = tr(ctx, "no_undiscussed")
+        await query.edit_message_text(text, parse_mode=PM)
         return
+
+    # Delete the prompt message
+    await query.delete_message()
+
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])
-        await update.message.reply_text(
-            book_card(book, lang, user_vote=uv),
+        await ctx.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=book_card(book, lang, user_vote=uv),
             parse_mode=PM,
             reply_markup=score_keyboard(book["id"], lang, uv),
         )
@@ -1054,6 +1104,7 @@ def main():
     app.add_handler(CommandHandler("discussed",      cmd_discussed))
     app.add_handler(CommandHandler("language",       cmd_language))
 
+    app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
 
     # ── Register default command menu in Russian (fallback for all users) ───────

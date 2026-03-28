@@ -60,6 +60,22 @@ class TestDatabase(unittest.TestCase):
         books = bot.db_get_books(discussed=False)
         self.assertEqual(len(books), 2)
 
+    def test_db_get_books_unvoted(self):
+        book1_id = bot.db_add_book("Book 1", "Author 1", 100, True, "", "", 1, "u1")
+        book2_id = bot.db_add_book("Book 2", "Author 2", 200, False, "", "", 2, "u2")
+        
+        # User 10 votes for Book 1
+        bot.db_cast_vote(10, book1_id, 1)
+        
+        # All undiscussed
+        all_books = bot.db_get_books(discussed=False)
+        self.assertEqual(len(all_books), 2)
+        
+        # Unvoted for user 10
+        unvoted = bot.db_get_books(discussed=False, user_id_unvoted=10)
+        self.assertEqual(len(unvoted), 1)
+        self.assertEqual(unvoted[0]["id"], book2_id)
+
     def test_db_mark_discussed(self):
         book_id = bot.db_add_book("Book", "Author", 100, True, "", "", 1, "u1")
         bot.db_mark_discussed(book_id, "2023-01-01")

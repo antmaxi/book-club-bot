@@ -48,21 +48,49 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         self.message.reply_text.assert_called_once()
         mock_set_commands.assert_called_once_with(self.context.bot, self.update, "ru")
 
-    async def test_cmd_list_empty(self):
+    async def test_cmd_list(self):
+        # Now cmd_list only shows a prompt
         await bot.cmd_list(self.update, self.context)
         self.message.reply_text.assert_called_once()
         args, kwargs = self.message.reply_text.call_args
-        # Should show 'no undiscussed books'
-        self.assertIn("No undiscussed books", args[0])
+        self.assertIn("Show all books", args[0])
+        self.assertIn("reply_markup", kwargs)
 
-    async def test_cmd_list_with_books(self):
+    async def test_list_choice_all(self):
         bot.db_add_book("Book 1", "Author 1", 100, True, "", "", 1, "u1")
-        await bot.cmd_list(self.update, self.context)
-        # Should be called once for each book + possibly header (but cmd_list calls once per book)
-        # Actually cmd_list calls once per book and no header if undiscussed
-        self.assertEqual(self.message.reply_text.call_count, 1)
-        args, kwargs = self.message.reply_text.call_args
-        self.assertIn("Book 1", args[0])
+        # Mock callback query
+        query = AsyncMock()
+        query.data = "list:all"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        
+        await bot.list_choice_cb(self.update, self.context)
+        
+        query.answer.assert_called_once()
+        query.delete_message.assert_called_once()
+        # Should send message for the book
+        self.context.bot.send_message.assert_called_once()
+        args, kwargs = self.context.bot.send_message.call_args
+        self.assertIn("Book 1", kwargs["text"])
+
+    async def test_list_choice_unvoted(self):
+        book_id = bot.db_add_book("Book 1", "Author 1", 100, True, "", "", 1, "u1")
+        # Vote on it
+        bot.db_cast_vote(self.update.effective_user.id, book_id, 1)
+        
+        # Mock callback query
+        query = AsyncMock()
+        query.data = "list:unvoted"
+        query.from_user.id = self.update.effective_user.id
+        self.update.callback_query = query
+        
+        await bot.list_choice_cb(self.update, self.context)
+        
+        # Should NOT send message for the book (already voted)
+        # Instead should show "You've voted on all books!"
+        self.context.bot.send_message.assert_not_called()
+        query.edit_message_text.assert_called_once()
+        self.assertIn("voted on all", query.edit_message_text.call_args[0][0])
 
     async def test_cmd_add(self):
         state = await bot.cmd_add(self.update, self.context)
