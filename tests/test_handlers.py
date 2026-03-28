@@ -155,7 +155,7 @@ class TestHandlers(unittest.IsolatedAsyncioTestCase):
         query.answer.assert_called_once()
         kwargs = query.answer.call_args[1]
         self.assertTrue(kwargs["show_alert"])
-        self.assertIn("score is calculated as follows", kwargs["text"])
+        self.assertIn("Want: +1 point", kwargs["text"])
 
     async def test_cmd_top_cut_off(self):
         # Create 7 books, 1-5 have score 1, 6-7 have score 0.5

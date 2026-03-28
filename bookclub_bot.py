@@ -148,7 +148,7 @@ T = {
         "list_all_btn":        "📚 All books",
         "list_unvoted_btn":    "🗳 Unvoted only",
         "score_calc_btn":      "📊 How a score is calculated",
-        "score_calc_info":     "The score is calculated as follows:\n\n✅ Want: +1 point\n😐 Don't care: 0 points\n❌ Don't want: -1 point\n\nThe average score is the sum of points divided by the number of votes.\n\nBooks are sorted by average score, then by the total number of votes, and then by the date added.",
+        "score_calc_info":     "✅ Want: +1 point\n😐 Don't care: 0 points\n❌ Don't want: -1 point\n\nSorted by average score, then by the total number of votes, and then by the date added.",
     },
     "ru": {
         "welcome": (
@@ -237,7 +237,7 @@ T = {
         "list_all_btn":        "📚 Все книги",
         "list_unvoted_btn":    "🗳 Только без моего голоса",
         "score_calc_btn":      "📊 Как рассчитывается балл",
-        "score_calc_info":     "Балл рассчитывается следующим образом:\n\n✅ Хочу: +1 балл\n😐 Всё равно: 0 баллов\n❌ Не хочу: -1 балл\n\nСредний балл — это сумма баллов, делённая на количество голосов.\n\nКниги сортируются по среднему баллу, затем по общему количеству голосов и затем по дате добавления.",
+        "score_calc_info":     "✅ Хочу: +1 балл\n😐 Всё равно: 0 баллов\n❌ Не хочу: -1 балл\n\nСортировка по среднему баллу, затем по количеству голосов и затем по дате добавления.",
     },
 }
 
