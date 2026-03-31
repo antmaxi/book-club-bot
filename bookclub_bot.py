@@ -321,8 +321,14 @@ def tr(ctx_or_lang, key, **kwargs):
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
+def db_connect():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -382,7 +388,7 @@ def init_db():
 
 
 def db_add_book(title, author, pages, fiction, review_link, description, user_id, user_name, username=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
@@ -421,7 +427,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
         where += " AND b.id NOT IN (SELECT book_id FROM votes WHERE user_id = ?)"
         params.append(user_id_unvoted)
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query(where,
@@ -431,7 +437,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
 
 
 def db_get_book(book_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query("WHERE b.id = ?"), (book_id,)
@@ -443,13 +449,13 @@ def db_update_book_field(book_id, field, value):
     allowed = {"title", "author", "pages", "fiction", "review_link", "description"}
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(f"UPDATE books SET {field}=? WHERE id=?", (value, book_id))
         conn.commit()
 
 
 def db_mark_discussed(book_id, date_str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id)
@@ -458,14 +464,14 @@ def db_mark_discussed(book_id, date_str):
 
 
 def db_delete_book(book_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
 
 
 def db_cast_vote(user_id, book_id, score):
     """score: -1 = don't want, 0 = don't care, 1 = want to read"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT INTO votes (user_id,book_id,score) VALUES (?,?,?) "
             "ON CONFLICT(user_id,book_id) DO UPDATE SET score=excluded.score",
@@ -475,7 +481,7 @@ def db_cast_vote(user_id, book_id, score):
 
 
 def db_get_user_vote(user_id, book_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute(
             "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
         ).fetchone()
@@ -483,7 +489,7 @@ def db_get_user_vote(user_id, book_id):
 
 
 def db_get_user_setting(user_id, key, default=-1):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         row = conn.execute(
             "SELECT setting_val FROM user_settings WHERE user_id=? AND setting_key=?",
             (user_id, key),
@@ -492,7 +498,7 @@ def db_get_user_setting(user_id, key, default=-1):
 
 
 def db_set_user_setting(user_id, key, value):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         conn.execute(
             "INSERT INTO user_settings (user_id, setting_key, setting_val) VALUES (?,?,?) "
             "ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_val=excluded.setting_val",
@@ -502,7 +508,7 @@ def db_set_user_setting(user_id, key, value):
 
 
 def db_get_users_with_setting(key, value):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db_connect() as conn:
         rows = conn.execute(
             "SELECT user_id FROM user_settings WHERE setting_key=? AND setting_val=?",
             (key, value),

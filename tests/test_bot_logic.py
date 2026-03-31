@@ -381,12 +381,12 @@ class TestUtils(unittest.TestCase):
     def test_score_display_no_votes_ru(self):
         book = make_book(votes_yes=0, votes_meh=0, votes_no=0, vote_count=0, avg_score=0)
         display = bot.score_display(book, "ru")
-        self.assertIn("0 голос", display)
+        self.assertIn("0 оценок", display)
 
     def test_score_display_ru_plural_votes(self):
         book = make_book(votes_yes=2, votes_meh=0, votes_no=0, vote_count=2, avg_score=1)
         display = bot.score_display(book, "ru")
-        self.assertIn("голос", display)
+        self.assertIn("оценки", display)
 
     # -- book_card --
 
