@@ -56,7 +56,8 @@ DB_PATH = "bookclub.db"
 # Members of this chat are allowed to use the bot.
 # Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
 # Leave empty to allow everyone (useful during initial setup).
-ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
+ALLOWED_CHAT_ID   = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
+ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб")
 
 # Conversation states
 (
@@ -177,6 +178,7 @@ T = {
         "notify_optin_success": "✅ Settings saved!",
         "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
         "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
+        "not_member":  "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
     },
@@ -281,6 +283,7 @@ T = {
         "notify_optin_success": "✅ Настройки сохранены!",
         "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
         "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
+        "not_member":  "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
     },
@@ -321,14 +324,8 @@ def tr(ctx_or_lang, key, **kwargs):
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
-def db_connect():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
 def init_db():
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,7 +385,7 @@ def init_db():
 
 
 def db_add_book(title, author, pages, fiction, review_link, description, user_id, user_name, username=None):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
@@ -427,7 +424,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
         where += " AND b.id NOT IN (SELECT book_id FROM votes WHERE user_id = ?)"
         params.append(user_id_unvoted)
 
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query(where,
@@ -437,7 +434,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
 
 
 def db_get_book(book_id):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query("WHERE b.id = ?"), (book_id,)
@@ -449,13 +446,13 @@ def db_update_book_field(book_id, field, value):
     allowed = {"title", "author", "pages", "fiction", "review_link", "description"}
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(f"UPDATE books SET {field}=? WHERE id=?", (value, book_id))
         conn.commit()
 
 
 def db_mark_discussed(book_id, date_str):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id)
@@ -464,14 +461,14 @@ def db_mark_discussed(book_id, date_str):
 
 
 def db_delete_book(book_id):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
 
 
 def db_cast_vote(user_id, book_id, score):
     """score: -1 = don't want, 0 = don't care, 1 = want to read"""
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO votes (user_id,book_id,score) VALUES (?,?,?) "
             "ON CONFLICT(user_id,book_id) DO UPDATE SET score=excluded.score",
@@ -481,7 +478,7 @@ def db_cast_vote(user_id, book_id, score):
 
 
 def db_get_user_vote(user_id, book_id):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
         ).fetchone()
@@ -489,7 +486,7 @@ def db_get_user_vote(user_id, book_id):
 
 
 def db_get_user_setting(user_id, key, default=-1):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT setting_val FROM user_settings WHERE user_id=? AND setting_key=?",
             (user_id, key),
@@ -498,7 +495,7 @@ def db_get_user_setting(user_id, key, default=-1):
 
 
 def db_set_user_setting(user_id, key, value):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO user_settings (user_id, setting_key, setting_val) VALUES (?,?,?) "
             "ON CONFLICT(user_id, setting_key) DO UPDATE SET setting_val=excluded.setting_val",
@@ -508,7 +505,7 @@ def db_set_user_setting(user_id, key, value):
 
 
 def db_get_users_with_setting(key, value):
-    with db_connect() as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT user_id FROM user_settings WHERE setting_key=? AND setting_val=?",
             (key, value),
@@ -1363,13 +1360,23 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
 
 
 async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Silently drop updates from users not in the allowed chat."""
-    if not await _check_membership(update, ctx):
-        logger.info(
-            f"Blocked user {update.effective_user.id if update.effective_user else '?'}"
-            f" — not a member of chat {ALLOWED_CHAT_ID}"
-        )
-        raise ApplicationHandlerStop
+    """Block users not in the allowed chat and tell them why."""
+    if await _check_membership(update, ctx):
+        return
+    user_id = update.effective_user.id if update.effective_user else "?"
+    logger.info(f"Blocked user {user_id} — not a member of chat {ALLOWED_CHAT_ID}")
+    lang = get_lang(ctx) if ctx.user_data else "ru"
+    text = T[lang]["not_member"].format(chat=h(ALLOWED_CHAT_NAME))
+    try:
+        if update.callback_query:
+            await update.callback_query.answer(
+                ALLOWED_CHAT_NAME + " — members only", show_alert=True
+            )
+        elif update.message:
+            await update.message.reply_text(text, parse_mode=PM)
+    except Exception as e:
+        logger.warning(f"Could not send not-member message to {user_id}: {e}")
+    raise ApplicationHandlerStop
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
