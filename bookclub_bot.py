@@ -80,7 +80,7 @@ T = {
             "📋 /list — See all books\n"
             "🏆 /top — Top rated books\n"
             "⚙️ /settings — Settings\n"
-            "✏️ /edit — Edit a description\n"
+            "✏️ /edit — Edit a book entry\n"
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
             "✅ /discussed — Books already discussed\n"
@@ -180,7 +180,7 @@ T = {
             "📋 /list — Список книг\n"
             "🏆 /top — Топ книг\n"
             "⚙️ /settings — Настройки\n"
-            "✏️ /edit — Редактировать описание\n"
+            "✏️ /edit — Редактировать запись\n"
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
             "✅ /discussed — Обсуждённые книги\n"
@@ -614,7 +614,7 @@ COMMANDS = {
         BotCommand("top",           "🏆 Top rated books"),
         BotCommand("settings",      "⚙️ Settings"),
         BotCommand("discussed",     "✅ Books already discussed"),
-        BotCommand("edit",          "✏️ Edit a book description"),
+        BotCommand("edit",          "✏️ Edit a book entry"),
         BotCommand("delete",        "🗑 Delete a book"),
         BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
         BotCommand("help",          "❓ Show help"),
@@ -626,7 +626,7 @@ COMMANDS = {
         BotCommand("top",           "🏆 Топ книг"),
         BotCommand("settings",      "⚙️ Настройки"),
         BotCommand("discussed",     "✅ Обсуждённые книги"),
-        BotCommand("edit",          "✏️ Редактировать описание"),
+        BotCommand("edit",          "✏️ Редактировать запись"),
         BotCommand("delete",        "🗑 Удалить книгу"),
         BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
         BotCommand("help",          "❓ Показать помощь"),
