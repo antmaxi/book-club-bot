@@ -35,12 +35,14 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeChatMember
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     PicklePersistence,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
     ConversationHandler,
     ContextTypes,
+    TypeHandler,
     filters,
 )
 
@@ -50,6 +52,11 @@ ADMIN_IDS = [
     int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
 ]
 DB_PATH = "bookclub.db"
+
+# Members of this chat are allowed to use the bot.
+# Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
+# Leave empty to allow everyone (useful during initial setup).
+ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
 
 # Conversation states
 (
@@ -1329,6 +1336,36 @@ async def bot_notify_shutdown(app: Application):
         logger.error(f"Failed to send shutdown notification: {e}")
 
 
+
+# ── Chat membership gate ───────────────────────────────────────────────────────
+async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Return True if the user is a member of ALLOWED_CHAT_ID (or no restriction set)."""
+    if not ALLOWED_CHAT_ID:
+        return True
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        return False
+    # Admins always pass
+    if user_id in ADMIN_IDS:
+        return True
+    try:
+        member = await ctx.bot.get_chat_member(ALLOWED_CHAT_ID, user_id)
+        return member.status in ("member", "administrator", "creator", "restricted")
+    except Exception as e:
+        logger.warning(f"Membership check failed for user {user_id}: {e}")
+        return False
+
+
+async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Silently drop updates from users not in the allowed chat."""
+    if not await _check_membership(update, ctx):
+        logger.info(
+            f"Blocked user {update.effective_user.id if update.effective_user else '?'}"
+            f" — not a member of chat {ALLOWED_CHAT_ID}"
+        )
+        raise ApplicationHandlerStop
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
@@ -1341,6 +1378,9 @@ def main():
         .post_stop(bot_notify_shutdown)
         .build()
     )
+
+    # Gate: silently block users not in the allowed chat (runs before all handlers)
+    app.add_handler(TypeHandler(Update, membership_gate), group=-1)
 
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("add", cmd_add)],
