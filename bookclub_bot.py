@@ -1406,7 +1406,7 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
-    persistence = PicklePersistence(file_path="bot_persistence")
+    persistence = PicklePersistence(filepath="bot_persistence")
     app = (
         Application.builder()
         .token(BOT_TOKEN)
