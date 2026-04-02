@@ -983,44 +983,52 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             name=f"notify_book_{book_id}"
         )
     else:
-        logger.warning("JobQueue is not available. New book notification skipped.")
+        logger.error(
+            "JobQueue is None — notifications will not be sent.\n"
+            "Fix: pip install \"python-telegram-bot[job-queue]\"\n"
+            "Then restart the bot."
+        )
     
     return ConversationHandler.END
 
 
 async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
-    job = ctx.job
-    book_id = job.data["book_id"]
-    adder_id = job.data["adder_id"]
-    
+    """Fired 10 minutes after a book is added. Sends a card to all opted-in users."""
+    book_id  = ctx.job.data["book_id"]
+    adder_id = ctx.job.data["adder_id"]
+
     book = db_get_book(book_id)
-    if not book or book["discussed"]:
-        return # Book was deleted or already discussed?
-        
-    # Get all users who want notifications
+    if not book:
+        logger.info(f"notify_new_book_job: book {book_id} no longer exists, skipping.")
+        return
+    if book["discussed"]:
+        logger.info(f"notify_new_book_job: book {book_id} already discussed, skipping.")
+        return
+
     user_ids = db_get_users_with_setting("notify_new_books", 1)
-    
+    logger.info(f"notify_new_book_job: notifying {len(user_ids)} user(s) about book {book_id}.")
+
+    sent = 0
     for user_id in user_ids:
         if user_id == adder_id:
             continue
-            
-        # We need to know the user's language. 
-        # Persistence might have it, or we default to Russian as in get_lang.
-        # Since we don't have a 'ctx' for each user here, we check persistence.
+        # Resolve language from persistence; fall back to Russian
         user_data = ctx.application.user_data.get(user_id, {})
         lang = user_data.get("lang", "ru")
-        
         try:
-            uv = db_get_user_vote(user_id, book_id)
+            uv   = db_get_user_vote(user_id, book_id)
             text = tr(lang, "new_book_notification") + book_card(book, lang, user_vote=uv)
             await ctx.bot.send_message(
                 chat_id=user_id,
                 text=text,
                 parse_mode=PM,
-                reply_markup=score_keyboard(book_id, lang, uv)
+                reply_markup=score_keyboard(book_id, lang, uv),
             )
+            sent += 1
         except Exception as e:
-            logger.warning(f"Failed to send notification to {user_id}: {e}")
+            logger.warning(f"notify_new_book_job: failed to notify user {user_id}: {e}")
+
+    logger.info(f"notify_new_book_job: done — sent to {sent} user(s).")
 
 
 async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1309,7 +1317,13 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def bot_notify_startup(app: Application):
-    """Notify first admin that bot has started."""
+    """Notify first admin that bot has started, and set default command menu."""
+    # Register the default (Russian) command menu for users who haven't set a language yet
+    try:
+        await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
+    except Exception as e:
+        logger.warning(f"Could not set default commands: {e}")
     if not ADMIN_IDS:
         return
     admin_id = ADMIN_IDS[0]
@@ -1391,6 +1405,12 @@ def main():
         .post_stop(bot_notify_shutdown)
         .build()
     )
+    # Verify JobQueue is available (requires: pip install "python-telegram-bot[job-queue]")
+    if app.job_queue is None:
+        logger.error(
+            "JobQueue is not available! New book notifications will not work.\n"
+            "Fix: pip install \"python-telegram-bot[job-queue]\""
+        )
 
     # Gate: silently block users not in the allowed chat (runs before all handlers)
     app.add_handler(TypeHandler(Update, membership_gate), group=-1)
@@ -1406,6 +1426,7 @@ def main():
             ADDING_DESCRIPTION: [MessageHandler(filters.TEXT, add_description)],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
+        per_message=False,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1415,6 +1436,7 @@ def main():
             MARKING_DATE:   [MessageHandler(filters.TEXT, mark_date_handler)],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
+        per_message=False,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1428,6 +1450,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
+        per_message=False,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1436,6 +1459,7 @@ def main():
             DELETING_CHOOSE: [CallbackQueryHandler(delete_pick_cb, pattern=r"^del_pick:")],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
+        per_message=False,
     ))
 
     app.add_handler(CommandHandler("start",          cmd_start))
@@ -1449,14 +1473,6 @@ def main():
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
-
-    # ── Register default command menu in Russian (fallback for all users) ───────
-    import asyncio
-    async def set_default_commands(bot):
-        await bot.delete_my_commands(scope=BotCommandScopeDefault())
-        await bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
-
-    asyncio.get_event_loop().run_until_complete(set_default_commands(app.bot))
 
     logger.info("Bot is running...")
     app.run_polling()
