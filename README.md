@@ -15,6 +15,8 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - Get notified when a new book is added (with a 10-minute delay).
   - Notifications include a voting card to vote directly from the message.
   - Opt-in or out via `/settings`.
+  - **Admin Notifications:** The main admin (first ID in `ADMIN_IDS`) receives notifications when the bot starts up or shuts down.
+- **Access Control:** Optionally restrict bot usage to members of a specific Telegram chat (via `ALLOWED_CHAT_ID`). For this bot should be inside the chat too
 - **Archive:** Track books that have already been discussed.
 
 ## 🛠 Commands
@@ -58,9 +60,10 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    ```bash
    pip install -r requirements.txt
 
-   ssh bot 'screen -dmS mysession bash -c "cd book-club-bot;
+   ssh bot 'screen -dmS prodsession bash -c "cd book-club-bot;
    export BOT_TOKEN="your_token_from_BotFather";
    export ADMIN_IDS="ID_1,ID_2";
+   export ALLOWED_CHAT_ID="CHAT_ID";  # Optional: Restrict bot usage to members of this chat
    .venv/bin/python3 bookclub_bot.py"'
    ```
 
