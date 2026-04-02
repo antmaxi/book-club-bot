@@ -29,6 +29,7 @@ Commands:
 """
 
 import logging
+import logging.handlers
 import sqlite3
 import os
 from datetime import datetime
@@ -73,10 +74,19 @@ EDITING_FIELD  = 7   # waiting for new value of current field
 DELETING_CHOOSE = 8
 MARKING_CHOOSE, MARKING_DATE = range(9, 11)
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+LOG_FILE = os.environ.get("LOG_FILE", "bookclub_bot.log")
+
+_log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_fmt)
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
 )
+_file_handler.setFormatter(_log_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler])
 logger = logging.getLogger(__name__)
 
 # ── Translations ───────────────────────────────────────────────────────────────
