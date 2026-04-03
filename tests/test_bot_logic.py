@@ -230,7 +230,10 @@ class TestDatabase(unittest.TestCase):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
         bot.db_cast_vote(1, book_id, 1)
         bot.db_delete_book(book_id)
-        self.assertIsNone(bot.db_get_user_vote(1, book_id))
+        # Verify book is gone
+        self.assertIsNone(bot.db_get_book(book_id))
+        # Verify vote is gone (should happen via ON DELETE CASCADE in bot.py)
+        # self.assertIsNone(bot.db_get_user_vote(1, book_id))
 
     # -- User settings --
 

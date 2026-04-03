@@ -336,6 +336,7 @@ def tr(ctx_or_lang, key, **kwargs):
 # ── Database ───────────────────────────────────────────────────────────────────
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -377,10 +378,9 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 user_id INTEGER NOT NULL,
-                book_id INTEGER NOT NULL,
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                 score   INTEGER NOT NULL,
-                PRIMARY KEY (user_id, book_id),
-                FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+                PRIMARY KEY (user_id, book_id)
             )
         """)
         conn.execute("""
@@ -396,6 +396,7 @@ def init_db():
 
 def db_add_book(title, author, pages, fiction, review_link, description, user_id, user_name, username=None):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
@@ -435,6 +436,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
         params.append(user_id_unvoted)
 
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query(where,
@@ -445,6 +447,7 @@ def db_get_books(discussed=False, user_id_unvoted=None):
 
 def db_get_book(book_id):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn.execute(
             _books_query("WHERE b.id = ?"), (book_id,)
@@ -457,12 +460,14 @@ def db_update_book_field(book_id, field, value):
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(f"UPDATE books SET {field}=? WHERE id=?", (value, book_id))
         conn.commit()
 
 
 def db_mark_discussed(book_id, date_str):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id)
@@ -472,6 +477,7 @@ def db_mark_discussed(book_id, date_str):
 
 def db_delete_book(book_id):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
 
@@ -479,6 +485,7 @@ def db_delete_book(book_id):
 def db_cast_vote(user_id, book_id, score):
     """score: -1 = don't want, 0 = don't care, 1 = want to read"""
     with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
             "INSERT INTO votes (user_id,book_id,score) VALUES (?,?,?) "
             "ON CONFLICT(user_id,book_id) DO UPDATE SET score=excluded.score",

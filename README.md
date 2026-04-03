@@ -70,6 +70,18 @@ To run tests using Docker:
 docker-compose run --rm bot python -m unittest discover tests
 ```
 
+### Git Pre-commit Hook
+
+To ensure tests pass before every commit, a Git pre-commit hook has been added. It automatically runs the test suite using Docker.
+
+If you need to install it manually on another machine:
+1. Create `.git/hooks/pre-commit` with the following content:
+```bash
+#!/bin/bash
+docker compose run --rm bot python -m unittest discover tests
+```
+2. Make it executable: `chmod +x .git/hooks/pre-commit`
+
 Or manually in a virtual environment:
 ```bash
 python3 -m venv .venv
