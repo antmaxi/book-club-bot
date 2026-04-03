@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./bookclub.db:/app/bookclub.db
+      - ./bookclub_bot.log:/app/bookclub_bot.log
+    restart: always

@@ -38,7 +38,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.12+
+- Docker and Docker Compose
 - A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 
 ### Setup
@@ -48,33 +48,32 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    cd book-club-bot
    ```
 
-2. **Create a virtual environment and install dependencies:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
+2. **Configure environment variables:**
+   Create a `.env` file in the project root with the following content:
+   ```env
+   BOT_TOKEN="your_token_from_BotFather"
+   ADMIN_IDS="ID_1,ID_2"
+   ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    ```
 
-3. **Configure and run the bot:**
-   Use the following command to install dependencies and run the bot in a `screen` session on your server:
+3. **Run the bot using Docker:**
    ```bash
-   pip install -r requirements.txt
-
-   ssh bot 'screen -dmS prodsession bash -c "cd book-club-bot;
-   export BOT_TOKEN="your_token_from_BotFather";
-   export ADMIN_IDS="ID_1,ID_2";
-   export ALLOWED_CHAT_ID="CHAT_ID";  # Optional: Restrict bot usage to members of this chat
-   .venv/bin/python3 bookclub_bot.py"'
+   docker-compose up -d
    ```
 
 ## 🧪 Testing
 
-The project includes a suite of unit and integration tests using `unittest`.
+The project includes a suite of unit and integration tests.
 
-To run all tests:
+To run tests using Docker:
 ```bash
-.venv/bin/python3 -m unittest discover tests
+docker-compose run --rm bot python -m unittest discover tests
 ```
 
----
-*Developed with love for Book Clubs.*
+Or manually in a virtual environment:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m unittest discover tests
+```
