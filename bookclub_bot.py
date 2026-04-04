@@ -52,6 +52,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [
     int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
 ]
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/book-club-bot")
 DB_PATH = "bookclub.db"
 
 # Members of this chat are allowed to use the bot.
@@ -191,6 +192,11 @@ T = {
         "not_member":  "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
+        "info_msg": (
+            "🤖 <b>Book Club Bot</b>\n\n"
+            "📅 <b>Last update:</b> {last_commit}\n"
+            "🔗 <b>Source code:</b> {github_repo}"
+        ),
     },
     "ru": {
         "welcome": (
@@ -296,6 +302,11 @@ T = {
         "not_member":  "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
+        "info_msg": (
+            "🤖 <b>Book Club Bot</b>\n\n"
+            "📅 <b>Последнее обновление:</b> {last_commit}\n"
+            "🔗 <b>Исходный код:</b> {github_repo}"
+        ),
     },
 }
 
@@ -644,6 +655,7 @@ COMMANDS = {
         BotCommand("edit",          "✏️ Edit a book entry"),
         BotCommand("delete",        "🗑 Delete a book"),
         BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
+        BotCommand("info",            "ℹ️ About the bot"),
         BotCommand("help",          "❓ Show help"),
         BotCommand("cancel",        "❌ Cancel current action"),
     ],
@@ -656,6 +668,7 @@ COMMANDS = {
         BotCommand("edit",          "✏️ Редактировать запись"),
         BotCommand("delete",        "🗑 Удалить книгу"),
         BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
+        BotCommand("info",            "ℹ️ О боте"),
         BotCommand("help",          "❓ Показать помощь"),
         BotCommand("cancel",        "❌ Отменить действие"),
     ],
@@ -747,6 +760,20 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await cmd_start(update, ctx)
+
+
+async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import subprocess
+    try:
+        last_commit = subprocess.check_output(
+            ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S']
+        ).decode("utf-8").strip()
+    except Exception as e:
+        logger.warning(f"Could not get last commit: {e}")
+        last_commit = "unknown"
+
+    text = tr(ctx, "info_msg", last_commit=last_commit, github_repo=GITHUB_REPO)
+    await update.message.reply_text(text, parse_mode=PM, disable_web_page_preview=True)
 
 
 async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1481,6 +1508,7 @@ def main():
 
     app.add_handler(CommandHandler("start",          cmd_start))
     app.add_handler(CommandHandler("help",           cmd_help))
+    app.add_handler(CommandHandler("info",           cmd_info))
     app.add_handler(CommandHandler("list",           cmd_list))
     app.add_handler(CommandHandler("settings",       cmd_settings))
     app.add_handler(CommandHandler("top",            cmd_top))

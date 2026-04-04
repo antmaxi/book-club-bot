@@ -97,6 +97,38 @@ class TestStartHelp(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
 
 
+# ── /info ─────────────────────────────────────────────────────────────────────
+
+class TestInfo(BotHandlerTestCase):
+
+    @patch("subprocess.check_output")
+    async def test_cmd_info_en(self, mock_git):
+        mock_git.return_value = b"2026-04-04 12:00:00\n"
+        with patch("bookclub_bot.GITHUB_REPO", "https://test.repo"):
+            await bot.cmd_info(self.update, self.ctx)
+        self.message.reply_text.assert_called_once()
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Book Club Bot", text)
+        self.assertIn("2026-04-04 12:00:00", text)
+        self.assertIn("https://test.repo", text)
+
+    @patch("subprocess.check_output")
+    async def test_cmd_info_ru(self, mock_git):
+        self.ctx.user_data["lang"] = "ru"
+        mock_git.return_value = b"2026-04-04 12:00:00\n"
+        await bot.cmd_info(self.update, self.ctx)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Последнее обновление", text)
+        self.assertIn("2026-04-04 12:00:00", text)
+
+    @patch("subprocess.check_output")
+    async def test_cmd_info_git_error(self, mock_git):
+        mock_git.side_effect = Exception("git not found")
+        await bot.cmd_info(self.update, self.ctx)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("unknown", text)
+
+
 # ── set_user_commands ──────────────────────────────────────────────────────────
 
 class TestSetUserCommands(BotHandlerTestCase):

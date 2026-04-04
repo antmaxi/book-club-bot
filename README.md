@@ -23,6 +23,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 
 ### User Commands
 - `/start` or `/help`: Welcome message and command list.
+- `/info`: About the bot and last update time.
 - `/add`: Add a new book to the list.
 - `/list`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
@@ -58,6 +59,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    ```env
    BOT_TOKEN="your_token_from_BotFather"
    ADMIN_IDS="ID_1,ID_2"
+   GITHUB_REPO="https://github.com/yourusername/your-repo"
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    ```
 
