@@ -35,6 +35,11 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 ### Admin Commands
 - `/markdiscussed`: Mark a specific book as discussed (with a date).
 
+## 🖼 Screenshots
+![Top](screenshots/2026-04-04_screenshot_top.png)
+![List](screenshots/2026-04-04_screenshot_list.png)
+![Settings](screenshots/2026-04-04_screenshot_settings.png)
+
 ## 🚀 Getting Started
 
 ### Prerequisites
