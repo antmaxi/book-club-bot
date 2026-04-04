@@ -472,6 +472,7 @@ def db_update_book_field(book_id, field, value):
         raise ValueError(f"Field {field!r} not editable")
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
+        # Field name is whitelisted above, so this is safe from injection.
         conn.execute(f"UPDATE books SET {field}=? WHERE id=?", (value, book_id))
         conn.commit()
 
@@ -546,8 +547,8 @@ def format_user(book) -> str:
     """Return @username if available, otherwise fall back to display name."""
     username = book["added_by_username"]
     if username:
-        return f"@{username}"
-    return book["added_by_name"] or "unknown"
+        return f"@{h(username)}"
+    return h(book["added_by_name"] or "unknown")
 
 def h(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
