@@ -21,6 +21,7 @@ Commands:
   /list            - List all undiscussed books (all or only unvoted)
   /top             - View top-rated undiscussed books
   /settings        - Manage notification and language preferences
+  /info            - Information about the bot and source code
   /edit            - Edit a book's details (owner/admin only)
   /delete          - Delete a book (owner/admin only)
   /discussed       - View the archive of discussed books
@@ -99,6 +100,7 @@ T = {
             "📋 /list — See all books\n"
             "🏆 /top — Top rated books\n"
             "⚙️ /settings — Settings\n"
+            "ℹ️ /info — About the bot\n"
             "✏️ /edit — Edit a book entry\n"
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
@@ -205,6 +207,7 @@ T = {
             "📋 /list — Список книг\n"
             "🏆 /top — Топ книг\n"
             "⚙️ /settings — Настройки\n"
+            "ℹ️ /info — О боте\n"
             "✏️ /edit — Редактировать запись\n"
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
@@ -656,7 +659,7 @@ COMMANDS = {
         BotCommand("edit",          "✏️ Edit a book entry"),
         BotCommand("delete",        "🗑 Delete a book"),
         BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
-        BotCommand("info",            "ℹ️ About the bot"),
+        BotCommand("info",          "ℹ️ About the bot"),
         BotCommand("help",          "❓ Show help"),
         BotCommand("cancel",        "❌ Cancel current action"),
     ],
@@ -669,7 +672,7 @@ COMMANDS = {
         BotCommand("edit",          "✏️ Редактировать запись"),
         BotCommand("delete",        "🗑 Удалить книгу"),
         BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
-        BotCommand("info",            "ℹ️ О боте"),
+        BotCommand("info",          "ℹ️ О боте"),
         BotCommand("help",          "❓ Показать помощь"),
         BotCommand("cancel",        "❌ Отменить действие"),
     ],

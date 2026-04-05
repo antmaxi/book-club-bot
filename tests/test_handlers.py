@@ -78,6 +78,7 @@ class TestStartHelp(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Welcome", text)
+        self.assertIn("/info", text)
 
     @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_start_sets_menu(self, mock_set):
@@ -90,6 +91,7 @@ class TestStartHelp(BotHandlerTestCase):
         await bot.cmd_start(self.update, self.ctx)
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Добро пожаловать", text)
+        self.assertIn("/info", text)
 
     @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_help_delegates_to_start(self, mock_set):
@@ -184,6 +186,19 @@ class TestCommandsMenu(BotHandlerTestCase):
     async def test_settings_description_ru(self):
         desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "settings")
         self.assertEqual(desc, "⚙️ Настройки")
+
+    async def test_info_in_both_menus(self):
+        for lang in ("en", "ru"):
+            cmds = [c.command for c in bot.COMMANDS[lang]]
+            self.assertIn("info", cmds, f"'info' missing from {lang} menu")
+
+    async def test_info_description_en(self):
+        desc = next(c.description for c in bot.COMMANDS["en"] if c.command == "info")
+        self.assertEqual(desc, "ℹ️ About the bot")
+
+    async def test_info_description_ru(self):
+        desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "info")
+        self.assertEqual(desc, "ℹ️ О боте")
 
 
 # ── /list ──────────────────────────────────────────────────────────────────────
