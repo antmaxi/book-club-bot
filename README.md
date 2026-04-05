@@ -65,7 +65,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 
 3. **Run the bot using Docker:**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
 ## 🧪 Testing
@@ -74,7 +74,7 @@ The project includes a suite of unit and integration tests.
 
 To run tests using Docker:
 ```bash
-docker-compose run --rm bot python -m unittest discover tests
+docker compose run --rm bot python -m unittest discover tests
 ```
 
 ### Git Pre-commit Hook
