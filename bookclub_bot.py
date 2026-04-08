@@ -25,7 +25,7 @@ Commands:
   /edit            - Edit a book's details (owner/admin only)
   /delete          - Delete a book (owner/admin only)
   /discussed       - View the archive of discussed books
-  /markdiscussed   - Admin: mark a book as discussed (with date)
+  /adminconsole    - Admin console: mark discussed or hide
   /cancel          - Cancel the current operation
 """
 
@@ -74,7 +74,7 @@ ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб
 EDITING_CHOOSE = 6
 EDITING_FIELD  = 7   # waiting for new value of current field
 DELETING_CHOOSE = 8
-MARKING_CHOOSE, MARKING_DATE = range(9, 11)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE = range(9, 13)
 
 LOG_FILE = os.environ.get("LOG_FILE", "bookclub_bot.log")
 
@@ -105,7 +105,7 @@ T = {
             "🗑 /delete — Delete a book\n"
             "🏆 /top — Top rated books\n"
             "✅ /discussed — Books already discussed\n"
-            "📌 /markdiscussed — Mark a book as discussed (admin)\n"
+            "🛠 /adminconsole — Admin console\n"
             "❓ /help — Show this message"
         ),
         "lang_set":            "🇬🇧 Language set to English.",
@@ -166,6 +166,13 @@ T = {
         "no_permission":       "⛔ You can only edit or delete books you added.",
         "no_own_books":        "📭 You have no books to edit or delete.",
         "admin_only":          "⛔ This command is for admins only.",
+        "admin_console_title": "🛠 <b>Admin Console</b>",
+        "admin_mark_btn":      "📌 Mark discussed",
+        "admin_hide_btn":      "👻 Hide book",
+        "admin_unhide_btn":    "👁 Show book",
+        "choose_hide":         "👻 Choose a book to hide from the list:",
+        "book_hidden":         "✅ <b>{title}</b> is now hidden.",
+        "book_unhidden":       "✅ <b>{title}</b> is now visible.",
         "choose_mark":         "📌 Choose a book to mark as discussed:",
         "no_unmark":           "📭 No undiscussed books to mark.",
         "ask_discuss_date":    "📅 Enter the <b>discussion date</b> (YYYY-MM-DD), or /today to use today:",
@@ -212,7 +219,7 @@ T = {
             "🗑 /delete — Удалить книгу\n"
             "🏆 /top — Топ книг\n"
             "✅ /discussed — Обсуждённые книги\n"
-            "📌 /markdiscussed — Отметить книгу как обсуждённую (админ)\n"
+            "🛠 /adminconsole — Админ-панель\n"
             "❓ /help — Показать это сообщение"
         ),
         "lang_set":            "🇷🇺 Язык установлен: Русский.",
@@ -277,6 +284,13 @@ T = {
         "no_permission":       "⛔ Вы можете редактировать или удалять только добавленные вами книги.",
         "no_own_books":        "📭 У вас нет книг для редактирования или удаления.",
         "admin_only":          "⛔ Эта команда доступна только администраторам.",
+        "admin_console_title": "🛠 <b>Админ-панель</b>",
+        "admin_mark_btn":      "📌 Отметить обсуждённой",
+        "admin_hide_btn":      "👻 Скрыть книгу",
+        "admin_unhide_btn":    "👁 Показать книгу",
+        "choose_hide":         "👻 Выберите книгу, чтобы скрыть её из списка:",
+        "book_hidden":         "✅ Книга <b>{title}</b> скрыта.",
+        "book_unhidden":       "✅ Книга <b>{title}</b> снова видна.",
         "choose_mark":         "📌 Выберите книгу для отметки как обсуждённой:",
         "no_unmark":           "📭 Нет необсуждённых книг для отметки.",
         "ask_discuss_date":    "📅 Введите <b>дату обсуждения</b> (ГГГГ-ММ-ДД) или /today для сегодняшней даты:",
@@ -360,6 +374,7 @@ def init_db():
                 fiction       INTEGER NOT NULL DEFAULT 1,
                 review_link   TEXT NOT NULL DEFAULT '',
                 description   TEXT DEFAULT '',
+                hidden        INTEGER NOT NULL DEFAULT 0,
                 discussed     INTEGER NOT NULL DEFAULT 0,
                 discussed_at  TEXT DEFAULT NULL,
                 added_by      INTEGER NOT NULL,
@@ -373,6 +388,7 @@ def init_db():
             ("pages",             "INTEGER NOT NULL DEFAULT 0"),
             ("fiction",           "INTEGER NOT NULL DEFAULT 1"),
             ("review_link",       "TEXT NOT NULL DEFAULT ''"),
+            ("hidden",            "INTEGER NOT NULL DEFAULT 0"),
             ("discussed",         "INTEGER NOT NULL DEFAULT 0"),
             ("discussed_at",      "TEXT DEFAULT NULL"),
             ("added_by_username", "TEXT DEFAULT NULL"),
@@ -438,13 +454,15 @@ def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added
     """
 
 
-def db_get_books(discussed=False, user_id_unvoted=None):
+def db_get_books(discussed=False, user_id_unvoted=None, include_hidden=False):
     """Return books. discussed=False → undiscussed, discussed=True → discussed.
     If user_id_unvoted is provided, only return books that this user has NOT voted for yet.
     """
     flag = 1 if discussed else 0
     where = "WHERE b.discussed = ?"
     params = [flag]
+    if not include_hidden:
+        where += " AND b.hidden = 0"
     if user_id_unvoted:
         where += " AND b.id NOT IN (SELECT book_id FROM votes WHERE user_id = ?)"
         params.append(user_id_unvoted)
@@ -486,6 +504,15 @@ def db_mark_discussed(book_id, date_str):
         conn.execute(
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id)
+        )
+
+
+def db_toggle_hidden(book_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "UPDATE books SET hidden = 1 - hidden WHERE id = ?",
+            (book_id,),
         )
         conn.commit()
 
@@ -658,7 +685,7 @@ COMMANDS = {
         BotCommand("discussed",     "✅ Books already discussed"),
         BotCommand("edit",          "✏️ Edit a book entry"),
         BotCommand("delete",        "🗑 Delete a book"),
-        BotCommand("markdiscussed", "📌 Mark as discussed (admin)"),
+        BotCommand("adminconsole",  "🛠 Admin console"),
         BotCommand("info",          "ℹ️ About the bot"),
         BotCommand("help",          "❓ Show help"),
         BotCommand("cancel",        "❌ Cancel current action"),
@@ -671,7 +698,7 @@ COMMANDS = {
         BotCommand("discussed",     "✅ Обсуждённые книги"),
         BotCommand("edit",          "✏️ Редактировать запись"),
         BotCommand("delete",        "🗑 Удалить книгу"),
-        BotCommand("markdiscussed", "📌 Отметить как обсуждённую (админ)"),
+        BotCommand("adminconsole",  "🛠 Админ-панель"),
         BotCommand("info",          "ℹ️ О боте"),
         BotCommand("help",          "❓ Показать помощь"),
         BotCommand("cancel",        "❌ Отменить действие"),
@@ -1109,23 +1136,58 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── /markdiscussed conversation (admin only) ───────────────────────────────────
-async def cmd_markdiscussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+# ── /adminconsole conversation (admin only) ───────────────────────────────────
+async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
-    books = db_get_books(discussed=False)
-    if not books:
-        await update.message.reply_text(tr(ctx, "no_unmark"), parse_mode=PM)
-        return ConversationHandler.END
-    await update.message.reply_text(
-        tr(ctx, "choose_mark"),
-        reply_markup=books_keyboard(books, "mark_pick", tr(ctx, "cancel_btn")),
-    )
-    return MARKING_CHOOSE
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(tr(ctx, "admin_mark_btn"), callback_data="admin:mark")],
+        [InlineKeyboardButton(tr(ctx, "admin_hide_btn"), callback_data="admin:hide")],
+    ])
+    await update.message.reply_text(tr(ctx, "admin_console_title"), reply_markup=keyboard, parse_mode=PM)
+    return ADMIN_MENU
 
 
-async def mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")[1]
+    
+    if data == "mark":
+        books = db_get_books(discussed=False, include_hidden=True)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_unmark"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_mark"),
+            reply_markup=books_keyboard(books, "admin_mark_pick", tr(ctx, "cancel_btn")),
+        )
+        return ADMIN_MARK_CHOOSE
+    elif data == "hide":
+        # Show all undiscussed books (including already hidden ones to allow unhiding)
+        books = db_get_books(discussed=False, include_hidden=True)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+        
+        # Custom keyboard to show current hidden status
+        keyboard_btns = []
+        for b in books:
+            label = ("👁 " if b["hidden"] else "") + b["title"]
+            keyboard_btns.append([InlineKeyboardButton(label, callback_data=f"admin_hide_pick:{b['id']}")])
+        keyboard_btns.append([InlineKeyboardButton(tr(ctx, "cancel_btn"), callback_data="admin_hide_pick:cancel")])
+        
+        await query.edit_message_text(
+            tr(ctx, "choose_hide"),
+            reply_markup=InlineKeyboardMarkup(keyboard_btns),
+        )
+        return ADMIN_HIDE_CHOOSE
+    return ConversationHandler.END
+
+
+async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
@@ -1135,10 +1197,10 @@ async def mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     ctx.user_data["mark_book_id"] = int(book_id)
     await query.edit_message_text(tr(ctx, "ask_discuss_date"), parse_mode=PM)
-    return MARKING_DATE
+    return ADMIN_MARK_DATE
 
 
-async def mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
     text = update.message.text.strip()
     if text == "/today":
@@ -1147,12 +1209,33 @@ async def mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         date_str = parse_date(text)
         if not date_str:
             await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
-            return MARKING_DATE
+            return ADMIN_MARK_DATE
     book_id = ctx.user_data.pop("mark_book_id")
     db_mark_discussed(book_id, date_str)
     book = db_get_book(book_id)
     await update.message.reply_text(
         T[lang]["marked_discussed"].format(title=h(book["title"]), date=h(date_str)),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(T[lang]["cancelled"])
+        return ConversationHandler.END
+    
+    book_id = int(book_id)
+    db_toggle_hidden(book_id)
+    book = db_get_book(book_id)
+    
+    msg_key = "book_hidden" if book["hidden"] else "book_unhidden"
+    await query.edit_message_text(
+        tr(ctx, msg_key, title=h(book["title"])),
         parse_mode=PM,
     )
     return ConversationHandler.END
@@ -1478,10 +1561,12 @@ def main():
     ))
 
     app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("markdiscussed", cmd_markdiscussed)],
+        entry_points=[CommandHandler("adminconsole", cmd_admin_console)],
         states={
-            MARKING_CHOOSE: [CallbackQueryHandler(mark_pick_cb, pattern=r"^mark_pick:")],
-            MARKING_DATE:   [MessageHandler(filters.TEXT, mark_date_handler)],
+            ADMIN_MENU:        [CallbackQueryHandler(admin_menu_cb,      pattern=r"^admin:")],
+            ADMIN_MARK_CHOOSE: [CallbackQueryHandler(admin_mark_pick_cb, pattern=r"^admin_mark_pick:")],
+            ADMIN_MARK_DATE:   [MessageHandler(filters.TEXT,             admin_mark_date_handler)],
+            ADMIN_HIDE_CHOOSE: [CallbackQueryHandler(admin_hide_pick_cb, pattern=r"^admin_hide_pick:")],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,

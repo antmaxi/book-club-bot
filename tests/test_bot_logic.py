@@ -113,6 +113,31 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(discussed), 1)
         self.assertEqual(discussed[0]["id"], id1)
 
+    def test_db_get_books_hidden_filter(self):
+        id1 = bot.db_add_book("Visible", "A", 100, True, "", "", 1, "u")
+        id2 = bot.db_add_book("Hidden", "A", 100, True, "", "", 1, "u")
+        bot.db_toggle_hidden(id2)
+
+        # Default: exclude hidden
+        books = bot.db_get_books(discussed=False)
+        self.assertEqual(len(books), 1)
+        self.assertEqual(books[0]["title"], "Visible")
+
+        # Explicitly include hidden
+        books_all = bot.db_get_books(discussed=False, include_hidden=True)
+        self.assertEqual(len(books_all), 2)
+
+    def test_db_toggle_hidden(self):
+        id1 = bot.db_add_book("B", "A", 100, True, "", "", 1, "u")
+        
+        # Hide
+        bot.db_toggle_hidden(id1)
+        self.assertEqual(bot.db_get_book(id1)["hidden"], 1)
+        
+        # Unhide
+        bot.db_toggle_hidden(id1)
+        self.assertEqual(bot.db_get_book(id1)["hidden"], 0)
+
     def test_db_get_books_unvoted_filter(self):
         id1 = bot.db_add_book("B1", "A", 100, True, "", "", 1, "u")
         id2 = bot.db_add_book("B2", "A", 100, True, "", "", 1, "u")

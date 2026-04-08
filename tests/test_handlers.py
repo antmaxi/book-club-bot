@@ -668,5 +668,76 @@ class TestCancel(BotHandlerTestCase):
         self.assertIn("Cancelled", self.message.reply_text.call_args[0][0])
 
 
+# ── /adminconsole ─────────────────────────────────────────────────────────────
+
+class TestAdminConsole(BotHandlerTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.old_admins = bot.ADMIN_IDS[:]
+        bot.ADMIN_IDS = [self.update.effective_user.id]
+
+    def tearDown(self):
+        bot.ADMIN_IDS = self.old_admins
+        super().tearDown()
+
+    async def test_cmd_admin_console_as_non_admin_fails(self):
+        bot.ADMIN_IDS = [999]
+        state = await bot.cmd_admin_console(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.message.reply_text.assert_called_once()
+        self.assertIn("admins only", self.message.reply_text.call_args[0][0])
+
+    async def test_cmd_admin_console_shows_menu(self):
+        state = await bot.cmd_admin_console(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MENU)
+        self.message.reply_text.assert_called_once()
+        self.assertIn("Admin Console", self.message.reply_text.call_args[0][0])
+
+    async def test_admin_menu_cb_mark_shows_books(self):
+        self._add_book("Mark Me")
+        q = self._callback_query("admin:mark")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MARK_CHOOSE)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Choose a book", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_menu_cb_hide_shows_books(self):
+        self._add_book("Hide Me")
+        q = self._callback_query("admin:hide")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_HIDE_CHOOSE)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Choose a book to hide", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_hide_pick_toggles_and_ends(self):
+        bid = self._add_book("Ghost")
+        q = self._callback_query(f"admin_hide_pick:{bid}")
+        state = await bot.admin_hide_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertEqual(bot.db_get_book(bid)["hidden"], 1)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("is now hidden", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_mark_pick_advances_to_date(self):
+        bid = self._add_book("Discuss Me")
+        q = self._callback_query(f"admin_mark_pick:{bid}")
+        state = await bot.admin_mark_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MARK_DATE)
+        self.assertEqual(self.ctx.user_data["mark_book_id"], bid)
+
+    async def test_admin_mark_date_handler_completes(self):
+        bid = self._add_book("Dated")
+        self.ctx.user_data["mark_book_id"] = bid
+        self.message.text = "2026-03-17"
+        state = await bot.admin_mark_date_handler(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        book = bot.db_get_book(bid)
+        self.assertEqual(book["discussed"], 1)
+        self.assertEqual(book["discussed_at"], "2026-03-17")
+        self.message.reply_text.assert_called_once()
+        self.assertIn("marked as discussed", self.message.reply_text.call_args[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()
