@@ -803,7 +803,7 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         if os.path.exists(".git"):
             last_commit = subprocess.check_output(
-                ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S'],
+                ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S %z'],
                 stderr=subprocess.DEVNULL
             ).decode("utf-8").strip()
     except Exception as e:
@@ -813,7 +813,7 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not last_commit:
         try:
             mtime = os.path.getmtime(__file__)
-            last_commit = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            last_commit = datetime.fromtimestamp(mtime).astimezone().strftime('%Y-%m-%d %H:%M:%S %z')
         except Exception as e:
             logger.warning(f"Could not get file mtime: {e}")
             last_commit = "unknown"

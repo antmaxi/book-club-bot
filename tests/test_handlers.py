@@ -105,23 +105,23 @@ class TestInfo(BotHandlerTestCase):
 
     @patch("subprocess.check_output")
     async def test_cmd_info_en(self, mock_git):
-        mock_git.return_value = b"2026-04-04 12:00:00\n"
+        mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
         with patch("bookclub_bot.GITHUB_REPO", "https://test.repo"):
             await bot.cmd_info(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Book Club Bot", text)
-        self.assertIn("2026-04-04 12:00:00", text)
+        self.assertIn("2026-04-04 12:00:00 +0000", text)
         self.assertIn("https://test.repo", text)
 
     @patch("subprocess.check_output")
     async def test_cmd_info_ru(self, mock_git):
         self.ctx.user_data["lang"] = "ru"
-        mock_git.return_value = b"2026-04-04 12:00:00\n"
+        mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
         await bot.cmd_info(self.update, self.ctx)
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Последнее обновление", text)
-        self.assertIn("2026-04-04 12:00:00", text)
+        self.assertIn("2026-04-04 12:00:00 +0000", text)
 
     @patch("os.path.exists")
     @patch("os.path.getmtime")
@@ -141,7 +141,7 @@ class TestInfo(BotHandlerTestCase):
         self.assertNotEqual(text, "unknown")
         # The exact string depends on local timezone, so we just check it matches a date format or is present
         import datetime
-        expected_date = datetime.datetime.fromtimestamp(1775728800).strftime('%Y-%m-%d %H:%M:%S')
+        expected_date = datetime.datetime.fromtimestamp(1775728800).astimezone().strftime('%Y-%m-%d %H:%M:%S %z')
         self.assertIn(expected_date, text)
 
     @patch("os.path.exists")
