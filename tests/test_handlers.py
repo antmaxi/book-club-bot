@@ -123,12 +123,40 @@ class TestInfo(BotHandlerTestCase):
         self.assertIn("Последнее обновление", text)
         self.assertIn("2026-04-04 12:00:00", text)
 
+    @patch("os.path.exists")
+    @patch("os.path.getmtime")
     @patch("subprocess.check_output")
-    async def test_cmd_info_git_error(self, mock_git):
-        mock_git.side_effect = Exception("git not found")
+    async def test_cmd_info_git_fallback_to_mtime(self, mock_git, mock_mtime, mock_exists):
+        # Git exists but fails
+        mock_exists.return_value = True
+        mock_git.side_effect = Exception("git error")
+        # mtime returns a fixed timestamp: 2026-04-09 10:00:00
+        # 1775728800 corresponds to 2026-04-09 10:00:00 UTC (roughly)
+        # Let's use a simpler way to verify
+        mock_mtime.return_value = 1775728800 
+        
         await bot.cmd_info(self.update, self.ctx)
+        
         text = self.message.reply_text.call_args[0][0]
-        self.assertIn("unknown", text)
+        self.assertNotEqual(text, "unknown")
+        # The exact string depends on local timezone, so we just check it matches a date format or is present
+        import datetime
+        expected_date = datetime.datetime.fromtimestamp(1775728800).strftime('%Y-%m-%d %H:%M:%S')
+        self.assertIn(expected_date, text)
+
+    @patch("os.path.exists")
+    @patch("subprocess.check_output")
+    async def test_cmd_info_no_git_dir_fallback(self, mock_git, mock_exists):
+        # No .git directory
+        mock_exists.return_value = False
+        
+        await bot.cmd_info(self.update, self.ctx)
+        
+        # Should not even call git
+        mock_git.assert_not_called()
+        
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("20", text) # Should have a date starting with 20...
 
 
 # ── set_user_commands ──────────────────────────────────────────────────────────

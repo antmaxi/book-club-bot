@@ -795,13 +795,28 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     import subprocess
+    import os
+    from datetime import datetime
+    
+    last_commit = None
+    # 1. Try git log
     try:
-        last_commit = subprocess.check_output(
-            ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S']
-        ).decode("utf-8").strip()
+        if os.path.exists(".git"):
+            last_commit = subprocess.check_output(
+                ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S'],
+                stderr=subprocess.DEVNULL
+            ).decode("utf-8").strip()
     except Exception as e:
-        logger.warning(f"Could not get last commit: {e}")
-        last_commit = "unknown"
+        logger.warning(f"Could not get last commit via git: {e}")
+
+    # 2. Fallback to file mtime
+    if not last_commit:
+        try:
+            mtime = os.path.getmtime(__file__)
+            last_commit = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            logger.warning(f"Could not get file mtime: {e}")
+            last_commit = "unknown"
 
     text = tr(ctx, "info_msg", last_commit=last_commit, github_repo=GITHUB_REPO)
     await update.message.reply_text(text, parse_mode=PM, disable_web_page_preview=True)
