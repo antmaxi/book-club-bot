@@ -8,9 +8,9 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 - **Book Management:** Add books with details like title, author, page count, fiction/non-fiction status, review links, and descriptions.
 - **Voting System:** Users can vote on books with three options:
   - ✅ **Want to read** (+1 point)
-  - 😐 **Don't care** (0 points)
+  - 😐 **Don't care** (+0.5 points)
   - ❌ **Don't want to read** (-1 point)
-- **Top Rated Books:** View a list of undiscussed books ranked by their average score and vote count.
+- **Top Rated Books:** View a list of undiscussed books ranked by their votes score.
 - **Smart Notifications:** 
   - Get notified when a new book is added (with a 10-minute delay).
   - Notifications include a voting card to vote directly from the message.

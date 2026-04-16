@@ -185,7 +185,7 @@ T = {
         "list_all_btn":        "📚 All books",
         "list_unvoted_btn":    "🗳 Unvoted only",
         "score_calc_btn":      "📊 How a score is calculated",
-        "score_calc_info":     "✅ Want: +1 point\n😐 Don't care: 0 points\n❌ Don't want: -1 point\n\nSorted by average score, then by the total number of votes, and then by the date added.",
+        "score_calc_info":     "✅ Want: +1 point\n😐 Don't care: +0.5 points\n❌ Don't want: -1 point\nTotal score = sum of all votes (not average).Sorted by this score, then by date added.",
         "settings_title":      "⚙️ <b>Settings</b>",
         "settings_notify_label": "Notifications for new books:",
         "settings_notify_on":   "🔔 Enabled (10 min delay)",
@@ -303,7 +303,7 @@ T = {
         "list_all_btn":        "📚 Все книги",
         "list_unvoted_btn":    "🗳 Только без моего голоса",
         "score_calc_btn":      "📊 Как рассчитывается балл",
-        "score_calc_info":     "✅ Хочу: +1 балл\n😐 Всё равно: 0 баллов\n❌ Не хочу: -1 балл\n\nСортировка по среднему баллу, затем по количеству голосов и затем по дате добавления.",
+        "score_calc_info":     "✅ Хочу: +1 балл\n😐 Всё равно: +0.5 баллов\n❌ Не хочу: -1 балл\n\nСортировка по суммарному баллу, затем по дате добавления.",
         "settings_title":      "⚙️ <b>Настройки</b>",
         "settings_notify_label": "Уведомления о новых книгах:",
         "settings_notify_on":   "🔔 Включены (задержка 10 мин)",
@@ -441,7 +441,15 @@ def db_add_book(title, author, pages, fiction, review_link, description, user_id
 def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added_at DESC"):
     return f"""
         SELECT b.*,
-               COALESCE(AVG(v.score), 0)                          AS avg_score,
+               COALESCE(
+                    SUM(
+                        CASE    
+                            WHEN v.score = 1  THEN 1
+                            WHEN v.score = 0  THEN 0.5
+                            WHEN v.score = -1 THEN -1
+                        END
+                    ), 
+                0) AS avg_score,
                COUNT(v.user_id)                                    AS vote_count,
                COALESCE(SUM(CASE WHEN v.score=1  THEN 1 ELSE 0 END),0) AS votes_yes,
                COALESCE(SUM(CASE WHEN v.score=0  THEN 1 ELSE 0 END),0) AS votes_meh,
