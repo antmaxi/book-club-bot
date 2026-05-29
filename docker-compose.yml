@@ -6,4 +6,5 @@ services:
     volumes:
       - ./bookclub.db:/app/bookclub.db
       - ./bookclub_bot.log:/app/bookclub_bot.log
+      - ./bot_persistence:/app/bot_persistence
     restart: always

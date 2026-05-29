@@ -13,8 +13,8 @@ COPY requirements.txt .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-COPY . .
+# Copy the application code into the container
+COPY bookclub_bot.py .
 
 # Command to run the bot
 CMD ["python", "bookclub_bot.py"]

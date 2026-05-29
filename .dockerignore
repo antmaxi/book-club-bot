@@ -1,0 +1,24 @@
+# Exclude database files and backups
+bookclub.db
+bookclub_dbs/
+bookclub_bot.log
+bot_persistence
+
+# Exclude screenshots
+screenshots/
+
+# Exclude development and environment files
+.env
+.idea/
+.git/
+.gitignore
+set-up.txt
+README.md
+LICENSE.md
+*.pyc
+__pycache__/
+.venv/
+
+# Exclude test files if not needed in production
+tests/
+populate_db.py

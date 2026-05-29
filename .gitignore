@@ -5,3 +5,5 @@ bookclub.db
 __pycache__/
 *.pyc
 .venv/
+# database backups
+bookclub_dbs/
