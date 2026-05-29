@@ -76,7 +76,7 @@ EDITING_FIELD  = 7   # waiting for new value of current field
 DELETING_CHOOSE = 8
 ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE = range(9, 13)
 
-LOG_FILE = os.environ.get("LOG_FILE", "bookclub_bot.log")
+LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
 
 _log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 

@@ -2,6 +2,8 @@
 /set-up.txt
 .env
 bookclub.db
+/logs/
+!/logs/.gitkeep
 __pycache__/
 *.pyc
 .venv/

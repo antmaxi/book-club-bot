@@ -5,6 +5,6 @@ services:
       - .env
     volumes:
       - ./bookclub.db:/app/bookclub.db
-      - ./bookclub_bot.log:/app/bookclub_bot.log
+      - ./logs:/app/logs
       - ./bot_persistence:/app/bot_persistence
     restart: always
