@@ -68,6 +68,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    docker compose up -d
    ```
 
+(if not yet installed before, install docker as in https://docs.docker.com/engine/install/ubuntu/)
 ## 🧪 Testing
 
 The project includes a suite of unit and integration tests.
