@@ -54,7 +54,7 @@ ADMIN_IDS = [
     int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
 ]
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/book-club-bot")
-DB_PATH = "bookclub.db"
+DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 
 # Members of this chat are allowed to use the bot.
 # Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
@@ -1550,7 +1550,7 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
-    persistence = PicklePersistence(filepath="bot_persistence")
+    persistence = PicklePersistence(filepath=os.environ.get("PERSISTENCE_PATH", "bot_persistence"))
     app = (
         Application.builder()
         .token(BOT_TOKEN)

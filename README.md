@@ -65,6 +65,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 
 3. **Run the bot using Docker:**
    ```bash
+   mkdir -p data
    docker compose up -d
    ```
 
