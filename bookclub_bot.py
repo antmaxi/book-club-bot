@@ -163,6 +163,7 @@ T = {
         "meh_btn":             "😐 Don't care",
         "no_btn":              "❌ Don't want",
         "voted_msg":           "✅ Vote saved for <b>{title}</b>",
+        "score_label":         "Score",
         "no_permission":       "⛔ You can only edit or delete books you added.",
         "no_own_books":        "📭 You have no books to edit or delete.",
         "admin_only":          "⛔ This command is for admins only.",
@@ -281,6 +282,7 @@ T = {
         "meh_btn":             "😐 Всё равно",
         "no_btn":              "❌ Не хочу",
         "voted_msg":           "✅ Голос сохранён для <b>{title}</b>",
+        "score_label":         "Балл",
         "no_permission":       "⛔ Вы можете редактировать или удалять только добавленные вами книги.",
         "no_own_books":        "📭 У вас нет книг для редактирования или удаления.",
         "admin_only":          "⛔ Эта команда доступна только администраторам.",
@@ -953,9 +955,11 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):
         fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
+        score_val = book["avg_score"]
+        score_fmt = f"{score_val:g}"
         lines.append(
             f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
-            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}\n"
+            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}  •  <b>{h(T[lang]['score_label'])}: {score_fmt}</b>\n"
             f"   {score_display(book, lang)}"
         )
 
