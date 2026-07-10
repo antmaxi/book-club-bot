@@ -1554,7 +1554,17 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     init_db()
-    persistence = PicklePersistence(filepath=os.environ.get("PERSISTENCE_PATH", "bot_persistence"))
+
+    persistence_path = os.environ.get("PERSISTENCE_PATH", "bot_persistence")
+    # Ensure persistence_path is a file, not a directory
+    if os.path.isdir(persistence_path):
+        logger.warning(f"Persistence path '{persistence_path}' is a directory. Removing it to allow file creation.")
+        try:
+            os.rmdir(persistence_path)
+        except OSError:
+            logger.error(f"Could not remove directory '{persistence_path}'. Please remove it manually.")
+
+    persistence = PicklePersistence(filepath=persistence_path)
     app = (
         Application.builder()
         .token(BOT_TOKEN)
