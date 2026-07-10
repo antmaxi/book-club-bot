@@ -1,17 +1,32 @@
 #!/bin/bash
 
+# This script is intended to be run from a BACKUP SERVER to pull a database backup 
+# from the BOT SERVER.
+#
+# Prerequisite:
+# - SSH key-based authentication must be set up from the backup server to the bot server.
+#
+# Usage:
+#   ./remote_backup.sh [bot-name]
+#
+# Example:
+#   ./remote_backup.sh my-book-club
+#   (This will look for the bot in /root/my-book-club on the remote server)
+
 # --- Configuration ---
 # Details for the server where the bot is running
 REMOTE_USER="root"
-REMOTE_HOST="your-bot-server-ip"
-REMOTE_BOT_DIR="/path/to/GIT/book-club-bot"
+REMOTE_HOST="bot" # "your-bot-server-ip"
+REMOTE_BOT_BASE_DIR="/root"
+BOT_NAME="${1:-book-club-bot}"
+REMOTE_BOT_DIR="${REMOTE_BOT_BASE_DIR}/${BOT_NAME}"
 REMOTE_DB_PATH="/app/data/bookclub.db"
 REMOTE_BACKUP_PATH="/app/data/bookclub_backup.db"
 
 # Local configuration on the backup machine
 LOCAL_BACKUP_DIR="./backups"
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
-LOCAL_BACKUP_FILE="${LOCAL_BACKUP_DIR}/bookclub_${TIMESTAMP}.db"
+LOCAL_BACKUP_FILE="${LOCAL_BACKUP_DIR}/bookclub_${BOT_NAME}_${TIMESTAMP}.db"
 
 # Create local backup directory if it doesn't exist
 mkdir -p "${LOCAL_BACKUP_DIR}"

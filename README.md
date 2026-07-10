@@ -83,7 +83,9 @@ If you want to run the backup from a **different Linux machine** (e.g., a dedica
 1.  **Copy the script** to your backup machine.
 2.  **Configure the variables** inside `scripts/remote_backup.sh` (IP address, user, paths).
 3.  **Ensure SSH Key-based authentication** is set up between the machines for automation.
-4.  **Run it:** `./remote_backup.sh`
+4.  **Run it:** `./remote_backup.sh [bot-name]`
+
+If you provide an argument, it will be used as the subfolder name on the remote server and included in the local filename. Defaults to `book-club-bot`.
 
 ### Regular Backups (Recommended)
 Add a cron job to run the backup daily at 2:00 AM:
