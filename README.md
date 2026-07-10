@@ -70,6 +70,29 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    ```
 
 (if not yet installed before, install docker as in https://docs.docker.com/engine/install/ubuntu/)
+
+## 🛡️ Backups
+
+To ensure your data is safe, a backup script is provided in `scripts/remote_backup.sh`. It creates a "safe" snapshot of the SQLite database while the bot is running to avoid corruption.
+
+
+### Off-site Backups (Pulling from another machine)
+
+If you want to run the backup from a **different Linux machine** (e.g., a dedicated backup server), use `scripts/remote_backup.sh`. This script connects to your bot server via SSH, triggers a safe backup, and pulls the file back to the local machine.
+
+1.  **Copy the script** to your backup machine.
+2.  **Configure the variables** inside `scripts/remote_backup.sh` (IP address, user, paths).
+3.  **Ensure SSH Key-based authentication** is set up between the machines for automation.
+4.  **Run it:** `./remote_backup.sh`
+
+### Regular Backups (Recommended)
+Add a cron job to run the backup daily at 2:00 AM:
+1. Open crontab: `crontab -e`
+2. Add the following line (adjust the path to your bot directory):
+   ```cron
+   0 2 * * * /bin/bash /path/to/remote_backup.sh >> /path/to/book-club-bot/logs/backup.log 2>&1
+   ```
+
 ## 🧪 Testing
 
 The project includes a suite of unit and integration tests.
