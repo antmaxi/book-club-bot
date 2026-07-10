@@ -4,8 +4,10 @@ FROM python:3.11-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies if needed (none required for current requirements)
-# RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file into the container
 COPY requirements.txt .
