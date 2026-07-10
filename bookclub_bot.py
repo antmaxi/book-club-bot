@@ -202,6 +202,8 @@ T = {
         "not_member":  "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
+        "last_activity_label": "Last non-admin activity",
+        "never": "never",
         "info_msg": (
             "🤖 <b>Book Club Bot</b>\n\n"
             "📅 <b>Last update:</b> {last_commit}\n"
@@ -321,6 +323,8 @@ T = {
         "not_member":  "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
+        "last_activity_label": "Последняя активность (не админ)",
+        "never": "никогда",
         "info_msg": (
             "🤖 <b>Book Club Bot</b>\n\n"
             "📅 <b>Последнее обновление:</b> {last_commit}\n"
@@ -1169,11 +1173,19 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
     
+    last_act = ctx.bot_data.get("last_non_admin_activity")
+    if last_act:
+        last_act_str = last_act.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        last_act_str = tr(ctx, "never")
+        
+    text = tr(ctx, "admin_console_title") + f"\n\n{tr(ctx, 'last_activity_label')}: <code>{last_act_str}</code>"
+    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(tr(ctx, "admin_mark_btn"), callback_data="admin:mark")],
         [InlineKeyboardButton(tr(ctx, "admin_hide_btn"), callback_data="admin:hide")],
     ])
-    await update.message.reply_text(tr(ctx, "admin_console_title"), reply_markup=keyboard, parse_mode=PM)
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
     return ADMIN_MENU
 
 
@@ -1533,6 +1545,10 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
 
 async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Block users not in the allowed chat and tell them why."""
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id and user_id not in ADMIN_IDS:
+        ctx.bot_data["last_non_admin_activity"] = datetime.now()
+
     if await _check_membership(update, ctx):
         return
     user_id = update.effective_user.id if update.effective_user else "?"
