@@ -766,6 +766,71 @@ class TestAdminConsole(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
         self.assertIn("marked as discussed", self.message.reply_text.call_args[0][0])
 
+    async def test_admin_notify_top_sends_reminders(self):
+        # 1. Setup books
+        bid1 = self._add_book("Top Book 1")
+        bid2 = self._add_book("Top Book 2")
+        
+        # 2. Setup user with notifications ON
+        user_id = 12345
+        bot.db_set_user_setting(user_id, "notify_new_books", 1)
+        # Ensure user has NOT voted for bid1 and bid2
+        
+        # 3. Trigger notify
+        q = self._callback_query("admin:notify")
+        state = await bot.admin_notify_top_cb(self.update, self.ctx)
+        
+        self.assertEqual(state, ConversationHandler.END)
+        # Check if bot.send_message was called for the user
+        # 1 message for reminder text + 2 messages for books = 3 messages
+        # Our mock bot is self.ctx.bot
+        self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
+        
+        # Verify confirm message to admin
+        q.edit_message_text.assert_called_once()
+        self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_notify_top_no_unvoted_books(self):
+        # 1. Setup book
+        bid = self._add_book("Voted Book")
+        
+        # 2. Setup user who already voted
+        user_id = 12345
+        bot.db_set_user_setting(user_id, "notify_new_books", 1)
+        bot.db_cast_vote(user_id, bid, 1)
+        
+        # 3. Trigger notify
+        q = self._callback_query("admin:notify")
+        state = await bot.admin_notify_top_cb(self.update, self.ctx)
+        
+        self.assertEqual(state, ConversationHandler.END)
+        # No messages should be sent to user
+        self.ctx.bot.send_message.assert_not_called()
+        
+        # Verify info message to admin
+        q.edit_message_text.assert_called_once()
+        self.assertIn("No users to notify", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_notify_pick_sends_reminders(self):
+        # 1. Setup book
+        bid = self._add_book("Target Book")
+        
+        # 2. Setup user with notifications ON
+        user_id = 12345
+        bot.db_set_user_setting(user_id, "notify_new_books", 1)
+        
+        # 3. Select book for notification
+        q = self._callback_query(f"admin_notify_pick:{bid}")
+        state = await bot.admin_notify_pick_cb(self.update, self.ctx)
+        
+        self.assertEqual(state, ConversationHandler.END)
+        # Check if bot.send_message was called for the user
+        self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
+        
+        # Verify confirm message to admin
+        q.edit_message_text.assert_called_once()
+        self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
+
 
 if __name__ == "__main__":
     unittest.main()

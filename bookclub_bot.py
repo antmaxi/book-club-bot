@@ -74,7 +74,7 @@ ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб
 EDITING_CHOOSE = 6
 EDITING_FIELD  = 7   # waiting for new value of current field
 DELETING_CHOOSE = 8
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE = range(9, 13)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK = range(9, 14)
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
 
@@ -170,8 +170,11 @@ T = {
         "admin_console_title": "🛠 <b>Admin Console</b>",
         "admin_mark_btn":      "📌 Mark discussed",
         "admin_hide_btn":      "👻 Hide book",
+        "admin_notify_btn":    "🔔 Send voting reminder (top)",
+        "admin_notify_one_btn":"🔔 Send reminder for a specific book",
         "admin_unhide_btn":    "👁 Show book",
         "choose_hide":         "👻 Choose a book to hide from the list:",
+        "choose_notify":       "🔔 Choose a book to send a reminder for:",
         "book_hidden":         "✅ <b>{title}</b> is now hidden.",
         "book_unhidden":       "✅ <b>{title}</b> is now visible.",
         "choose_mark":         "📌 Choose a book to mark as discussed:",
@@ -202,6 +205,9 @@ T = {
         "not_member":  "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
+        "admin_notify_confirm": "🔔 Voting reminder sent to {count} users.",
+        "admin_notify_no_users": "ℹ️ No users to notify (everyone has voted or notifications disabled).",
+        "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top books yet. Take a look and cast your vote:\n\n",
         "last_activity_label": "Last non-admin activity",
         "never": "never",
         "info_msg": (
@@ -291,8 +297,11 @@ T = {
         "admin_console_title": "🛠 <b>Админ-панель</b>",
         "admin_mark_btn":      "📌 Отметить обсуждённой",
         "admin_hide_btn":      "👻 Скрыть книгу",
+        "admin_notify_btn":    "🔔 Напомнить о голосовании (топ)",
+        "admin_notify_one_btn":"🔔 Напомнить об одной книге",
         "admin_unhide_btn":    "👁 Показать книгу",
         "choose_hide":         "👻 Выберите книгу, чтобы скрыть её из списка:",
+        "choose_notify":       "🔔 Выберите книгу для напоминания:",
         "book_hidden":         "✅ Книга <b>{title}</b> скрыта.",
         "book_unhidden":       "✅ Книга <b>{title}</b> снова видна.",
         "choose_mark":         "📌 Выберите книгу для отметки как обсуждённой:",
@@ -323,6 +332,9 @@ T = {
         "not_member":  "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
+        "admin_notify_confirm": "🔔 Напоминание о голосовании отправлено {count} пользователям.",
+        "admin_notify_no_users": "ℹ️ Нет пользователей для уведомления (все проголосовали или уведомления отключены).",
+        "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы еще не проголосовали за некоторые популярные книги. Посмотрите и оставьте свой голос:\n\n",
         "last_activity_label": "Последняя активность (не админ)",
         "never": "никогда",
         "info_msg": (
@@ -1184,6 +1196,8 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(tr(ctx, "admin_mark_btn"), callback_data="admin:mark")],
         [InlineKeyboardButton(tr(ctx, "admin_hide_btn"), callback_data="admin:hide")],
+        [InlineKeyboardButton(tr(ctx, "admin_notify_btn"), callback_data="admin:notify")],
+        [InlineKeyboardButton(tr(ctx, "admin_notify_one_btn"), callback_data="admin:notify_pick")],
     ])
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
     return ADMIN_MENU
@@ -1223,6 +1237,128 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard_btns),
         )
         return ADMIN_HIDE_CHOOSE
+    elif data == "notify":
+        return await admin_notify_top_cb(update, ctx)
+    elif data == "notify_pick":
+        books = db_get_books(discussed=False)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_notify"),
+            reply_markup=books_keyboard(books, "admin_notify_pick", tr(ctx, "cancel_btn")),
+        )
+        return ADMIN_NOTIFY_PICK
+    return ConversationHandler.END
+
+
+async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    lang = get_lang(ctx)
+    
+    books = db_get_books(discussed=False)
+    if not books:
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return ConversationHandler.END
+    
+    # Top 5 selection (same logic as /top)
+    top_books = []
+    for i, book in enumerate(books):
+        if i < 5:
+            top_books.append(book)
+        else:
+            fifth = books[4]
+            if book["avg_score"] == fifth["avg_score"] and book["vote_count"] == fifth["vote_count"]:
+                top_books.append(book)
+            else:
+                break
+                
+    user_ids = db_get_users_with_setting("notify_new_books", 1)
+    notified_count = 0
+    
+    for user_id in user_ids:
+        # For each user, find which of the top books they HAVEN'T voted for
+        unvoted_tops = []
+        for b in top_books:
+            if db_get_user_vote(user_id, b["id"]) is None:
+                unvoted_tops.append(b)
+        
+        if not unvoted_tops:
+            continue
+            
+        # Send reminder to this user
+        user_data = ctx.application.user_data.get(user_id, {})
+        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
+        text = tr(user_lang, "vote_reminder_msg")
+        
+        # We'll send the reminder text and then the book cards
+        try:
+            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
+            for b in unvoted_tops:
+                await ctx.bot.send_message(
+                    chat_id=user_id,
+                    text=book_card(b, user_lang),
+                    parse_mode=PM,
+                    reply_markup=score_keyboard(b["id"], user_lang)
+                )
+            notified_count += 1
+        except Exception as e:
+            logger.warning(f"admin_notify_top_cb: failed to notify user {user_id}: {e}")
+            
+    if notified_count > 0:
+        await query.edit_message_text(tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM)
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+        
+    return ConversationHandler.END
+
+
+async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    
+    if book_id == "cancel":
+        await query.edit_message_text(T[lang]["cancelled"])
+        return ConversationHandler.END
+        
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    user_ids = db_get_users_with_setting("notify_new_books", 1)
+    notified_count = 0
+    
+    for user_id in user_ids:
+        # Check if user has NOT voted for this book
+        if db_get_user_vote(user_id, book_id) is not None:
+            continue
+            
+        user_data = ctx.application.user_data.get(user_id, {})
+        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
+        
+        try:
+            # Send reminder to this user
+            text = tr(user_lang, "vote_reminder_msg")
+            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
+            await ctx.bot.send_message(
+                chat_id=user_id,
+                text=book_card(book, user_lang),
+                parse_mode=PM,
+                reply_markup=score_keyboard(book_id, user_lang)
+            )
+            notified_count += 1
+        except Exception as e:
+            logger.warning(f"admin_notify_pick_cb: failed to notify user {user_id}: {e}")
+            
+    if notified_count > 0:
+        await query.edit_message_text(tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM)
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+        
     return ConversationHandler.END
 
 
@@ -1620,6 +1756,7 @@ def main():
             ADMIN_MARK_CHOOSE: [CallbackQueryHandler(admin_mark_pick_cb, pattern=r"^admin_mark_pick:")],
             ADMIN_MARK_DATE:   [MessageHandler(filters.TEXT,             admin_mark_date_handler)],
             ADMIN_HIDE_CHOOSE: [CallbackQueryHandler(admin_hide_pick_cb, pattern=r"^admin_hide_pick:")],
+            ADMIN_NOTIFY_PICK: [CallbackQueryHandler(admin_notify_pick_cb, pattern=r"^admin_notify_pick:")],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
