@@ -73,10 +73,9 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 
 ## 🛡️ Backups
 
-To ensure your data is safe, a backup script is provided in `scripts/remote_backup.sh`. It creates a "safe" snapshot of the SQLite database while the bot is running to avoid corruption.
+To ensure your data is safe, a backup script `scripts/remote_backup.sh` is provided. It creates a "safe" snapshot of the SQLite database while the bot is running to avoid corruption.
 
-
-### Off-site Backups (Pulling from another machine)
+### Pull Backups (From another machine - Recommended)
 
 If you want to run the backup from a **different Linux machine** (e.g., a dedicated backup server), use `scripts/remote_backup.sh`. This script connects to your bot server via SSH, triggers a safe backup, and pulls the file back to the local machine.
 
