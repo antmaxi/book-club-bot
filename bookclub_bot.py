@@ -172,6 +172,7 @@ T = {
         "admin_hide_btn":      "👻 Hide book",
         "admin_notify_btn":    "🔔 Send voting reminder (top)",
         "admin_notify_one_btn":"🔔 Send reminder for a specific book",
+        "admin_toggle_chat_btn":"💬 Post to chat: {state}",
         "admin_unhide_btn":    "👁 Show book",
         "choose_hide":         "👻 Choose a book to hide from the list:",
         "choose_notify":       "🔔 Choose a book to send a reminder for:",
@@ -299,6 +300,7 @@ T = {
         "admin_hide_btn":      "👻 Скрыть книгу",
         "admin_notify_btn":    "🔔 Напомнить о голосовании (топ)",
         "admin_notify_one_btn":"🔔 Напомнить об одной книге",
+        "admin_toggle_chat_btn":"💬 Писать в чат: {state}",
         "admin_unhide_btn":    "👁 Показать книгу",
         "choose_hide":         "👻 Выберите книгу, чтобы скрыть её из списка:",
         "choose_notify":       "🔔 Выберите книгу для напоминания:",
@@ -457,6 +459,8 @@ def db_add_book(title, author, pages, fiction, review_link, description, user_id
 
 
 def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added_at DESC"):
+    # Note: avg_score is actually the SUM of weighted scores:
+    # 1.0 for 'want', 0.5 for 'don''t care', -1.0 for 'don''t want'
     return f"""
         SELECT b.*,
                COALESCE(
@@ -596,6 +600,15 @@ def db_get_users_with_setting(key, value):
             (key, value),
         ).fetchall()
         return [r[0] for r in rows]
+
+
+ADMIN_USER_ID = 0
+
+def db_get_admin_setting(key, default=0):
+    return db_get_user_setting(ADMIN_USER_ID, key, default)
+
+def db_set_admin_setting(key, value):
+    db_set_user_setting(ADMIN_USER_ID, key, value)
 
 
 # ── Formatting ─────────────────────────────────────────────────────────────────
@@ -1146,6 +1159,26 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"notify_new_book_job: failed to notify user {user_id}: {e}")
 
+    if ALLOWED_CHAT_ID and db_get_admin_setting("post_new_books_to_chat", 0):
+        try:
+            # For the public chat, we use Russian by default or English? 
+            # The bot seems to prefer Russian as fallback. 
+            # Given ALLOWED_CHAT_NAME is "Книжный клуб", Russian seems appropriate.
+            # But let's use the adder's language or default to Russian.
+            adder_data = ctx.application.user_data.get(adder_id, {})
+            chat_lang = adder_data.get("lang", "ru")
+            
+            text = tr(chat_lang, "new_book_notification") + book_card(book, chat_lang)
+            await ctx.bot.send_message(
+                chat_id=ALLOWED_CHAT_ID,
+                text=text,
+                parse_mode=PM,
+                reply_markup=score_keyboard(book_id, chat_lang),
+            )
+            logger.info(f"notify_new_book_job: posted book {book_id} to chat {ALLOWED_CHAT_ID}.")
+        except Exception as e:
+            logger.warning(f"notify_new_book_job: failed to post to chat {ALLOWED_CHAT_ID}: {e}")
+
     logger.info(f"notify_new_book_job: done — sent to {sent} user(s).")
 
 
@@ -1193,13 +1226,20 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         
     text = tr(ctx, "admin_console_title") + f"\n\n{tr(ctx, 'last_activity_label')}: <code>{last_act_str}</code>"
     
+    post_chat = db_get_admin_setting("post_new_books_to_chat", 0)
+    chat_state = "✅" if post_chat else "❌"
+    
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(tr(ctx, "admin_mark_btn"), callback_data="admin:mark")],
         [InlineKeyboardButton(tr(ctx, "admin_hide_btn"), callback_data="admin:hide")],
         [InlineKeyboardButton(tr(ctx, "admin_notify_btn"), callback_data="admin:notify")],
         [InlineKeyboardButton(tr(ctx, "admin_notify_one_btn"), callback_data="admin:notify_pick")],
+        [InlineKeyboardButton(tr(ctx, "admin_toggle_chat_btn", state=chat_state), callback_data="admin:toggle_chat")],
     ])
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
     return ADMIN_MENU
 
 
@@ -1249,6 +1289,10 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=books_keyboard(books, "admin_notify_pick", tr(ctx, "cancel_btn")),
         )
         return ADMIN_NOTIFY_PICK
+    elif data == "toggle_chat":
+        current = db_get_admin_setting("post_new_books_to_chat", 0)
+        db_set_admin_setting("post_new_books_to_chat", 1 - current)
+        return await cmd_admin_console(update, ctx)
     return ConversationHandler.END
 
 

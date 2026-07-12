@@ -31,6 +31,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot.ALLOWED_CHAT_ID = None
 
         self.update = MagicMock(spec=Update)
+        self.update.callback_query = None # Explicitly set to None by default
         self.ctx = MagicMock()
         self.ctx.user_data = {"lang": "en"}
         self.ctx.bot = AsyncMock()
@@ -830,6 +831,53 @@ class TestAdminConsole(BotHandlerTestCase):
         # Verify confirm message to admin
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_toggle_chat_works(self):
+        # Default should be 0
+        self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)
+        
+        # Toggle ON
+        q = self._callback_query("admin:toggle_chat")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 1)
+        
+        # Toggle OFF
+        q = self._callback_query("admin:toggle_chat")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)
+
+    async def test_notify_new_book_job_posts_to_chat_when_enabled(self):
+        bid = self._add_book("Chatty Book")
+        bot.ALLOWED_CHAT_ID = -100123
+        bot.db_set_admin_setting("post_new_books_to_chat", 1)
+        
+        # Setup job mock
+        self.ctx.job = MagicMock()
+        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.application.user_data = {999: {"lang": "en"}} # Force English for the adder
+
+        await bot.notify_new_book_job(self.ctx)
+        
+        # Should be called once for ALLOWED_CHAT_ID (and 0 users opted in by default in this test)
+        self.ctx.bot.send_message.assert_called()
+        args, kwargs = self.ctx.bot.send_message.call_args
+        self.assertEqual(kwargs['chat_id'], -100123)
+        self.assertIn("New book added", kwargs['text'])
+
+    async def test_notify_new_book_job_does_not_post_to_chat_when_disabled(self):
+        bid = self._add_book("Quiet Book")
+        bot.ALLOWED_CHAT_ID = -100123
+        bot.db_set_admin_setting("post_new_books_to_chat", 0)
+        
+        self.ctx.job = MagicMock()
+        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.application.user_data = {}
+
+        await bot.notify_new_book_job(self.ctx)
+        
+        # Should NOT be called for ALLOWED_CHAT_ID
+        # (It might be called if there were opted-in users, but there are none)
+        self.ctx.bot.send_message.assert_not_called()
 
 
 if __name__ == "__main__":
