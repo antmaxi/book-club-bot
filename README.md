@@ -16,6 +16,8 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - Notifications include a voting card to vote directly from the message.
   - Opt-in or out via `/settings`.
   - **Admin Notifications:** The main admin (first ID in `ADMIN_IDS`) receives notifications when the bot starts up or shuts down.
+  - **Voting Reminders:** Admins can send reminders to users who haven't voted for top-rated books or specific titles.
+  - **Group Chat Notifications:** Optionally post new book announcements directly to the club chat (toggleable in `/adminconsole`).
 - **Access Control:** Optionally restrict bot usage to members of a specific Telegram chat (via `ALLOWED_CHAT_ID`). For this bot should be inside the chat too
 - **Archive:** Track books that have already been discussed.
 
@@ -34,7 +36,11 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 - `/cancel`: Abort the current interactive command.
 
 ### Admin Commands
-- `/markdiscussed`: Mark a specific book as discussed (with a date).
+- `/adminconsole`: Centralized panel for admins to:
+  - **Mark discussed:** Mark a book as discussed and move it to the archive.
+  - **Hide books:** Temporarily hide books from the `/list` and `/top` without deleting them.
+  - **Send Reminders:** Broadcast a voting reminder to all users for either the current Top 5 books or a specific selected book.
+  - **Chat Notifications:** Toggle whether new books should be posted to the group chat automatically.
 
 ## 🖼 Screenshots
 ![Top](screenshots/2026-04-04_screenshot_top.png)
@@ -100,7 +106,7 @@ The project includes a suite of unit and integration tests.
 
 To run tests using Docker:
 ```bash
-docker compose run --rm bot python -m unittest discover tests
+docker compose run --rm -v "$(pwd)/tests:/app/tests:ro" bot python -m unittest discover tests
 ```
 
 ### Git Pre-commit Hook
@@ -111,7 +117,7 @@ If you need to install it manually on another machine:
 1. Create `.git/hooks/pre-commit` with the following content:
 ```bash
 #!/bin/bash
-docker compose run --rm bot python -m unittest discover tests
+docker compose run --rm -v "$(pwd)/tests:/app/tests:ro" bot python -m unittest discover tests
 ```
 2. Make it executable: `chmod +x .git/hooks/pre-commit`
 
