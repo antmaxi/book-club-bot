@@ -104,8 +104,10 @@ class TestStartHelp(BotHandlerTestCase):
 
 class TestInfo(BotHandlerTestCase):
 
+    @patch("os.path.exists")
     @patch("subprocess.check_output")
-    async def test_cmd_info_en(self, mock_git):
+    async def test_cmd_info_en(self, mock_git, mock_exists):
+        mock_exists.return_value = True
         mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
         with patch("bookclub_bot.GITHUB_REPO", "https://test.repo"):
             await bot.cmd_info(self.update, self.ctx)
@@ -115,8 +117,10 @@ class TestInfo(BotHandlerTestCase):
         self.assertIn("2026-04-04 12:00:00 +0000", text)
         self.assertIn("https://test.repo", text)
 
+    @patch("os.path.exists")
     @patch("subprocess.check_output")
-    async def test_cmd_info_ru(self, mock_git):
+    async def test_cmd_info_ru(self, mock_git, mock_exists):
+        mock_exists.return_value = True
         self.ctx.user_data["lang"] = "ru"
         mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
         await bot.cmd_info(self.update, self.ctx)

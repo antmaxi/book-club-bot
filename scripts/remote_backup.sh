@@ -24,7 +24,7 @@ REMOTE_DB_PATH="/app/data/bookclub.db"
 REMOTE_BACKUP_PATH="/app/data/bookclub_backup.db"
 
 # Local configuration on the backup machine
-LOCAL_BACKUP_DIR="./backups"
+LOCAL_BACKUP_DIR="/home/anton/Documents/GIT/book-club-bot/backups"
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 LOCAL_BACKUP_FILE="${LOCAL_BACKUP_DIR}/bookclub_${BOT_NAME}_${TIMESTAMP}.db"
 
