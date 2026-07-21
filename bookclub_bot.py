@@ -1887,6 +1887,10 @@ def register_handlers(app) -> None:
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
+        # Without this, re-sending the entry command while the conversation is
+        # still open matches nothing at all and the bot answers with silence —
+        # an abandoned /adminconsole would stay stuck until the bot restarted.
+        allow_reentry=True,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1904,6 +1908,10 @@ def register_handlers(app) -> None:
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
+        # Without this, re-sending the entry command while the conversation is
+        # still open matches nothing at all and the bot answers with silence —
+        # an abandoned /adminconsole would stay stuck until the bot restarted.
+        allow_reentry=True,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1918,6 +1926,10 @@ def register_handlers(app) -> None:
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
+        # Without this, re-sending the entry command while the conversation is
+        # still open matches nothing at all and the bot answers with silence —
+        # an abandoned /adminconsole would stay stuck until the bot restarted.
+        allow_reentry=True,
     ))
 
     app.add_handler(ConversationHandler(
@@ -1927,6 +1939,10 @@ def register_handlers(app) -> None:
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
+        # Without this, re-sending the entry command while the conversation is
+        # still open matches nothing at all and the bot answers with silence —
+        # an abandoned /adminconsole would stay stuck until the bot restarted.
+        allow_reentry=True,
     ))
 
     app.add_handler(CommandHandler("start",          cmd_start))

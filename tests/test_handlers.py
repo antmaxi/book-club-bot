@@ -12,7 +12,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import bookclub_bot as bot
-from telegram import Update, Message, User, Chat
+from telegram import Update, Message, User, Chat, MessageEntity, Bot
 from telegram.ext import ConversationHandler
 
 
@@ -1168,6 +1168,92 @@ class TestConversationWiring(unittest.TestCase):
         handlers = conv.states[bot.ADMIN_MARK_DATE]
         self.assertTrue(self._matches(handlers, "/today", is_command=True))
         self.assertTrue(self._matches(handlers, "2026-01-01", is_command=False))
+
+
+class TestConversationReentry(unittest.TestCase):
+    """Re-sending an entry command must always work.
+
+    ConversationHandler only consults entry_points when no conversation is
+    active (unless allow_reentry). Without it, a user who opened /adminconsole
+    and walked away could re-send /adminconsole forever and match nothing —
+    the update fell through every handler and the bot replied with silence.
+
+    Uses real Telegram objects rather than mocks: a MagicMock bot makes
+    CommandHandler's username comparison behave differently from production.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bot_obj = Bot("123456:AAHkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")
+        cls.bot_obj._bot_user = User(id=1, first_name="B", is_bot=True,
+                                     username="testbot")
+
+    def _conversations(self):
+        added = []
+        app = MagicMock()
+        app.add_handler = lambda h, *a, **kw: added.append(h)
+        bot.register_handlers(app)
+        return [h for h in added if isinstance(h, ConversationHandler)]
+
+    def _conv(self, command):
+        for conv in self._conversations():
+            for entry in conv.entry_points:
+                if getattr(entry, "commands", None) == {command}:
+                    return conv
+        self.fail(f"No ConversationHandler with entry /{command}")
+
+    def _command_update(self, text):
+        chat = Chat(id=-100123, type="supergroup")
+        user = User(id=99, first_name="Admin", is_bot=False)
+        msg = Message(
+            message_id=1, date=datetime.now(), chat=chat, from_user=user, text=text,
+            entities=[MessageEntity(type="bot_command", offset=0, length=len(text))],
+        )
+        msg.set_bot(self.bot_obj)
+        upd = Update(update_id=1, message=msg)
+        upd.set_bot(self.bot_obj)
+        return upd
+
+    def _handled(self, conv, update, state):
+        key = conv._get_key(update)
+        conv._conversations[key] = state
+        try:
+            return conv.check_update(update) is not None
+        finally:
+            conv._conversations.pop(key, None)
+
+    def test_adminconsole_recovers_from_every_open_state(self):
+        conv = self._conv("adminconsole")
+        upd = self._command_update("/adminconsole")
+        for state in (bot.ADMIN_MENU, bot.ADMIN_MARK_CHOOSE, bot.ADMIN_MARK_DATE,
+                      bot.ADMIN_HIDE_CHOOSE, bot.ADMIN_NOTIFY_PICK):
+            self.assertTrue(
+                self._handled(conv, upd, state),
+                f"/adminconsole did nothing while stuck in state {state}",
+            )
+
+    def test_add_edit_delete_recover_from_open_state(self):
+        for command, state in (("add", bot.ADDING_TITLE),
+                               ("add", bot.ADDING_DESCRIPTION),
+                               ("edit", bot.EDITING_CHOOSE),
+                               ("edit", bot.EDITING_FIELD),
+                               ("delete", bot.DELETING_CHOOSE)):
+            conv = self._conv(command)
+            upd = self._command_update(f"/{command}")
+            self.assertTrue(
+                self._handled(conv, upd, state),
+                f"/{command} did nothing while stuck in state {state}",
+            )
+
+    def test_entry_command_still_works_with_no_conversation(self):
+        conv = self._conv("adminconsole")
+        upd = self._command_update("/adminconsole")
+        self.assertIsNotNone(conv.check_update(upd))
+
+    def test_all_conversations_allow_reentry(self):
+        for conv in self._conversations():
+            self.assertTrue(conv.allow_reentry,
+                            "every conversation must be re-enterable")
 
 
 if __name__ == "__main__":
