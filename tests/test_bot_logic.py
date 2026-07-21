@@ -405,6 +405,32 @@ class TestUtils(unittest.TestCase):
     def test_h_combined(self):
         self.assertEqual(bot.h("a < b & c > d"), "a &lt; b &amp; c &gt; d")
 
+    def test_h_escapes_double_quote(self):
+        """h() is used inside href="..."; a raw quote would break the anchor."""
+        self.assertEqual(bot.h('a"b'), "a&quot;b")
+
+    def test_book_card_href_survives_quote_in_link(self):
+        """A quote in a stored review_link must not break out of the attribute."""
+        book = make_book(review_link='https://ex.com/a"onmouseover=x')
+        href_line = [l for l in bot.book_card(book, "en").splitlines() if "href" in l][0]
+        # Exactly two quotes: the ones delimiting the attribute.
+        self.assertEqual(href_line.count('"'), 2)
+        self.assertIn("&quot;", href_line)
+
+    # -- is_valid_url (rejections that would corrupt the HTML anchor) --
+
+    def test_is_valid_url_rejects_quote(self):
+        self.assertFalse(bot.is_valid_url('https://ex.com/a"b'))
+
+    def test_is_valid_url_rejects_angle_brackets(self):
+        self.assertFalse(bot.is_valid_url("https://ex.com/<b>"))
+
+    def test_is_valid_url_rejects_whitespace(self):
+        self.assertFalse(bot.is_valid_url("https://ex.com/a b"))
+
+    def test_is_valid_url_rejects_scheme_only(self):
+        self.assertFalse(bot.is_valid_url("https://"))
+
     # -- score_display --
 
     def test_score_display_with_votes(self):

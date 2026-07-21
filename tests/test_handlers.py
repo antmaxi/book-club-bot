@@ -8,6 +8,7 @@ No real Telegram API calls are made.
 import unittest
 import sqlite3
 import os
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import bookclub_bot as bot
@@ -29,6 +30,10 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         # Disable ALLOWED_CHAT_ID so membership gate never blocks during tests
         self._orig_chat_id = bot.ALLOWED_CHAT_ID
         bot.ALLOWED_CHAT_ID = None
+
+        # The membership cache is module-global; a verdict cached by one test
+        # would otherwise leak into the next.
+        bot._membership_cache.clear()
 
         self.update = MagicMock(spec=Update)
         self.update.callback_query = None # Explicitly set to None by default
@@ -607,6 +612,7 @@ class TestMembershipGate(BotHandlerTestCase):
     async def test_gate_allows_member_status(self):
         bot.ALLOWED_CHAT_ID = -1001111111111
         for status in ("member", "administrator", "creator", "restricted"):
+            bot._membership_cache.clear()   # else only the first status is tested
             member = MagicMock()
             member.status = status
             self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
@@ -616,6 +622,7 @@ class TestMembershipGate(BotHandlerTestCase):
     async def test_gate_blocks_non_member(self):
         bot.ALLOWED_CHAT_ID = -1001111111111
         for status in ("left", "kicked"):
+            bot._membership_cache.clear()   # else only the first status is tested
             member = MagicMock()
             member.status = status
             self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
@@ -628,6 +635,47 @@ class TestMembershipGate(BotHandlerTestCase):
         self.ctx.bot.get_chat_member = AsyncMock(side_effect=Exception("API error"))
         result = await bot._check_membership(self.update, self.ctx)
         self.assertFalse(result)
+
+    async def test_gate_caches_result_to_avoid_api_call_per_update(self):
+        """The gate runs on every update; it must not hit the API each time."""
+        bot.ALLOWED_CHAT_ID = -1001111111111
+        member = MagicMock()
+        member.status = "member"
+        self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
+        for _ in range(5):
+            self.assertTrue(await bot._check_membership(self.update, self.ctx))
+        self.ctx.bot.get_chat_member.assert_awaited_once()
+
+    async def test_gate_does_not_cache_api_failures(self):
+        """A transient error must not lock a real member out for the whole TTL."""
+        bot.ALLOWED_CHAT_ID = -1001111111111
+        self.ctx.bot.get_chat_member = AsyncMock(side_effect=Exception("boom"))
+        self.assertFalse(await bot._check_membership(self.update, self.ctx))
+
+        member = MagicMock()
+        member.status = "member"
+        self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
+        self.assertTrue(await bot._check_membership(self.update, self.ctx))
+
+    async def test_leaving_evicts_user_from_membership_cache(self):
+        bot.ALLOWED_CHAT_ID = -1001111111111
+        uid = self.update.effective_user.id
+        bot._membership_cache[uid] = (True, datetime.now())
+        self.update.message.left_chat_member = MagicMock(spec=User)
+        self.update.message.left_chat_member.id = uid
+        await bot.membership_gate(self.update, self.ctx)
+        self.assertNotIn(uid, bot._membership_cache)
+
+    async def test_gate_ignores_new_chat_members_service_message(self):
+        bot.ALLOWED_CHAT_ID = -1001111111111
+        joiner = MagicMock(spec=User)
+        joiner.id = 55555
+        bot._membership_cache[55555] = (False, datetime.now())
+        self.update.message.left_chat_member = None
+        self.update.message.new_chat_members = [joiner]
+        await bot.membership_gate(self.update, self.ctx)
+        self.assertNotIn(55555, bot._membership_cache)
+        self.message.reply_text.assert_not_called()
 
     async def test_gate_ignores_left_chat_member_service_message(self):
         """A 'user left the chat' service message must not trigger a reply in the group."""
@@ -863,18 +911,51 @@ class TestAdminConsole(BotHandlerTestCase):
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
         
-        # Setup job mock
+        # Setup job mock. The adder's language is deliberately English to show
+        # the shared group post does NOT follow it — group messages use CHAT_LANG.
         self.ctx.job = MagicMock()
         self.ctx.job.data = {"book_id": bid, "adder_id": 999}
-        self.ctx.application.user_data = {999: {"lang": "en"}} # Force English for the adder
+        self.ctx.application.user_data = {999: {"lang": "en"}}
 
-        await bot.notify_new_book_job(self.ctx)
-        
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.notify_new_book_job(self.ctx)
+
         # Should be called once for ALLOWED_CHAT_ID (and 0 users opted in by default in this test)
         self.ctx.bot.send_message.assert_called()
         args, kwargs = self.ctx.bot.send_message.call_args
         self.assertEqual(kwargs['chat_id'], -100123)
         self.assertIn("New book added", kwargs['text'])
+
+    async def test_chat_post_uses_chat_lang_not_adder_lang(self):
+        """A shared group post must not follow the adder's personal language."""
+        bid = self._add_book("Shared Book")
+        bot.ALLOWED_CHAT_ID = -100123
+        bot.db_set_admin_setting("post_new_books_to_chat", 1)
+
+        self.ctx.job = MagicMock()
+        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.application.user_data = {999: {"lang": "en"}}   # adder prefers English
+
+        with patch.object(bot, "CHAT_LANG", "ru"):
+            await bot.notify_new_book_job(self.ctx)
+
+        kwargs = self.ctx.bot.send_message.call_args[1]
+        self.assertIn("Добавлена новая книга", kwargs["text"])
+        self.assertNotIn("New book added", kwargs["text"])
+
+    async def test_notify_new_book_job_skips_hidden_book(self):
+        bid = self._add_book("Hidden Book")
+        bot.ALLOWED_CHAT_ID = -100123
+        bot.db_set_admin_setting("post_new_books_to_chat", 1)
+        bot.db_toggle_hidden(bid)   # admin hid it inside the 10-minute window
+
+        self.ctx.job = MagicMock()
+        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.application.user_data = {}
+
+        await bot.notify_new_book_job(self.ctx)
+
+        self.ctx.bot.send_message.assert_not_called()
 
     async def test_notify_new_book_job_does_not_post_to_chat_when_disabled(self):
         bid = self._add_book("Quiet Book")
@@ -890,6 +971,203 @@ class TestAdminConsole(BotHandlerTestCase):
         # Should NOT be called for ALLOWED_CHAT_ID
         # (It might be called if there were opted-in users, but there are none)
         self.ctx.bot.send_message.assert_not_called()
+
+
+# ── Voting in a shared group message ──────────────────────────────────────────
+
+class TestGroupVoteCard(BotHandlerTestCase):
+    """A card posted to the club chat is shared, so it must stay impersonal."""
+
+    def _vote_in(self, chat_type, book_id, score=1):
+        self.update.effective_chat.type = chat_type
+        q = self._callback_query(f"vote_cast:{book_id}:{score}")
+        return q
+
+    def _add_book(self, title="Group Book"):
+        return bot.db_add_book(title, "Author", 100, 1, "", "", 999, "u", "u")
+
+    async def test_group_card_omits_personal_vote(self):
+        bid = self._add_book()
+        q = self._vote_in("supergroup", bid)
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+        text = q.edit_message_text.call_args[0][0]
+        self.assertNotIn("Your current vote", text,
+                         "shared group card must not show one member's vote")
+
+    async def test_group_card_acknowledges_voter_via_toast(self):
+        bid = self._add_book()
+        q = self._vote_in("supergroup", bid)
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+        q.answer.assert_called_once()
+        self.assertIn("Your vote", q.answer.call_args[0][0])
+
+    async def test_group_card_ignores_clicker_language(self):
+        bid = self._add_book()
+        self.ctx.user_data["lang"] = "en"      # clicker prefers English
+        q = self._vote_in("supergroup", bid)
+        with patch.object(bot, "CHAT_LANG", "ru"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+        text = q.edit_message_text.call_args[0][0]
+        # Rendered in CHAT_LANG, not the clicker's "en".
+        self.assertIn("Добавлено", text)
+        self.assertNotIn("Added on", text)
+
+    async def test_private_card_still_shows_personal_vote(self):
+        bid = self._add_book()
+        q = self._vote_in("private", bid)
+        await bot.vote_cast_cb(self.update, self.ctx)
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("Your current vote", text)
+
+    async def test_out_of_range_score_is_ignored(self):
+        """Crafted callback data must not raise a KeyError inside the handler."""
+        bid = self._add_book()
+        self._vote_in("supergroup", bid, score=7)
+        await bot.vote_cast_cb(self.update, self.ctx)
+        self.assertIsNone(bot.db_get_user_vote(self.update.effective_user.id, bid))
+
+    async def test_vote_is_recorded_in_both_chat_types(self):
+        for chat_type in ("private", "supergroup"):
+            bid = self._add_book(f"B-{chat_type}")
+            self._vote_in(chat_type, bid)
+            with patch.object(bot, "CHAT_LANG", "en"):
+                await bot.vote_cast_cb(self.update, self.ctx)
+            self.assertEqual(
+                bot.db_get_user_vote(self.update.effective_user.id, bid), 1)
+
+
+# ── Admin authorization on callbacks ──────────────────────────────────────────
+
+class TestAdminCallbackGuards(BotHandlerTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._orig_admins = bot.ADMIN_IDS[:]
+        bot.ADMIN_IDS = [11111]                      # caller (67890) is NOT admin
+
+    def tearDown(self):
+        bot.ADMIN_IDS = self._orig_admins
+        super().tearDown()
+
+    async def test_admin_menu_cb_rejects_non_admin(self):
+        q = self._callback_query("admin:toggle_chat")
+        before = bot.db_get_admin_setting("post_new_books_to_chat", 0)
+        result = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(result, ConversationHandler.END)
+        q.answer.assert_called_once()
+        self.assertIn("admins only", q.answer.call_args[0][0])
+        self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat", 0), before,
+                         "non-admin must not flip the chat-posting setting")
+
+    async def test_admin_notify_pick_cb_rejects_non_admin(self):
+        self._callback_query("admin_notify_pick:1")
+        result = await bot.admin_notify_pick_cb(self.update, self.ctx)
+        self.assertEqual(result, ConversationHandler.END)
+        self.ctx.bot.send_message.assert_not_called()
+
+    async def test_admin_hide_pick_cb_rejects_non_admin(self):
+        bid = bot.db_add_book("H", "A", 1, 1, "", "", 999, "u", "u")
+        self._callback_query(f"admin_hide_pick:{bid}")
+        await bot.admin_hide_pick_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_get_book(bid)["hidden"], 0)
+
+    async def test_admin_mark_date_handler_rejects_non_admin(self):
+        bid = bot.db_add_book("M", "A", 1, 1, "", "", 999, "u", "u")
+        self.ctx.user_data["mark_book_id"] = bid
+        self.message.text = "/today"
+        await bot.admin_mark_date_handler(self.update, self.ctx)
+        self.assertEqual(bot.db_get_book(bid)["discussed"], 0)
+
+
+# ── Stale conversation state ──────────────────────────────────────────────────
+
+class TestStaleState(BotHandlerTestCase):
+
+    async def test_mark_date_without_book_id_ends_gracefully(self):
+        """State can be lost if the bot restarts mid-conversation."""
+        bot.ADMIN_IDS = [self.update.effective_user.id]
+        try:
+            self.ctx.user_data.pop("mark_book_id", None)
+            self.message.text = "/today"
+            result = await bot.admin_mark_date_handler(self.update, self.ctx)
+            self.assertEqual(result, ConversationHandler.END)
+            self.message.reply_text.assert_called_once()
+        finally:
+            bot.ADMIN_IDS = []
+
+
+# ── Conversation wiring ───────────────────────────────────────────────────────
+
+class TestConversationWiring(unittest.TestCase):
+    """Guards the state/fallback ordering in register_handlers().
+
+    ConversationHandler matches state handlers BEFORE fallbacks, so a bare
+    filters.TEXT in a state silently swallows /cancel. These tests assert the
+    states that accept free text still let commands through to the fallback.
+    """
+
+    def _states(self, entry_command):
+        app = MagicMock()
+        added = []
+        app.add_handler = lambda h, *a, **kw: added.append(h)
+        bot.register_handlers(app)
+        for h in added:
+            if not isinstance(h, ConversationHandler):
+                continue
+            names = {getattr(e, "commands", None) and tuple(e.commands)
+                     for e in h.entry_points}
+            if (entry_command,) in names:
+                return h
+        self.fail(f"No ConversationHandler with entry /{entry_command}")
+
+    def _matches(self, handlers, text, is_command):
+        """True if any handler in the state would consume this message."""
+        update = MagicMock(spec=Update)
+        update.callback_query = None
+        msg = MagicMock(spec=Message)
+        msg.text = text
+        update.message = msg
+        update.effective_message = msg
+        update.channel_post = None
+        update.edited_message = None
+        # Both filters.COMMAND and CommandHandler key off the leading entity;
+        # CommandHandler slices text[1:length] to read the command name.
+        msg.entities = (
+            [MagicMock(type="bot_command", offset=0, length=len(text))]
+            if is_command else []
+        )
+        return any(h.check_update(update) for h in handlers)
+
+    def test_description_state_lets_cancel_reach_fallback(self):
+        conv = self._states("add")
+        handlers = conv.states[bot.ADDING_DESCRIPTION]
+        self.assertFalse(
+            self._matches(handlers, "/cancel", is_command=True),
+            "/cancel must not be consumed as the book description",
+        )
+
+    def test_description_state_still_accepts_skip_and_plain_text(self):
+        conv = self._states("add")
+        handlers = conv.states[bot.ADDING_DESCRIPTION]
+        self.assertTrue(self._matches(handlers, "/skip", is_command=True),
+                        "/skip must still be handled")
+        self.assertTrue(self._matches(handlers, "a description", is_command=False))
+
+    def test_mark_date_state_lets_cancel_reach_fallback(self):
+        conv = self._states("adminconsole")
+        handlers = conv.states[bot.ADMIN_MARK_DATE]
+        self.assertFalse(
+            self._matches(handlers, "/cancel", is_command=True),
+            "/cancel must not be parsed as a discussion date",
+        )
+
+    def test_mark_date_state_still_accepts_today_and_plain_date(self):
+        conv = self._states("adminconsole")
+        handlers = conv.states[bot.ADMIN_MARK_DATE]
+        self.assertTrue(self._matches(handlers, "/today", is_command=True))
+        self.assertTrue(self._matches(handlers, "2026-01-01", is_command=False))
 
 
 if __name__ == "__main__":

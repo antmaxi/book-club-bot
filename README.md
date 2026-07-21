@@ -67,7 +67,11 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    ADMIN_IDS="ID_1,ID_2"
    GITHUB_REPO="https://github.com/yourusername/your-repo"
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
+   CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
    ```
+   `CHAT_LANG` applies only to shared group posts (new-book announcements and the
+   vote cards attached to them). Messages sent to individuals always follow that
+   person's own `/settings` language.
 
 3. **Run the bot using Docker:**
    ```bash

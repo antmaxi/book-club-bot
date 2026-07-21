@@ -62,6 +62,10 @@ DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 ALLOWED_CHAT_ID   = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
 ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб")
 
+# Language for messages the bot posts into the group chat. Group messages are
+# shared, so they can't follow any single user's language preference.
+CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
+
 # Conversation states
 (
     ADDING_TITLE,
@@ -103,7 +107,6 @@ T = {
             "ℹ️ /info — About the bot\n"
             "✏️ /edit — Edit a book entry\n"
             "🗑 /delete — Delete a book\n"
-            "🏆 /top — Top rated books\n"
             "✅ /discussed — Books already discussed\n"
             "🛠 /adminconsole — Admin console\n"
             "❓ /help — Show this message"
@@ -159,6 +162,7 @@ T = {
         "want_label":          "✅ want to read",
         "meh_label":           "😐 don't care",
         "no_label":            "❌ don't want to read",
+        "vote_registered":     "Your vote: {label}",
         "want_btn":            "✅ Want",
         "meh_btn":             "😐 Don't care",
         "no_btn":              "❌ Don't want",
@@ -227,7 +231,6 @@ T = {
             "ℹ️ /info — О боте\n"
             "✏️ /edit — Редактировать запись\n"
             "🗑 /delete — Удалить книгу\n"
-            "🏆 /top — Топ книг\n"
             "✅ /discussed — Обсуждённые книги\n"
             "🛠 /adminconsole — Админ-панель\n"
             "❓ /help — Показать это сообщение"
@@ -287,6 +290,7 @@ T = {
         "want_label":          "✅ хочу читать",
         "meh_label":           "😐 всё равно",
         "no_label":            "❌ не хочу читать",
+        "vote_registered":     "Ваш голос: {label}",
         "want_btn":            "✅ Хочу",
         "meh_btn":             "😐 Всё равно",
         "no_btn":              "❌ Не хочу",
@@ -620,7 +624,16 @@ def format_user(book) -> str:
     return h(book["added_by_name"] or "unknown")
 
 def h(text: str) -> str:
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # `"` must be escaped too: h() is used inside href="..." attributes, where a
+    # raw quote breaks out of the attribute and makes Telegram reject the whole
+    # message — which would take down /list for everyone, not just the author.
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 SCORE_EMOJI = {1: "✅", 0: "😐", -1: "❌", None: "—"}
@@ -698,7 +711,14 @@ def score_keyboard(book_id, lang, current=None):
 
 
 def is_valid_url(text: str) -> bool:
-    return text.startswith("http://") or text.startswith("https://")
+    if not (text.startswith("http://") or text.startswith("https://")):
+        return False
+    # Reject characters that cannot legally appear unencoded in a URL. They are
+    # the ones that would otherwise corrupt the surrounding HTML anchor.
+    if any(c in text for c in '"<>') or any(c.isspace() for c in text):
+        return False
+    # Require something after the scheme.
+    return bool(text.split("://", 1)[1])
 
 
 def parse_date(text: str):
@@ -938,12 +958,17 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])
-        await ctx.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=book_card(book, lang, user_vote=uv),
-            parse_mode=PM,
-            reply_markup=score_keyboard(book["id"], lang, uv),
-        )
+        try:
+            await ctx.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=book_card(book, lang, user_vote=uv),
+                parse_mode=PM,
+                reply_markup=score_keyboard(book["id"], lang, uv),
+            )
+        except Exception as e:
+            # Never let one malformed book (e.g. a bad review link) abort the
+            # whole list for the user.
+            logger.warning(f"list_choice_cb: failed to send book {book['id']}: {e}")
 
 
 async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1135,6 +1160,9 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
     if book["discussed"]:
         logger.info(f"notify_new_book_job: book {book_id} already discussed, skipping.")
         return
+    if book["hidden"]:
+        logger.info(f"notify_new_book_job: book {book_id} was hidden, skipping.")
+        return
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
     logger.info(f"notify_new_book_job: notifying {len(user_ids)} user(s) about book {book_id}.")
@@ -1161,13 +1189,10 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
 
     if ALLOWED_CHAT_ID and db_get_admin_setting("post_new_books_to_chat", 0):
         try:
-            # For the public chat, we use Russian by default or English? 
-            # The bot seems to prefer Russian as fallback. 
-            # Given ALLOWED_CHAT_NAME is "Книжный клуб", Russian seems appropriate.
-            # But let's use the adder's language or default to Russian.
-            adder_data = ctx.application.user_data.get(adder_id, {})
-            chat_lang = adder_data.get("lang", "ru")
-            
+            # The group post is shared, so it uses the configured chat language
+            # rather than the adder's personal preference.
+            chat_lang = CHAT_LANG
+
             text = tr(chat_lang, "new_book_notification") + book_card(book, chat_lang)
             await ctx.bot.send_message(
                 chat_id=ALLOWED_CHAT_ID,
@@ -1193,18 +1218,40 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     lang = get_lang(ctx)
     _, book_id, score = query.data.split(":")
     if book_id == "cancel":
+        await query.answer()
         await query.edit_message_text(T[lang]["cancelled"])
         return
     book_id, score = int(book_id), int(score)
-    db_cast_vote(query.from_user.id, book_id, score)
-    book = db_get_book(book_id)
+    if score not in (-1, 0, 1):
+        # Only reachable via hand-crafted callback data; the score is used as a
+        # dict key below, so reject it rather than raising KeyError.
+        logger.warning(f"vote_cast_cb: ignoring out-of-range score {score}")
+        await query.answer()
+        return
     user_id = query.from_user.id
+    db_cast_vote(user_id, book_id, score)
+    book = db_get_book(book_id)
     uv = db_get_user_vote(user_id, book_id)
-    # Update the book card in-place with refreshed tally and user's vote marked
+
+    chat = update.effective_chat
+    if chat is not None and chat.type != "private":
+        # Shared message: it is visible to the whole club, so it must not show
+        # any single member's vote or follow their language. Acknowledge the
+        # voter privately via the callback toast instead.
+        vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+        await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
+        await query.edit_message_text(
+            book_card(book, CHAT_LANG),
+            parse_mode=PM,
+            reply_markup=score_keyboard(book_id, CHAT_LANG),
+        )
+        return
+
+    await query.answer()
+    # Private chat: the card belongs to this user, so show their vote inline.
     await query.edit_message_text(
         book_card(book, lang, user_vote=uv),
         parse_mode=PM,
@@ -1213,6 +1260,19 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ── /adminconsole conversation (admin only) ───────────────────────────────────
+async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Answer and reject a callback from a non-admin. Returns True if denied.
+
+    Conversation state already keeps non-admins out, but these buttons are
+    visible to everyone when /adminconsole is run in a group, so the handlers
+    verify the caller themselves rather than relying on routing alone.
+    """
+    if is_admin(update.effective_user.id):
+        return False
+    await update.callback_query.answer(tr(ctx, "admin_only"), show_alert=True)
+    return True
+
+
 async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
@@ -1244,6 +1304,8 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     data = query.data.split(":")[1]
@@ -1297,6 +1359,8 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
     query = update.callback_query
     lang = get_lang(ctx)
     
@@ -1358,6 +1422,8 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
@@ -1407,6 +1473,8 @@ async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
@@ -1420,6 +1488,9 @@ async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
     lang = get_lang(ctx)
     text = update.message.text.strip()
     if text == "/today":
@@ -1429,7 +1500,11 @@ async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         if not date_str:
             await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
             return ADMIN_MARK_DATE
-    book_id = ctx.user_data.pop("mark_book_id")
+    book_id = ctx.user_data.pop("mark_book_id", None)
+    if book_id is None:
+        # State was lost (e.g. bot restarted mid-conversation).
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
     db_mark_discussed(book_id, date_str)
     book = db_get_book(book_id)
     await update.message.reply_text(
@@ -1440,6 +1515,8 @@ async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE
 
 
 async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
@@ -1705,6 +1782,17 @@ async def bot_notify_shutdown(app: Application):
 
 
 # ── Chat membership gate ───────────────────────────────────────────────────────
+# The gate runs on every single update, so results are cached briefly to avoid a
+# get_chat_member API round-trip per message. Join/leave service messages evict
+# the affected user, so the common cases stay correct immediately.
+MEMBERSHIP_CACHE_TTL = 300  # seconds
+_membership_cache: dict[int, tuple[bool, datetime]] = {}
+
+
+def _membership_cache_evict(user_id: int) -> None:
+    _membership_cache.pop(user_id, None)
+
+
 async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
     """Return True if the user is a member of ALLOWED_CHAT_ID (or no restriction set)."""
     if not ALLOWED_CHAT_ID:
@@ -1715,10 +1803,22 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
     # Admins always pass
     if user_id in ADMIN_IDS:
         return True
+
+    cached = _membership_cache.get(user_id)
+    if cached is not None:
+        allowed, checked_at = cached
+        if (datetime.now() - checked_at).total_seconds() < MEMBERSHIP_CACHE_TTL:
+            return allowed
+        _membership_cache_evict(user_id)
+
     try:
         member = await ctx.bot.get_chat_member(ALLOWED_CHAT_ID, user_id)
-        return member.status in ("member", "administrator", "creator", "restricted")
+        allowed = member.status in ("member", "administrator", "creator", "restricted")
+        _membership_cache[user_id] = (allowed, datetime.now())
+        return allowed
     except Exception as e:
+        # Don't cache failures — a transient API error shouldn't lock a real
+        # member out for the whole TTL.
         logger.warning(f"Membership check failed for user {user_id}: {e}")
         return False
 
@@ -1729,6 +1829,13 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         # Service message for a user leaving the chat — their membership status
         # is now "left", which would otherwise look like a blocked non-member.
         # Nothing to gate here, and we must not reply into the group over this.
+        _membership_cache_evict(update.message.left_chat_member.id)
+        return
+
+    if update.message and update.message.new_chat_members:
+        # Someone just joined — drop any stale "not a member" verdict for them.
+        for m in update.message.new_chat_members:
+            _membership_cache_evict(m.id)
         return
 
     user_id = update.effective_user.id if update.effective_user else None
@@ -1754,34 +1861,12 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
-def main():
-    init_db()
+def register_handlers(app) -> None:
+    """Attach every handler to the application.
 
-    persistence_path = os.environ.get("PERSISTENCE_PATH", "bot_persistence")
-    # Ensure persistence_path is a file, not a directory
-    if os.path.isdir(persistence_path):
-        logger.warning(f"Persistence path '{persistence_path}' is a directory. Removing it to allow file creation.")
-        try:
-            os.rmdir(persistence_path)
-        except OSError:
-            logger.error(f"Could not remove directory '{persistence_path}'. Please remove it manually.")
-
-    persistence = PicklePersistence(filepath=persistence_path)
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .persistence(persistence)
-        .post_init(bot_notify_startup)
-        .post_stop(bot_notify_shutdown)
-        .build()
-    )
-    # Verify JobQueue is available (requires: pip install "python-telegram-bot[job-queue]")
-    if app.job_queue is None:
-        logger.error(
-            "JobQueue is not available! New book notifications will not work.\n"
-            "Fix: pip install \"python-telegram-bot[job-queue]\""
-        )
-
+    Split out of main() so tests can inspect the wiring — the state/fallback
+    ordering here is subtle enough to be worth asserting on.
+    """
     # Gate: silently block users not in the allowed chat (runs before all handlers)
     app.add_handler(TypeHandler(Update, membership_gate), group=-1)
 
@@ -1793,7 +1878,12 @@ def main():
             ADDING_PAGES:       [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages)],
             ADDING_FICTION:     [CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:")],
             ADDING_REVIEW:      [MessageHandler(filters.TEXT & ~filters.COMMAND, add_review)],
-            ADDING_DESCRIPTION: [MessageHandler(filters.TEXT, add_description)],
+            # /skip needs its own handler: a bare filters.TEXT here would also
+            # swallow /cancel (state handlers are matched before fallbacks).
+            ADDING_DESCRIPTION: [
+                CommandHandler("skip", add_description),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
+            ],
         },
         fallbacks=[CommandHandler("cancel", conv_cancel)],
         per_message=False,
@@ -1804,7 +1894,11 @@ def main():
         states={
             ADMIN_MENU:        [CallbackQueryHandler(admin_menu_cb,      pattern=r"^admin:")],
             ADMIN_MARK_CHOOSE: [CallbackQueryHandler(admin_mark_pick_cb, pattern=r"^admin_mark_pick:")],
-            ADMIN_MARK_DATE:   [MessageHandler(filters.TEXT,             admin_mark_date_handler)],
+            # /today needs its own handler — see the ADDING_DESCRIPTION note above.
+            ADMIN_MARK_DATE:   [
+                CommandHandler("today", admin_mark_date_handler),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_mark_date_handler),
+            ],
             ADMIN_HIDE_CHOOSE: [CallbackQueryHandler(admin_hide_pick_cb, pattern=r"^admin_hide_pick:")],
             ADMIN_NOTIFY_PICK: [CallbackQueryHandler(admin_notify_pick_cb, pattern=r"^admin_notify_pick:")],
         },
@@ -1847,6 +1941,37 @@ def main():
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
+
+
+def main():
+    init_db()
+
+    persistence_path = os.environ.get("PERSISTENCE_PATH", "bot_persistence")
+    # Ensure persistence_path is a file, not a directory
+    if os.path.isdir(persistence_path):
+        logger.warning(f"Persistence path '{persistence_path}' is a directory. Removing it to allow file creation.")
+        try:
+            os.rmdir(persistence_path)
+        except OSError:
+            logger.error(f"Could not remove directory '{persistence_path}'. Please remove it manually.")
+
+    persistence = PicklePersistence(filepath=persistence_path)
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .persistence(persistence)
+        .post_init(bot_notify_startup)
+        .post_stop(bot_notify_shutdown)
+        .build()
+    )
+    # Verify JobQueue is available (requires: pip install "python-telegram-bot[job-queue]")
+    if app.job_queue is None:
+        logger.error(
+            "JobQueue is not available! New book notifications will not work.\n"
+            "Fix: pip install \"python-telegram-bot[job-queue]\""
+        )
+
+    register_handlers(app)
 
     logger.info("Bot is running...")
     app.run_polling()
