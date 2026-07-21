@@ -1725,6 +1725,12 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
 
 async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Block users not in the allowed chat and tell them why."""
+    if update.message and update.message.left_chat_member:
+        # Service message for a user leaving the chat — their membership status
+        # is now "left", which would otherwise look like a blocked non-member.
+        # Nothing to gate here, and we must not reply into the group over this.
+        return
+
     user_id = update.effective_user.id if update.effective_user else None
     if user_id and user_id not in ADMIN_IDS:
         ctx.bot_data["last_non_admin_activity"] = datetime.now()
