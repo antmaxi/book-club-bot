@@ -87,12 +87,25 @@ _log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_fmt)
 
-_file_handler = logging.handlers.RotatingFileHandler(
-    LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-)
-_file_handler.setFormatter(_log_fmt)
+_handlers = [_console_handler]
 
-logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler])
+# The log directory is not in git (see .gitignore), so on a fresh clone it does
+# not exist yet and RotatingFileHandler would raise at import time — taking the
+# whole module, and the test suite, down with it.
+_log_dir = os.path.dirname(LOG_FILE)
+try:
+    if _log_dir:
+        os.makedirs(_log_dir, exist_ok=True)
+    _file_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _file_handler.setFormatter(_log_fmt)
+    _handlers.append(_file_handler)
+except OSError as e:
+    # Read-only filesystem, bad LOG_FILE path, … — console logging still works.
+    print(f"Warning: file logging disabled ({LOG_FILE}): {e}")
+
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
 logger = logging.getLogger(__name__)
 
 # ── Translations ───────────────────────────────────────────────────────────────
@@ -129,6 +142,7 @@ T = {
         "no_books_edit":       "📭 No books to edit yet.",
         "no_books_delete":     "📭 No books to delete yet.",
         "cancelled":           "❌ Cancelled.",
+        "unexpected_error":    "⚠️ Something went wrong on my side. Please try again — use /cancel first if you were in the middle of something.",
         "choose_vote":         "📊 Choose a book to vote on:",
         "choose_edit":         "✏️ Choose a book to edit:",
         "choose_delete":       "🗑 Choose a book to delete:",
@@ -253,6 +267,7 @@ T = {
         "no_books_edit":       "📭 Нет книг для редактирования.",
         "no_books_delete":     "📭 Нет книг для удаления.",
         "cancelled":           "❌ Отменено.",
+        "unexpected_error":    "⚠️ Что-то пошло не так с моей стороны. Попробуйте ещё раз — если вы были в середине команды, сначала используйте /cancel.",
         "choose_vote":         "📊 Выберите книгу для голосования:",
         "choose_edit":         "✏️ Выберите книгу для редактирования:",
         "choose_delete":       "🗑 Выберите книгу для удаления:",
@@ -1860,6 +1875,34 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     raise ApplicationHandlerStop
 
 
+async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log any unhandled handler exception and tell the user something broke.
+
+    Without this, python-telegram-bot swallows the traceback into the log and
+    the user gets no reply at all — the bot just goes silent mid-command, which
+    is indistinguishable from it being down.
+    """
+    logger.error("Unhandled exception while processing update:", exc_info=ctx.error)
+
+    if not isinstance(update, Update):
+        return  # e.g. a job error — nobody to reply to
+
+    lang = get_lang(ctx) if ctx.user_data is not None else "ru"
+    text = tr(lang, "unexpected_error")
+
+    try:
+        if update.callback_query:
+            # answer() clears the button's loading spinner; a plain message
+            # would leave it spinning even though we did reply.
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(text, parse_mode=PM)
+        elif update.effective_message:
+            await update.effective_message.reply_text(text, parse_mode=PM)
+    except Exception as e:
+        # Never let the error handler itself raise — that loses the original error.
+        logger.warning(f"Could not deliver error notice to user: {e}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def register_handlers(app) -> None:
     """Attach every handler to the application.
@@ -1958,8 +2001,20 @@ def register_handlers(app) -> None:
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
 
+    # Catches anything the handlers above let escape, so a crash produces a
+    # visible reply instead of silence.
+    app.add_error_handler(error_handler)
+
 
 def main():
+    # Fail loudly here rather than letting Telegram reject the placeholder with
+    # an opaque 401 several seconds into startup.
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        raise SystemExit(
+            "BOT_TOKEN is not set. Put it in your .env file (see README) "
+            "or export it before starting the bot."
+        )
+
     init_db()
 
     persistence_path = os.environ.get("PERSISTENCE_PATH", "bot_persistence")

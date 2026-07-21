@@ -1256,5 +1256,53 @@ class TestConversationReentry(unittest.TestCase):
                             "every conversation must be re-enterable")
 
 
+# ── Global error handler ──────────────────────────────────────────────────────
+
+class TestErrorHandler(BotHandlerTestCase):
+    """Without an error handler the bot replies with silence when a handler
+    raises, which looks identical to the bot being down."""
+
+    async def test_error_handler_replies_to_message(self):
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler(self.update, self.ctx)
+        self.update.effective_message.reply_text.assert_called_once()
+        text = self.update.effective_message.reply_text.call_args[0][0]
+        self.assertIn("Something went wrong", text)
+
+    async def test_error_handler_replies_in_russian(self):
+        self.ctx.user_data["lang"] = "ru"
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler(self.update, self.ctx)
+        text = self.update.effective_message.reply_text.call_args[0][0]
+        self.assertIn("Что-то пошло не так", text)
+
+    async def test_error_handler_answers_callback_query(self):
+        q = self._callback_query("vote_cast:1:1")
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler(self.update, self.ctx)
+        # Spinner must be cleared, otherwise the button spins forever.
+        q.answer.assert_awaited_once()
+        q.message.reply_text.assert_called_once()
+
+    async def test_error_handler_ignores_non_update(self):
+        """Job errors carry no update — must not raise trying to reply."""
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler("not-an-update", self.ctx)
+        self.message.reply_text.assert_not_called()
+
+    async def test_error_handler_survives_failed_delivery(self):
+        """If replying also fails, the original error must not be masked."""
+        self.ctx.error = RuntimeError("boom")
+        self.update.effective_message.reply_text.side_effect = Exception("network")
+        await bot.error_handler(self.update, self.ctx)  # must not raise
+
+    def test_error_handler_is_registered(self):
+        app = MagicMock()
+        registered = []
+        app.add_error_handler = lambda h: registered.append(h)
+        bot.register_handlers(app)
+        self.assertIn(bot.error_handler, registered)
+
+
 if __name__ == "__main__":
     unittest.main()
