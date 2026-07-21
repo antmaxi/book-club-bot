@@ -629,6 +629,14 @@ class TestMembershipGate(BotHandlerTestCase):
         result = await bot._check_membership(self.update, self.ctx)
         self.assertFalse(result)
 
+    async def test_gate_ignores_left_chat_member_service_message(self):
+        """A 'user left the chat' service message must not trigger a reply in the group."""
+        bot.ALLOWED_CHAT_ID = -1001111111111
+        self.update.message.left_chat_member = MagicMock(spec=User)
+        await bot.membership_gate(self.update, self.ctx)
+        self.ctx.bot.get_chat_member.assert_not_called()
+        self.message.reply_text.assert_not_called()
+
 
 # ── Startup / shutdown notifications ──────────────────────────────────────────
 

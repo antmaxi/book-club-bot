@@ -106,7 +106,10 @@ The project includes a suite of unit and integration tests.
 
 To run tests using Docker:
 ```bash
-docker compose run --rm -v "$(pwd)/tests:/app/tests:ro" bot python -m unittest discover tests
+docker compose run --rm \
+  -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
+  -v "$(pwd)/tests:/app/tests:ro" \
+  bot python -m unittest discover tests
 ```
 
 ### Git Pre-commit Hook
@@ -117,7 +120,10 @@ If you need to install it manually on another machine:
 1. Create `.git/hooks/pre-commit` with the following content:
 ```bash
 #!/bin/bash
-docker compose run --rm -v "$(pwd)/tests:/app/tests:ro" bot python -m unittest discover tests
+docker compose run --rm \
+  -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
+  -v "$(pwd)/tests:/app/tests:ro" \
+  bot python -m unittest discover tests
 ```
 2. Make it executable: `chmod +x .git/hooks/pre-commit`
 
