@@ -104,6 +104,48 @@ Add a cron job to run the backup daily at 2:00 AM:
    0 2 * * * /bin/bash /path/to/remote_backup.sh >> /path/to/book-club-bot/logs/backup.log 2>&1
    ```
 
+## 🚀 Deploying updates
+
+`scripts/deploy_bots.sh` updates one or more running instances on the server:
+for each configured instance it checks whether anyone has actually been using
+the bot recently, asks for confirmation, then stops the containers, pulls the
+latest code, and brings them back up rebuilt (`docker compose up -d --build`).
+
+The activity check reads `last_non_admin_activity` from the bot's own
+persistence file (`data/bot_persistence`) — the same timestamp
+`membership_gate()` stamps on every non-admin update. Admin activity never
+counts as "in use", so testing the deploy yourself doesn't block the next run.
+
+1. Create `scripts/deploy_bots.local.sh` (gitignored, sourced by `deploy_bots.sh`
+   if present) with the list of instance subfolders on this server:
+   ```bash
+   REPOS=(
+       "/root/book-club-bot"
+       # "/root/another-club-bot"
+   )
+   ```
+2. Run it: `./scripts/deploy_bots.sh`
+   - `--check-only` — report activity status for every instance and exit; changes nothing.
+   - `--yes` — auto-confirm instances with no recent activity; instances that look active are still prompted.
+   - `--skip-active` — combine with `--yes` for unattended/cron use: idle instances are updated, active ones are skipped without prompting.
+   - `--threshold <minutes>` — how recent counts as "active" (default 10).
+
+An instance with uncommitted local changes is always skipped rather than
+pulled over. If `git pull` or the rebuild fails partway through, the script
+tries to bring the previous containers back up rather than leaving the bot
+down, and exits nonzero if anything failed — useful for alerting if run from cron.
+
+**Why not Kubernetes?** These bots are single-process, long-polling (no
+inbound HTTP traffic to load-balance), and keep their state in a local SQLite
+file and a pickle file — the opposite of the stateless, horizontally-scaled
+workload Kubernetes is for. Running each instance as a separate `docker
+compose` stack on one small VPS, updated by this script, is simpler to
+operate and debug for this shape of workload. If instance count grows large
+enough that per-server `REPOS` lists become unwieldy, a lighter next step
+than Kubernetes would be a `systemd` timer calling this script instead of
+cron (structured logs via `journalctl`), or moving `REPOS` into a small
+inventory file read by the script.
+
 ## 🧪 Testing
 
 The project includes a suite of unit and integration tests.

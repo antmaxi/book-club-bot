@@ -4,6 +4,10 @@
 bookclub.db
 /logs/
 !/logs/.gitkeep
+# runtime state written into the docker-compose bind mount (bookclub.db,
+# bot_persistence) — see docker-compose.yml's ./data:/app/data volume.
+# No .gitkeep needed: `docker compose up` creates the directory itself.
+/data/
 __pycache__/
 *.pyc
 .venv/
@@ -11,3 +15,5 @@ __pycache__/
 bookclub_dbs/
 backups/
 *.env
+scripts/deploy_bots.local.sh
+scripts/deploy_bots.log
