@@ -23,8 +23,11 @@ REMOTE_BOT_DIR="${REMOTE_BOT_BASE_DIR}/${BOT_NAME}"
 REMOTE_DB_PATH="/app/data/bookclub.db"
 REMOTE_BACKUP_PATH="/app/data/bookclub_backup.db"
 
-# Local configuration on the backup machine
-LOCAL_BACKUP_DIR="/home/anton/Documents/GIT/book-club-bot/backups"
+# Local configuration on the backup machine.
+# Resolved relative to this script, not the caller's cwd — cron runs with a
+# different working directory, which would otherwise scatter backups around.
+# Override with BACKUP_DIR=/some/path to store them elsewhere.
+LOCAL_BACKUP_DIR="${BACKUP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/backups}"
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 LOCAL_BACKUP_FILE="${LOCAL_BACKUP_DIR}/bookclub_${BOT_NAME}_${TIMESTAMP}.db"
 

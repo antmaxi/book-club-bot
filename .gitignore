@@ -2,8 +2,10 @@
 /set-up.txt
 .env
 bookclub.db
+# No .gitkeep needed: the bot creates this directory itself on startup.
+# (A negated !/logs/.gitkeep would not work anyway — git never descends into
+# an excluded directory, so a rule for a file inside it can never re-include it.)
 /logs/
-!/logs/.gitkeep
 # runtime state written into the docker-compose bind mount (bookclub.db,
 # bot_persistence) — see docker-compose.yml's ./data:/app/data volume.
 # No .gitkeep needed: `docker compose up` creates the directory itself.
@@ -11,8 +13,8 @@ bookclub.db
 __pycache__/
 *.pyc
 .venv/
-# database backups
-bookclub_dbs/
+# database backups (bookclub_dbs/, philoclub_dbs/, …)
+*_dbs/
 backups/
 *.env
 scripts/deploy_bots.local.sh
