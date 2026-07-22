@@ -34,7 +34,8 @@ set -uo pipefail
 # deploy_bots.local.sh next to this script (gitignored) and set REPOS there.
 REPOS=(
     "/root/book-club-bot"
-    # "/root/another-club-bot"
+    "/root/philo-club-bot"
+    "/root/test-club-bot"
 )
 
 IDLE_THRESHOLD_MINUTES=10
