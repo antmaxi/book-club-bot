@@ -651,6 +651,19 @@ def h(text: str) -> str:
     )
 
 
+def fmt_dt_utc(dt) -> str:
+    """Format a datetime as 'YYYY-MM-DD HH:MM:SS UTC±HH:MM'.
+
+    Naive datetimes are assumed to be in the server's local timezone. The
+    explicit UTC offset lets admins reading this from any timezone interpret
+    the value without having to know where the server is.
+    """
+    if dt.tzinfo is None:
+        dt = dt.astimezone()          # attach the server's local tz
+    off = dt.strftime("%z")           # +0200 / -0500 / +0000
+    return dt.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:5]}"
+
+
 SCORE_EMOJI = {1: "✅", 0: "😐", -1: "❌", None: "—"}
 
 
@@ -870,16 +883,18 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     import subprocess
     import os
-    from datetime import datetime
-    
+
     last_commit = None
-    # 1. Try git log
+    # 1. Try git log — commit time as a Unix timestamp, so it goes through the
+    #    same formatter as everything else (server-local time + UTC offset)
+    #    instead of git's own zone-dependent rendering.
     try:
         if os.path.exists(".git"):
-            last_commit = subprocess.check_output(
-                ["git", "log", "-1", "--format=%cd", '--date=format:%Y-%m-%d %H:%M:%S %z'],
+            ct = subprocess.check_output(
+                ["git", "log", "-1", "--format=%ct"],
                 stderr=subprocess.DEVNULL
             ).decode("utf-8").strip()
+            last_commit = fmt_dt_utc(datetime.fromtimestamp(int(ct)))
     except Exception as e:
         logger.warning(f"Could not get last commit via git: {e}")
 
@@ -887,7 +902,7 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not last_commit:
         try:
             mtime = os.path.getmtime(__file__)
-            last_commit = datetime.fromtimestamp(mtime).astimezone().strftime('%Y-%m-%d %H:%M:%S %z')
+            last_commit = fmt_dt_utc(datetime.fromtimestamp(mtime))
         except Exception as e:
             logger.warning(f"Could not get file mtime: {e}")
             last_commit = "unknown"
@@ -1295,7 +1310,7 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     
     last_act = ctx.bot_data.get("last_non_admin_activity")
     if last_act:
-        last_act_str = last_act.strftime("%Y-%m-%d %H:%M:%S")
+        last_act_str = fmt_dt_utc(last_act)
     else:
         last_act_str = tr(ctx, "never")
         

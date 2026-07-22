@@ -109,17 +109,24 @@ class TestStartHelp(BotHandlerTestCase):
 
 class TestInfo(BotHandlerTestCase):
 
+    # Git reports the commit time as a Unix timestamp (--format=%ct), which the
+    # handler renders via fmt_dt_utc into server-local time with a UTC offset.
+    GIT_COMMIT_EPOCH = 1775649600  # 2026-04-04 12:00:00 UTC
+
     @patch("os.path.exists")
     @patch("subprocess.check_output")
     async def test_cmd_info_en(self, mock_git, mock_exists):
         mock_exists.return_value = True
-        mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
+        mock_git.return_value = f"{self.GIT_COMMIT_EPOCH}\n".encode()
         with patch("bookclub_bot.GITHUB_REPO", "https://test.repo"):
             await bot.cmd_info(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Book Club Bot", text)
-        self.assertIn("2026-04-04 12:00:00 +0000", text)
+        import datetime
+        expected = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH))
+        self.assertIn(expected, text)
+        self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
         self.assertIn("https://test.repo", text)
 
     @patch("os.path.exists")
@@ -127,11 +134,14 @@ class TestInfo(BotHandlerTestCase):
     async def test_cmd_info_ru(self, mock_git, mock_exists):
         mock_exists.return_value = True
         self.ctx.user_data["lang"] = "ru"
-        mock_git.return_value = b"2026-04-04 12:00:00 +0000\n"
+        mock_git.return_value = f"{self.GIT_COMMIT_EPOCH}\n".encode()
         await bot.cmd_info(self.update, self.ctx)
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Последнее обновление", text)
-        self.assertIn("2026-04-04 12:00:00 +0000", text)
+        import datetime
+        expected = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH))
+        self.assertIn(expected, text)
+        self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
 
     @patch("os.path.exists")
     @patch("os.path.getmtime")
@@ -140,19 +150,18 @@ class TestInfo(BotHandlerTestCase):
         # Git exists but fails
         mock_exists.return_value = True
         mock_git.side_effect = Exception("git error")
-        # mtime returns a fixed timestamp: 2026-04-09 10:00:00
-        # 1775728800 corresponds to 2026-04-09 10:00:00 UTC (roughly)
-        # Let's use a simpler way to verify
-        mock_mtime.return_value = 1775728800 
-        
+        mock_mtime.return_value = 1775728800
+
         await bot.cmd_info(self.update, self.ctx)
-        
+
         text = self.message.reply_text.call_args[0][0]
         self.assertNotEqual(text, "unknown")
-        # The exact string depends on local timezone, so we just check it matches a date format or is present
+        # The exact string depends on local timezone, so build the expectation
+        # the same way the handler does.
         import datetime
-        expected_date = datetime.datetime.fromtimestamp(1775728800).astimezone().strftime('%Y-%m-%d %H:%M:%S %z')
+        expected_date = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(1775728800))
         self.assertIn(expected_date, text)
+        self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
 
     @patch("os.path.exists")
     @patch("subprocess.check_output")
