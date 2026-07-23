@@ -112,11 +112,17 @@ process_repo() {
     local running
     running="$(cd "$repo" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
 
+    # Currently-deployed commit (HEAD before any pull): hash, commit date, subject.
+    # Lets the operator see what version is running before deciding to update it.
+    local head_info
+    head_info="$(git -C "$repo" log -1 --format='%h  %cd  %s' --date=format:'%Y-%m-%d %H:%M' 2>/dev/null)"
+
     echo ""
     echo "== $name =="
     echo "  path:       $repo"
     echo "  containers: ${running} running"
     echo "  activity:   $status_line"
+    echo "  commit:     ${head_info:-(unknown)}"
 
     if [ "$CHECK_ONLY" -eq 1 ]; then
         return
