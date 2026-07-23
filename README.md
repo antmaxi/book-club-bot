@@ -68,6 +68,8 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    GITHUB_REPO="https://github.com/yourusername/your-repo"
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
+   INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
+   ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    ```
    `CHAT_LANG` applies only to shared group posts (new-book announcements and the
    vote cards attached to them). Messages sent to individuals always follow that
@@ -145,6 +147,52 @@ enough that per-server `REPOS` lists become unwieldy, a lighter next step
 than Kubernetes would be a `systemd` timer calling this script instead of
 cron (structured logs via `journalctl`), or moving `REPOS` into a small
 inventory file read by the script.
+
+## 🔎 Logs & error alerts
+
+Each instance writes to `logs/bookclub_bot.log` (rotated at 5 MB, 3 backups
+kept) as well as to the container's stdout (`docker compose logs`). Two things
+make failures easier to catch when something breaks.
+
+### Get alerted when an error happens
+
+Anything logged at `ERROR` or above — including every unhandled exception
+caught by the global error handler — is forwarded to the main admin (the first
+ID in `ADMIN_IDS`) as a Telegram message, so you find out without watching the
+logs. Alerts are coalesced (up to a few errors per message, at most one message
+every few seconds) so an error storm can't turn into a notification storm.
+
+- On by default whenever `ADMIN_IDS` is set. Disable with `ERROR_ALERTS=0`.
+- Set `INSTANCE_NAME` (e.g. `philo-club`) so a shared admin can tell which bot
+  an alert came from — it's prepended to every alert.
+
+### Search logs across all instances
+
+`scripts/logs.sh` searches and tails the logs of **every** instance on the
+server from one place, prefixing each line with the instance it came from so
+you don't have to `grep` three separate files by hand. It reuses the same
+`REPOS` list as `deploy_bots.sh` (from `scripts/deploy_bots.local.sh`).
+
+```bash
+./scripts/logs.sh                # last 50 ERROR/WARNING lines across all bots
+./scripts/logs.sh -e             # errors only (ERROR/CRITICAL)
+./scripts/logs.sh -g "notify"    # lines matching a regex
+./scripts/logs.sh -b philo -e    # errors from instances whose name matches "philo"
+./scripts/logs.sh --today -e     # today's errors only
+./scripts/logs.sh -f             # live tail (ERROR/WARNING) — add -a for everything
+```
+
+Run `./scripts/logs.sh --help` for the full flag list.
+
+**Why not Prometheus / Loki / ELK?** Prometheus stores *numeric metrics*, not
+log text, so it can't answer "what was the error message?" — the log-search
+tool in that ecosystem is Grafana Loki. A full Loki+Grafana (or ELK) stack is
+real value once you have many services or need dashboards and long retention,
+but for a handful of single-process bots on one VPS it's more moving parts to
+run and secure than the problem needs. Push-on-error (above) plus a
+cross-instance `grep` wrapper covers "tell me when it breaks" and "let me find
+the error" without new infrastructure. If the fleet grows, the natural next
+step is shipping these same log files to Loki via Promtail.
 
 ## 🧪 Testing
 

@@ -705,6 +705,9 @@ class TestStartupShutdown(BotHandlerTestCase):
             bot.ADMIN_IDS = [111, 222]
             app = MagicMock()
             app.bot = AsyncMock()
+            # bot_notify_startup schedules the error-alert drain via
+            # app.create_task; close the coroutine so it isn't left un-awaited.
+            app.create_task.side_effect = lambda coro: coro.close()
             await bot.bot_notify_startup(app)
             app.bot.send_message.assert_called_once()
             self.assertEqual(app.bot.send_message.call_args[1]["chat_id"], 111)
@@ -742,6 +745,7 @@ class TestStartupShutdown(BotHandlerTestCase):
             bot.ADMIN_IDS = [123]
             app = MagicMock()
             app.bot = AsyncMock()
+            app.create_task.side_effect = lambda coro: coro.close()
             app.bot.send_message.side_effect = Exception("Network error")
             # Should not raise
             await bot.bot_notify_startup(app)

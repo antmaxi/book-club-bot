@@ -645,5 +645,50 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(val, -1001234567890)
 
 
+# ── Error-alert buffering ────────────────────────────────────────────────────────
+
+class TestErrorAlertHandler(unittest.TestCase):
+    """The Telegram error-alert handler only *buffers* records; delivery is a
+    separate background task. These tests cover the buffering + loop-guard logic
+    that keeps a failing send from alerting about itself forever."""
+
+    def setUp(self):
+        bot._alert_buffer.clear()
+        bot._alert_dropped = 0
+        self.handler = bot._TelegramAlertHandler(level=bot.logging.ERROR)
+        self.handler.setFormatter(bot._log_fmt)
+
+    def _record(self, name="bookclub_bot", msg="boom", level=bot.logging.ERROR):
+        return bot.logging.LogRecord(
+            name=name, level=level, pathname=__file__, lineno=1,
+            msg=msg, args=(), exc_info=None,
+        )
+
+    def test_error_record_is_buffered(self):
+        self.handler.emit(self._record(msg="kaboom"))
+        self.assertEqual(len(bot._alert_buffer), 1)
+        self.assertIn("kaboom", bot._alert_buffer[0])
+
+    def test_own_alert_failures_are_ignored(self):
+        # The ".alert" child logger reports delivery failures; alerting on those
+        # would loop forever, so emit() must drop them.
+        self.handler.emit(self._record(name="bookclub_bot.alert"))
+        self.assertEqual(len(bot._alert_buffer), 0)
+
+    def test_networking_stack_is_ignored(self):
+        for noisy in ("httpx", "httpcore.connection", "telegram.ext", "apscheduler.x"):
+            self.handler.emit(self._record(name=noisy))
+        self.assertEqual(len(bot._alert_buffer), 0)
+
+    def test_buffer_is_bounded_and_counts_drops(self):
+        overflow = bot._ALERT_BUFFER_MAX + 5
+        for i in range(overflow):
+            self.handler.emit(self._record(msg=f"err{i}"))
+        self.assertEqual(len(bot._alert_buffer), bot._ALERT_BUFFER_MAX)
+        self.assertEqual(bot._alert_dropped, 5)
+        # Oldest were dropped; newest survive.
+        self.assertIn(f"err{overflow - 1}", bot._alert_buffer[-1])
+
+
 if __name__ == "__main__":
     unittest.main()
