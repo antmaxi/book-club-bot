@@ -1271,9 +1271,23 @@ class TestConversationReentry(unittest.TestCase):
 
 # ── Global error handler ──────────────────────────────────────────────────────
 
+# ── Global error handler ──────────────────────────────────────────────────────
+
 class TestErrorHandler(BotHandlerTestCase):
     """Without an error handler the bot replies with silence when a handler
-    raises, which looks identical to the bot being down."""
+    raises, which looks identical to the bot being down.
+
+    The updated error_handler suppresses error notifications in group chats
+    (errors are still logged and sent to the admin via _TelegramAlertHandler).
+    Tests that check user-facing replies must therefore run in a private-chat
+    context."""
+
+    def setUp(self):
+        super().setUp()
+        # The updated error_handler checks effective_message.chat.type and
+        # returns early for non-private chats. Default to private so existing
+        # tests exercise the reply path.
+        self.update.effective_message.chat.type = "private"
 
     async def test_error_handler_replies_to_message(self):
         self.ctx.error = RuntimeError("boom")
@@ -1291,6 +1305,8 @@ class TestErrorHandler(BotHandlerTestCase):
 
     async def test_error_handler_answers_callback_query(self):
         q = self._callback_query("vote_cast:1:1")
+        # effective_message is already set to private by setUp; the handler
+        # will reach the callback_query branch and clear the spinner.
         self.ctx.error = RuntimeError("boom")
         await bot.error_handler(self.update, self.ctx)
         # Spinner must be cleared, otherwise the button spins forever.
@@ -1308,6 +1324,32 @@ class TestErrorHandler(BotHandlerTestCase):
         self.ctx.error = RuntimeError("boom")
         self.update.effective_message.reply_text.side_effect = Exception("network")
         await bot.error_handler(self.update, self.ctx)  # must not raise
+
+    async def test_error_handler_suppressed_in_group_chat(self):
+        """Errors in group chats must not spam members with error messages."""
+        self.update.effective_message.chat.type = "supergroup"
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler(self.update, self.ctx)
+        self.update.effective_message.reply_text.assert_not_called()
+
+    async def test_error_handler_suppresses_callback_query_in_group(self):
+        """A callback-query error in a group must not post a reply there."""
+        self._callback_query("vote_cast:1:1")
+        self.update.effective_message.chat.type = "supergroup"
+        self.ctx.error = RuntimeError("boom")
+        await bot.error_handler(self.update, self.ctx)
+        # No reply should be sent into the group chat
+        self.update.effective_message.reply_text.assert_not_called()
+        # The callback query answer should also not fire a visible alert
+        self.update.callback_query.answer.assert_not_awaited()
+
+    async def test_error_handler_logs_error_in_group_chat(self):
+        """Even when suppressed in groups, the error must still be logged."""
+        self.update.effective_message.chat.type = "supergroup"
+        self.ctx.error = RuntimeError("boom")
+        with patch.object(bot.logger, "error") as mock_err:
+            await bot.error_handler(self.update, self.ctx)
+            mock_err.assert_called_once()
 
     def test_error_handler_is_registered(self):
         app = MagicMock()

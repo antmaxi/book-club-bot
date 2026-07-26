@@ -1343,6 +1343,9 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle inline voting callbacks — works for both private and group chats."""
+    from telegram.error import BadRequest
+
     query = update.callback_query
     lang = get_lang(ctx)
     _, book_id, score = query.data.split(":")
@@ -1352,37 +1355,103 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     book_id, score = int(book_id), int(score)
     if score not in (-1, 0, 1):
-        # Only reachable via hand-crafted callback data; the score is used as a
-        # dict key below, so reject it rather than raising KeyError.
         logger.warning(f"vote_cast_cb: ignoring out-of-range score {score}")
         await query.answer()
         return
+
     user_id = query.from_user.id
+
+    # Get the user's CURRENT vote BEFORE saving the new one
+    old_vote = db_get_user_vote(user_id, book_id)
+
+    # Save vote to database (will INSERT or UPDATE)
     db_cast_vote(user_id, book_id, score)
+
     book = db_get_book(book_id)
     uv = db_get_user_vote(user_id, book_id)
 
     chat = update.effective_chat
+
+    # === SAME-VOTE RE-VOTE: nothing actually changed ===
+    if old_vote is not None and old_vote == score:
+        if chat is not None and chat.type != "private":
+            # Group chat: notify admin, acknowledge user, skip edit entirely
+            try:
+                admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
+                if admin_id:
+                    book_title = h(book["title"])
+                    vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[score]]
+                    username_str = f"@{h(query.from_user.username)}" if query.from_user.username else "no username"
+                    msg = (
+                        f"ℹ️ <b>Re-vote detected (group chat)</b>\n\n"
+                        f"User: {h(query.from_user.full_name)} ({username_str})\n"
+                        f"User ID: <code>{user_id}</code>\n"
+                        f"Book: {book_title}\n"
+                        f"Book ID: <code>{book_id}</code>\n"
+                        f"Vote: {vote_label} (unchanged)\n"
+                        f"Action: Skipped message edit — no data change occurred"
+                    )
+                    await ctx.bot.send_message(chat_id=admin_id, text=msg, parse_mode=PM)
+                    logger.info(
+                        f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
+                        f"('{book_title}') in group chat — no edit performed"
+                    )
+            except Exception as e:
+                logger.warning(f"vote_cast_cb: failed to send re-vote alert to admin: {e}")
+
+            vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+            await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
+            return
+        else:
+            # Private chat: same vote, message would be identical — skip edit
+            vote_label = T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+            await query.answer(tr(lang, "vote_registered", label=vote_label))
+            logger.info(
+                f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
+                f"('{book['title']}') in private chat — no edit performed"
+            )
+            return
+
+    # === NORMAL VOTE PROCESSING (first vote or changed vote) ===
     if chat is not None and chat.type != "private":
-        # Shared message: it is visible to the whole club, so it must not show
-        # any single member's vote or follow their language. Acknowledge the
-        # voter privately via the callback toast instead.
+        # Shared message: visible to whole club, show aggregated data only
         vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
         await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
-        await query.edit_message_text(
-            book_card(book, CHAT_LANG),
-            parse_mode=PM,
-            reply_markup=score_keyboard(book_id, CHAT_LANG),
-        )
+
+        try:
+            await query.edit_message_text(
+                book_card(book, CHAT_LANG),
+                parse_mode=PM,
+                reply_markup=score_keyboard(book_id, CHAT_LANG),
+            )
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                # Race condition: another edit landed first with identical content.
+                # The vote IS saved — this only affects the display.
+                logger.info(
+                    f"vote_cast_cb: no-op edit for book {book_id}, user {user_id} "
+                    f"(likely concurrent edit)"
+                )
+            else:
+                raise
         return
 
     await query.answer()
-    # Private chat: the card belongs to this user, so show their vote inline.
-    await query.edit_message_text(
-        book_card(book, lang, user_vote=uv),
-        parse_mode=PM,
-        reply_markup=score_keyboard(book_id, lang, uv),
-    )
+    # Private chat: show individual vote inline
+    try:
+        await query.edit_message_text(
+            book_card(book, lang, user_vote=uv),
+            parse_mode=PM,
+            reply_markup=score_keyboard(book_id, lang, uv),
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            logger.info(
+                f"vote_cast_cb: no-op edit for book {book_id}, user {user_id} "
+                f"in private chat (likely concurrent edit)"
+            )
+        else:
+            raise
 
 
 # ── /adminconsole conversation (admin only) ───────────────────────────────────
@@ -1997,11 +2066,22 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     Without this, python-telegram-bot swallows the traceback into the log and
     the user gets no reply at all — the bot just goes silent mid-command, which
     is indistinguishable from it being down.
+
+    Note: Error messages are suppressed in group chats to avoid spamming
+    members with technical notifications that belong in logs only.
     """
     logger.error("Unhandled exception while processing update:", exc_info=ctx.error)
 
     if not isinstance(update, Update):
         return  # e.g. a job error — nobody to reply to
+
+    # Suppress error notifications in group chats — they should only go to logs
+    # or to the admin via the dedicated alert mechanism (_TelegramAlertHandler).
+    if update.effective_message and update.effective_message.chat.type != "private":
+        logger.info(
+            f"Suppressed error notification in group chat {update.effective_message.chat.id}"
+        )
+        return
 
     lang = get_lang(ctx) if ctx.user_data is not None else "ru"
     text = tr(lang, "unexpected_error")
