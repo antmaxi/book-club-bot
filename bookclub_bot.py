@@ -1343,7 +1343,10 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handle inline voting callbacks — works for both private and group chats."""
+    """Handle inline voting callbacks — works for both private and group chats.
+
+    Vote statistics are recalculated after each vote and the message is updated
+    for all viewers in the group chat."""
     from telegram.error import BadRequest
 
     query = update.callback_query
@@ -1364,7 +1367,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Get the user's CURRENT vote BEFORE saving the new one
     old_vote = db_get_user_vote(user_id, book_id)
 
-    # Save vote to database (will INSERT or UPDATE)
+    # Save vote to database (will INSERT or UPDATE — commits immediately)
     db_cast_vote(user_id, book_id, score)
 
     book = db_get_book(book_id)
@@ -1372,35 +1375,17 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     chat = update.effective_chat
 
-    # === SAME-VOTE RE-VOTE: nothing actually changed ===
+    # === SAME-VOTE RE-VOTE: nothing actually changed in statistics ===
     if old_vote is not None and old_vote == score:
         if chat is not None and chat.type != "private":
-            # Group chat: notify admin, acknowledge user, skip edit entirely
-            try:
-                admin_id = ADMIN_IDS[0] if ADMIN_IDS else None
-                if admin_id:
-                    book_title = h(book["title"])
-                    vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[score]]
-                    username_str = f"@{h(query.from_user.username)}" if query.from_user.username else "no username"
-                    msg = (
-                        f"ℹ️ <b>Re-vote detected (group chat)</b>\n\n"
-                        f"User: {h(query.from_user.full_name)} ({username_str})\n"
-                        f"User ID: <code>{user_id}</code>\n"
-                        f"Book: {book_title}\n"
-                        f"Book ID: <code>{book_id}</code>\n"
-                        f"Vote: {vote_label} (unchanged)\n"
-                        f"Action: Skipped message edit — no data change occurred"
-                    )
-                    await ctx.bot.send_message(chat_id=admin_id, text=msg, parse_mode=PM)
-                    logger.info(
-                        f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
-                        f"('{book_title}') in group chat — no edit performed"
-                    )
-            except Exception as e:
-                logger.warning(f"vote_cast_cb: failed to send re-vote alert to admin: {e}")
-
+            # Group chat: acknowledge voter, skip edit entirely
+            # (statistics would be identical anyway)
             vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
             await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
+            logger.info(
+                f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
+                f"('{book['title']}') in group chat — no edit performed"
+            )
             return
         else:
             # Private chat: same vote, message would be identical — skip edit
@@ -1414,30 +1399,48 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # === NORMAL VOTE PROCESSING (first vote or changed vote) ===
     if chat is not None and chat.type != "private":
-        # Shared message: visible to whole club, show aggregated data only
+        # Shared message: visible to whole club, show AGGREGATED statistics only
         vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
         await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
 
-        try:
-            await query.edit_message_text(
-                book_card(book, CHAT_LANG),
-                parse_mode=PM,
-                reply_markup=score_keyboard(book_id, CHAT_LANG),
-            )
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                # Race condition: another edit landed first with identical content.
-                # The vote IS saved — this only affects the display.
-                logger.info(
-                    f"vote_cast_cb: no-op edit for book {book_id}, user {user_id} "
-                    f"(likely concurrent edit)"
+        # Build the message content with fresh statistics
+        new_text = book_card(book, CHAT_LANG)
+        new_markup = score_keyboard(book_id, CHAT_LANG)
+
+        # Attempt to update — on race condition, fetch fresh data and retry once
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                await query.edit_message_text(
+                    new_text,
+                    parse_mode=PM,
+                    reply_markup=new_markup,
                 )
-            else:
-                raise
+                break  # Success — exit retry loop
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    if attempt < max_retries - 1:
+                        # Another edit completed first — refetch fresh data and retry
+                        logger.debug(
+                            f"vote_cast_cb: race condition detected (attempt {attempt+1}/{max_retries}), "
+                            f"refetching book {book_id}..."
+                        )
+                        book = db_get_book(book_id)  # Fresh aggregates
+                        new_text = book_card(book, CHAT_LANG)
+                        new_markup = score_keyboard(book_id, CHAT_LANG)
+                    else:
+                        # Final attempt failed — log but don't propagate error
+                        logger.info(
+                            f"vote_cast_cb: message update skipped for book {book_id}, "
+                            f"user {user_id} (concurrent edit with same final state)"
+                        )
+                else:
+                    # Different error — propagate
+                    raise
         return
 
     await query.answer()
-    # Private chat: show individual vote inline
+    # Private chat: show individual vote inline (always unique per user)
     try:
         await query.edit_message_text(
             book_card(book, lang, user_vote=uv),

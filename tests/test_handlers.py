@@ -988,6 +988,8 @@ class TestAdminConsole(BotHandlerTestCase):
 
 # ── Voting in a shared group message ──────────────────────────────────────────
 
+# ── Voting in a shared group message ──────────────────────────────────────────
+
 class TestGroupVoteCard(BotHandlerTestCase):
     """A card posted to the club chat is shared, so it must stay impersonal."""
 
@@ -1008,6 +1010,49 @@ class TestGroupVoteCard(BotHandlerTestCase):
         self.assertNotIn("Your current vote", text,
                          "shared group card must not show one member's vote")
 
+    async def test_group_card_updates_statistics_after_vote(self):
+        """Group chat message must show updated aggregate stats after voting."""
+        bid = self._add_book()
+
+        # First vote: +1
+        q = self._vote_in("supergroup", bid, score=1)
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("✅ 1", text, "Should show 1 'want' vote")
+
+        # Second user votes: +1 more (simulate by changing mock user ID)
+        self.update.effective_user.id = 99999
+        q2 = self._callback_query(f"vote_cast:{bid}:1")
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+
+        text2 = q2.edit_message_text.call_args[0][0]
+        self.assertIn("✅ 2", text2, "Should show 2 'want' votes after second vote")
+        self.assertNotIn("✅ 1", text2, "Old count must be replaced")
+
+    async def test_group_card_reflects_changed_votes(self):
+        """If a user changes their vote, statistics update accordingly."""
+        bid = self._add_book()
+
+        # User votes +1
+        q = self._vote_in("supergroup", bid, score=1)
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("✅ 1", text)
+        self.assertIn("❌ 0", text)
+
+        # Same user changes to -1 (don't want)
+        q2 = self._callback_query(f"vote_cast:{bid}:-1")
+        with patch.object(bot, "CHAT_LANG", "en"):
+            await bot.vote_cast_cb(self.update, self.ctx)
+
+        text2 = q2.edit_message_text.call_args[0][0]
+        self.assertIn("✅ 0", text2, "'want' count should drop to 0")
+        self.assertIn("❌ 1", text2, "'don't want' count should be 1")
+
     async def test_group_card_acknowledges_voter_via_toast(self):
         bid = self._add_book()
         q = self._vote_in("supergroup", bid)
@@ -1018,7 +1063,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
 
     async def test_group_card_ignores_clicker_language(self):
         bid = self._add_book()
-        self.ctx.user_data["lang"] = "en"      # clicker prefers English
+        self.ctx.user_data["lang"] = "en"  # clicker prefers English
         q = self._vote_in("supergroup", bid)
         with patch.object(bot, "CHAT_LANG", "ru"):
             await bot.vote_cast_cb(self.update, self.ctx)
