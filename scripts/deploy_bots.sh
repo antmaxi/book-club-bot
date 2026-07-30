@@ -13,7 +13,7 @@
 # scripts/check_bot_idle.py for how the value is read.
 #
 # Usage:
-#   ./deploy_bots.sh                    Interactive: prompt for every repo
+#   ./deploy_bots.sh                    Interactive: prompt for every repo (decisions first, then parallel deploy)
 #   ./deploy_bots.sh --yes              Auto-confirm IDLE repos; still prompt for ACTIVE/UNKNOWN
 #   ./deploy_bots.sh --yes --skip-active   Fully unattended: update IDLE repos, skip ACTIVE/UNKNOWN silently (good for cron)
 #   ./deploy_bots.sh --check-only       Print status for every repo and exit; no prompts, no changes
@@ -82,90 +82,79 @@ confirm() {
 UPDATED=()
 SKIPPED=()
 FAILED=()
+TO_DEPLOY=()
 
-process_repo() {
+# Print status for one repo. Sets globals: REPO_NAME, REPO_STATUS_WORD (or empty if skipped).
+print_repo_status() {
     local repo="$1"
-    local name; name="$(basename "$repo")"
+    REPO_NAME="$(basename "$repo")"
+    REPO_STATUS_WORD=""
 
     if [ ! -d "$repo" ]; then
-        log "[$name] SKIP — directory does not exist: $repo"
-        SKIPPED+=("$name (missing directory)")
-        return
+        log "[$REPO_NAME] SKIP — directory does not exist: $repo"
+        SKIPPED+=("$REPO_NAME (missing directory)")
+        return 1
     fi
     if [ ! -f "$repo/docker-compose.yml" ]; then
-        log "[$name] SKIP — no docker-compose.yml in $repo"
-        SKIPPED+=("$name (not a bot instance)")
-        return
+        log "[$REPO_NAME] SKIP — no docker-compose.yml in $repo"
+        SKIPPED+=("$REPO_NAME (not a bot instance)")
+        return 1
     fi
     if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        log "[$name] SKIP — not a git repository: $repo"
-        SKIPPED+=("$name (not a git repo)")
-        return
+        log "[$REPO_NAME] SKIP — not a git repository: $repo"
+        SKIPPED+=("$REPO_NAME (not a git repo)")
+        return 1
     fi
 
-    # --- Idle check ---------------------------------------------------
     local persistence_file="$repo/data/bot_persistence"
-    local status_line status_word
+    local status_line
     status_line="$(python3 "$IDLE_CHECKER" "$persistence_file" "$IDLE_THRESHOLD_MINUTES")"
-    status_word="${status_line%% *}"   # first word: IDLE / ACTIVE / UNKNOWN
+    REPO_STATUS_WORD="${status_line%% *}"
 
     local running
     running="$(cd "$repo" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
 
-    # Currently-deployed commit (HEAD before any pull): hash, commit date, subject.
-    # Lets the operator see what version is running before deciding to update it.
     local head_info
     head_info="$(git -C "$repo" log -1 --format='%h  %cd  %s' --date=format:'%Y-%m-%d %H:%M' 2>/dev/null)"
 
     echo ""
-    echo "== $name =="
+    echo "== $REPO_NAME =="
     echo "  path:       $repo"
     echo "  containers: ${running} running"
     echo "  activity:   $status_line"
     echo "  commit:     ${head_info:-(unknown)}"
+    return 0
+}
 
-    if [ "$CHECK_ONLY" -eq 1 ]; then
-        return
-    fi
+# After print_repo_status: ask whether to include this repo in the deploy batch.
+decide_deploy() {
+    local status_word="$1"
 
-    # --- Decide whether to proceed -------------------------------------
-    local proceed=0
     if [ "$status_word" = "IDLE" ]; then
         if [ "$AUTO_YES" -eq 1 ]; then
-            proceed=1
-        elif confirm "  Proceed with update for $name?" "y"; then
-            proceed=1
+            return 0
         fi
-    else
-        # ACTIVE or UNKNOWN
-        if [ "$SKIP_ACTIVE" -eq 1 ]; then
-            log "[$name] SKIP — $status_word, --skip-active set"
-            SKIPPED+=("$name ($status_word)")
-            return
-        fi
-        echo "  WARNING: bot looks like it may currently be in use."
-        if confirm "  Proceed with update for $name anyway?" "n"; then
-            proceed=1
-        fi
-    fi
-
-    if [ "$proceed" -ne 1 ]; then
-        log "[$name] SKIP — declined ($status_word)"
-        SKIPPED+=("$name (declined, $status_word)")
+        confirm "  Proceed with update for $REPO_NAME?" "y"
         return
     fi
 
-    # --- Refuse to touch a repo with local edits the pull would clobber -
-    if [ -n "$(git -C "$repo" status --porcelain)" ]; then
-        log "[$name] SKIP — working tree has uncommitted changes, refusing to pull"
-        SKIPPED+=("$name (dirty working tree)")
-        return
+    if [ "$SKIP_ACTIVE" -eq 1 ]; then
+        log "[$REPO_NAME] SKIP — $status_word, --skip-active set"
+        SKIPPED+=("$REPO_NAME ($status_word)")
+        return 1
     fi
+    echo "  WARNING: bot looks like it may currently be in use."
+    confirm "  Proceed with update for $REPO_NAME anyway?" "n"
+}
+
+deploy_repo() {
+    local repo="$1"
+    local name; name="$(basename "$repo")"
 
     log "[$name] Stopping containers..."
     if ! (cd "$repo" && docker compose stop) >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — docker compose stop failed"
-        FAILED+=("$name (stop failed)")
+        echo "failed|$name (stop failed)" >"$DEPLOY_RESULT_DIR/$name"
         return
     fi
 
@@ -173,26 +162,74 @@ process_repo() {
     if ! git -C "$repo" pull >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — git pull failed, restarting previous containers"
         (cd "$repo" && docker compose up -d) >>"$LOG_FILE" 2>&1
-        FAILED+=("$name (git pull failed)")
+        echo "failed|$name (git pull failed)" >"$DEPLOY_RESULT_DIR/$name"
         return
     fi
 
     log "[$name] Rebuilding and starting containers..."
     if ! (cd "$repo" && docker compose up -d --build) >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — docker compose up --build failed; bot may be DOWN, check manually"
-        FAILED+=("$name (rebuild failed — check manually)")
+        echo "failed|$name (rebuild failed — check manually)" >"$DEPLOY_RESULT_DIR/$name"
         return
     fi
 
     log "[$name] Updated successfully."
-    UPDATED+=("$name")
+    echo "updated|$name" >"$DEPLOY_RESULT_DIR/$name"
 }
 
 log "===== deploy_bots.sh starting (threshold=${IDLE_THRESHOLD_MINUTES}m, repos=${#REPOS[@]}) ====="
 
 for repo in "${REPOS[@]}"; do
-    process_repo "$repo"
+    if ! print_repo_status "$repo"; then
+        continue
+    fi
+
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+        continue
+    fi
+
+    if ! decide_deploy "$REPO_STATUS_WORD"; then
+        log "[$REPO_NAME] SKIP — declined ($REPO_STATUS_WORD)"
+        SKIPPED+=("$REPO_NAME (declined, $REPO_STATUS_WORD)")
+        continue
+    fi
+
+    if [ -n "$(git -C "$repo" status --porcelain)" ]; then
+        log "[$REPO_NAME] SKIP — working tree has uncommitted changes, refusing to pull"
+        SKIPPED+=("$REPO_NAME (dirty working tree)")
+        continue
+    fi
+
+    TO_DEPLOY+=("$repo")
 done
+
+if [ "$CHECK_ONLY" -eq 0 ] && [ "${#TO_DEPLOY[@]}" -gt 0 ]; then
+    echo ""
+    echo "===== Deploying ${#TO_DEPLOY[@]} instance(s) in parallel ====="
+    DEPLOY_RESULT_DIR="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap 'rm -rf "$DEPLOY_RESULT_DIR"' EXIT
+
+    for repo in "${TO_DEPLOY[@]}"; do
+        deploy_repo "$repo" &
+    done
+    wait
+
+    for repo in "${TO_DEPLOY[@]}"; do
+        name="$(basename "$repo")"
+        result_file="$DEPLOY_RESULT_DIR/$name"
+        if [ ! -f "$result_file" ]; then
+            FAILED+=("$name (no result — interrupted?)")
+            continue
+        fi
+        IFS='|' read -r kind detail <"$result_file"
+        case "$kind" in
+            updated) UPDATED+=("$detail") ;;
+            failed)  FAILED+=("$detail") ;;
+            *)       FAILED+=("$name (unknown result: $kind)") ;;
+        esac
+    done
+fi
 
 echo ""
 echo "===== Summary ====="

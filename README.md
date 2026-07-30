@@ -110,8 +110,9 @@ Add a cron job to run the backup daily at 2:00 AM:
 
 `scripts/deploy_bots.sh` updates one or more running instances on the server:
 for each configured instance it checks whether anyone has actually been using
-the bot recently, asks for confirmation, then stops the containers, pulls the
-latest code, and brings them back up rebuilt (`docker compose up -d --build`).
+the bot recently and asks for confirmation. After you have decided for every
+instance, selected updates run in parallel: stop containers, pull the latest
+code, and bring them back up rebuilt (`docker compose up -d --build`).
 
 The activity check reads `last_non_admin_activity` from the bot's own
 persistence file (`data/bot_persistence`) — the same timestamp
