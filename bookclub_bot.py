@@ -37,6 +37,7 @@ import os
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeChatMember
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -2072,7 +2073,14 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     Note: Error messages are suppressed in group chats to avoid spamming
     members with technical notifications that belong in logs only.
+
+    Transient Telegram API failures (e.g. 502 during long polling) are logged
+    at WARNING only — they are retried by the library and should not page the admin.
     """
+    if isinstance(ctx.error, NetworkError):
+        logger.warning("Telegram network error while processing update:", exc_info=ctx.error)
+        return
+
     logger.error("Unhandled exception while processing update:", exc_info=ctx.error)
 
     if not isinstance(update, Update):

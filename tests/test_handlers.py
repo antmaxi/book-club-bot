@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import bookclub_bot as bot
 from telegram import Update, Message, User, Chat, MessageEntity, Bot
+from telegram.error import NetworkError
 from telegram.ext import ConversationHandler
 
 
@@ -1363,6 +1364,17 @@ class TestErrorHandler(BotHandlerTestCase):
         self.ctx.error = RuntimeError("boom")
         await bot.error_handler("not-an-update", self.ctx)
         self.message.reply_text.assert_not_called()
+
+    async def test_error_handler_network_error_logs_warning_only(self):
+        """Transient API failures must not alert the admin or message the user."""
+        self.ctx.error = NetworkError("Bad Gateway")
+        with patch.object(bot.logger, "warning") as mock_warn, patch.object(
+            bot.logger, "error"
+        ) as mock_err:
+            await bot.error_handler(self.update, self.ctx)
+            mock_warn.assert_called_once()
+            mock_err.assert_not_called()
+        self.update.effective_message.reply_text.assert_not_called()
 
     async def test_error_handler_survives_failed_delivery(self):
         """If replying also fails, the original error must not be masked."""
