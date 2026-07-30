@@ -5,32 +5,43 @@ Covers: database layer, utility functions, formatting helpers.
 No Telegram API calls are made here.
 """
 
-import unittest
-import sqlite3
 import os
+import sqlite3
+import unittest
+from datetime import UTC
 from unittest.mock import MagicMock
 
 import bookclub_bot as bot
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def make_book(**kwargs):
     """Return a minimal book-like dict with sensible defaults."""
     defaults = {
-        "votes_yes": 0, "votes_meh": 0, "votes_no": 0,
-        "vote_count": 0, "avg_score": 0,
-        "fiction": 1, "pages": 100,
-        "title": "Test", "author": "Author",
-        "review_link": "", "description": "",
-        "added_by_name": "tester", "added_by_username": None,
-        "added_at": "2025-01-01", "discussed": 0, "discussed_at": None,
+        "votes_yes": 0,
+        "votes_meh": 0,
+        "votes_no": 0,
+        "vote_count": 0,
+        "avg_score": 0,
+        "fiction": 1,
+        "pages": 100,
+        "title": "Test",
+        "author": "Author",
+        "review_link": "",
+        "description": "",
+        "added_by_name": "tester",
+        "added_by_username": None,
+        "added_at": "2025-01-01",
+        "discussed": 0,
+        "discussed_at": None,
     }
     defaults.update(kwargs)
     return defaults
 
 
 # ── Database tests ─────────────────────────────────────────────────────────────
+
 
 class TestDatabase(unittest.TestCase):
 
@@ -47,9 +58,12 @@ class TestDatabase(unittest.TestCase):
 
     def test_init_db_creates_tables(self):
         with sqlite3.connect(bot.DB_PATH) as conn:
-            tables = {r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )}
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
         self.assertIn("books", tables)
         self.assertIn("votes", tables)
         self.assertIn("user_settings", tables)
@@ -62,8 +76,15 @@ class TestDatabase(unittest.TestCase):
 
     def test_db_add_get_book(self):
         book_id = bot.db_add_book(
-            "Test Book", "Test Author", 100, True,
-            "http://example.com", "Desc", 123, "tester", "testuser"
+            "Test Book",
+            "Test Author",
+            100,
+            True,
+            "http://example.com",
+            "Desc",
+            123,
+            "tester",
+            "testuser",
         )
         self.assertIsNotNone(book_id)
         book = bot.db_get_book(book_id)
@@ -107,7 +128,7 @@ class TestDatabase(unittest.TestCase):
         bot.db_mark_discussed(id1, "2025-01-01")
 
         undiscussed = bot.db_get_books(discussed=False)
-        discussed   = bot.db_get_books(discussed=True)
+        discussed = bot.db_get_books(discussed=True)
         self.assertEqual(len(undiscussed), 1)
         self.assertEqual(undiscussed[0]["id"], id2)
         self.assertEqual(len(discussed), 1)
@@ -129,11 +150,11 @@ class TestDatabase(unittest.TestCase):
 
     def test_db_toggle_hidden(self):
         id1 = bot.db_add_book("B", "A", 100, True, "", "", 1, "u")
-        
+
         # Hide
         bot.db_toggle_hidden(id1)
         self.assertEqual(bot.db_get_book(id1)["hidden"], 1)
-        
+
         # Unhide
         bot.db_toggle_hidden(id1)
         self.assertEqual(bot.db_get_book(id1)["hidden"], 0)
@@ -161,21 +182,21 @@ class TestDatabase(unittest.TestCase):
 
     def test_db_get_books_sorted_by_score_then_votes(self):
         """Higher avg_score ranks first; equal score → more votes ranks first."""
-        id_low  = bot.db_add_book("Low",  "A", 10, True, "", "", 1, "u")
+        id_low = bot.db_add_book("Low", "A", 10, True, "", "", 1, "u")
         id_high = bot.db_add_book("High", "A", 10, True, "", "", 1, "u")
         id_mid_fewer = bot.db_add_book("MidFewer", "A", 10, True, "", "", 1, "u")
-        id_mid_more  = bot.db_add_book("MidMore",  "A", 10, True, "", "", 1, "u")
+        id_mid_more = bot.db_add_book("MidMore", "A", 10, True, "", "", 1, "u")
 
         bot.db_cast_vote(1, id_high, 1)
-        bot.db_cast_vote(1, id_low,  -1)
+        bot.db_cast_vote(1, id_low, -1)
         # id_mid_fewer and id_mid_more both score 0 (meh), but mid_more has 2 votes
         bot.db_cast_vote(1, id_mid_fewer, 0)
-        bot.db_cast_vote(1, id_mid_more,  0)
-        bot.db_cast_vote(2, id_mid_more,  0)
+        bot.db_cast_vote(1, id_mid_more, 0)
+        bot.db_cast_vote(2, id_mid_more, 0)
 
         books = bot.db_get_books(discussed=False)
         ids = [b["id"] for b in books]
-        # In SQLite 4 != 2 if both have score 1 and 1 vote? 
+        # In SQLite 4 != 2 if both have score 1 and 1 vote?
         # Wait, id_high (id=2) has score 1.
         # id_mid_more (id=4) has score 0.
         # So id_high should be first.
@@ -191,10 +212,10 @@ class TestDatabase(unittest.TestCase):
         # id_mid_more has 2 votes. id_high has 1 vote.
         # So id_mid_more (id=4) SHOULD be first.
         # The test expected id_high (id=2) first, but its own logic says mid_more is better due to more votes.
-        self.assertEqual(ids[0], id_mid_more)   # score 1.0, 2 votes
-        self.assertEqual(ids[1], id_high)       # score 1.0, 1 vote
+        self.assertEqual(ids[0], id_mid_more)  # score 1.0, 2 votes
+        self.assertEqual(ids[1], id_high)  # score 1.0, 1 vote
         self.assertEqual(ids[2], id_mid_fewer)  # score 0.5, 1 vote
-        self.assertEqual(ids[3], id_low)        # score -1.0, 1 vote
+        self.assertEqual(ids[3], id_low)  # score -1.0, 1 vote
 
     # -- Mark discussed --
 
@@ -224,13 +245,13 @@ class TestDatabase(unittest.TestCase):
 
     def test_db_vote_aggregates(self):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        bot.db_cast_vote(1, book_id,  1)
-        bot.db_cast_vote(2, book_id,  1)
+        bot.db_cast_vote(1, book_id, 1)
+        bot.db_cast_vote(2, book_id, 1)
         bot.db_cast_vote(3, book_id, -1)
         book = bot.db_get_book(book_id)
         self.assertEqual(book["vote_count"], 3)
         self.assertEqual(book["votes_yes"], 2)
-        self.assertEqual(book["votes_no"],  1)
+        self.assertEqual(book["votes_no"], 1)
         self.assertEqual(book["votes_meh"], 0)
         self.assertEqual(book["avg_score"], 1)
 
@@ -241,7 +262,7 @@ class TestDatabase(unittest.TestCase):
         book = bot.db_get_book(book_id)
         self.assertEqual(book["votes_yes"], 1)
         self.assertEqual(book["votes_meh"], 1)
-        self.assertEqual(book["votes_no"],  1)
+        self.assertEqual(book["votes_no"], 1)
 
     # -- Update field --
 
@@ -310,6 +331,7 @@ class TestDatabase(unittest.TestCase):
 
 # ── Utility / formatting tests ─────────────────────────────────────────────────
 
+
 class TestUtils(unittest.TestCase):
 
     # -- is_valid_url --
@@ -360,17 +382,20 @@ class TestUtils(unittest.TestCase):
     # -- fmt_dt_utc --
 
     def test_fmt_dt_utc_positive_offset(self):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=timezone(timedelta(hours=2)))
         self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 12:00:00 UTC+02:00")
 
     def test_fmt_dt_utc_zero_offset(self):
-        from datetime import datetime, timezone
-        dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=timezone.utc)
+        from datetime import datetime
+
+        dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=UTC)
         self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 12:00:00 UTC+00:00")
 
     def test_fmt_dt_utc_negative_offset(self):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
         self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 12:00:00 UTC-05:00")
 
@@ -378,6 +403,7 @@ class TestUtils(unittest.TestCase):
         # A naive datetime is assumed local; whatever the test host's zone is,
         # the output must still carry an explicit UTC offset.
         from datetime import datetime
+
         self.assertRegex(
             bot.fmt_dt_utc(datetime(2026, 4, 4, 12, 0, 0)),
             r"^2026-04-04 12:00:00 UTC[+-]\d{2}:\d{2}$",
@@ -438,7 +464,9 @@ class TestUtils(unittest.TestCase):
     def test_book_card_href_survives_quote_in_link(self):
         """A quote in a stored review_link must not break out of the attribute."""
         book = make_book(review_link='https://ex.com/a"onmouseover=x')
-        href_line = [l for l in bot.book_card(book, "en").splitlines() if "href" in l][0]
+        href_line = [
+            line for line in bot.book_card(book, "en").splitlines() if "href" in line
+        ][0]
         # Exactly two quotes: the ones delimiting the attribute.
         self.assertEqual(href_line.count('"'), 2)
         self.assertIn("&quot;", href_line)
@@ -460,7 +488,9 @@ class TestUtils(unittest.TestCase):
     # -- score_display --
 
     def test_score_display_with_votes(self):
-        book = make_book(votes_yes=3, votes_meh=1, votes_no=0, vote_count=4, avg_score=0.75)
+        book = make_book(
+            votes_yes=3, votes_meh=1, votes_no=0, vote_count=4, avg_score=0.75
+        )
         display = bot.score_display(book, "en")
         self.assertIn("✅ 3", display)
         self.assertIn("😐 1", display)
@@ -468,19 +498,25 @@ class TestUtils(unittest.TestCase):
         self.assertIn("(4 votes)", display)
 
     def test_score_display_no_votes_en(self):
-        book = make_book(votes_yes=0, votes_meh=0, votes_no=0, vote_count=0, avg_score=0)
+        book = make_book(
+            votes_yes=0, votes_meh=0, votes_no=0, vote_count=0, avg_score=0
+        )
         display = bot.score_display(book, "en")
         self.assertIn("0 vote", display)
         # Should not contain raw vote tallies (no ✅ N  😐 N  ❌ N pattern)
         self.assertNotIn("✅", display)
 
     def test_score_display_no_votes_ru(self):
-        book = make_book(votes_yes=0, votes_meh=0, votes_no=0, vote_count=0, avg_score=0)
+        book = make_book(
+            votes_yes=0, votes_meh=0, votes_no=0, vote_count=0, avg_score=0
+        )
         display = bot.score_display(book, "ru")
         self.assertIn("0 оценок", display)
 
     def test_score_display_ru_plural_votes(self):
-        book = make_book(votes_yes=2, votes_meh=0, votes_no=0, vote_count=2, avg_score=1)
+        book = make_book(
+            votes_yes=2, votes_meh=0, votes_no=0, vote_count=2, avg_score=1
+        )
         display = bot.score_display(book, "ru")
         self.assertIn("оценки", display)
 
@@ -514,16 +550,16 @@ class TestUtils(unittest.TestCase):
         self.assertNotIn("<i></i>", card)
 
     def test_book_card_fiction_label_en(self):
-        book_f  = make_book(fiction=1)
+        book_f = make_book(fiction=1)
         book_nf = make_book(fiction=0)
-        self.assertIn("Fiction",     bot.book_card(book_f,  "en"))
+        self.assertIn("Fiction", bot.book_card(book_f, "en"))
         self.assertIn("Non-fiction", bot.book_card(book_nf, "en"))
 
     def test_book_card_fiction_label_ru_uses_english(self):
         # RU also uses English Fiction/Non-fiction labels per design decision
-        book_f  = make_book(fiction=1)
+        book_f = make_book(fiction=1)
         book_nf = make_book(fiction=0)
-        self.assertIn("Fiction",     bot.book_card(book_f,  "ru"))
+        self.assertIn("Fiction", bot.book_card(book_f, "ru"))
         self.assertIn("Non-fiction", bot.book_card(book_nf, "ru"))
 
     def test_book_card_discussed_date_shown(self):
@@ -603,8 +639,8 @@ class TestUtils(unittest.TestCase):
         labels = [btn.text for btn in kb.inline_keyboard[0]]
         self.assertNotIn("✓", " ".join(labels))
         callbacks = [btn.callback_data for btn in kb.inline_keyboard[0]]
-        self.assertIn("vote_cast:42:1",  callbacks)
-        self.assertIn("vote_cast:42:0",  callbacks)
+        self.assertIn("vote_cast:42:1", callbacks)
+        self.assertIn("vote_cast:42:0", callbacks)
         self.assertIn("vote_cast:42:-1", callbacks)
 
     def test_score_keyboard_with_current_vote(self):
@@ -633,7 +669,8 @@ class TestUtils(unittest.TestCase):
 
     def test_allowed_chat_id_env_not_set(self):
         # When env var is absent, ALLOWED_CHAT_ID should be falsy
-        import importlib, unittest.mock
+        import unittest.mock
+
         with unittest.mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ALLOWED_CHAT_ID", None)
             # The module is already loaded; just verify the None/0 logic
@@ -646,6 +683,7 @@ class TestUtils(unittest.TestCase):
 
 
 # ── Error-alert buffering ────────────────────────────────────────────────────────
+
 
 class TestErrorAlertHandler(unittest.TestCase):
     """The Telegram error-alert handler only *buffers* records; delivery is a
@@ -660,8 +698,13 @@ class TestErrorAlertHandler(unittest.TestCase):
 
     def _record(self, name="bookclub_bot", msg="boom", level=bot.logging.ERROR):
         return bot.logging.LogRecord(
-            name=name, level=level, pathname=__file__, lineno=1,
-            msg=msg, args=(), exc_info=None,
+            name=name,
+            level=level,
+            pathname=__file__,
+            lineno=1,
+            msg=msg,
+            args=(),
+            exc_info=None,
         )
 
     def test_error_record_is_buffered(self):

@@ -24,27 +24,34 @@ Exit codes:
 
 Always prints one line to stdout describing the result.
 """
+
 import pickle
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 
 def main() -> int:
     if len(sys.argv) != 3:
-        print(f"usage: {sys.argv[0]} <persistence_file> <threshold_minutes>", file=sys.stderr)
+        print(
+            f"usage: {sys.argv[0]} <persistence_file> <threshold_minutes>",
+            file=sys.stderr,
+        )
         return 2
 
     path = Path(sys.argv[1])
     threshold_minutes = float(sys.argv[2])
 
     if not path.exists():
-        print("IDLE (no persistence file yet — bot never ran, or this is a fresh instance)")
+        print(
+            "IDLE (no persistence file yet — bot never ran, or this is a fresh instance)"
+        )
         return 0
 
     try:
         with path.open("rb") as f:
-            data = pickle.load(f)
+            data: Any = pickle.load(f)
         # bot_data is pickled as literal None (not simply absent) when no
         # non-admin has ever interacted with this instance — .get(key, {})
         # alone doesn't catch that, since the key IS present, just null.
@@ -60,8 +67,10 @@ def main() -> int:
 
     age_minutes = (datetime.now() - last_activity).total_seconds() / 60
     status = "ACTIVE" if age_minutes < threshold_minutes else "IDLE"
-    print(f"{status} (last non-admin activity {age_minutes:.1f} min ago, "
-          f"at {last_activity:%Y-%m-%d %H:%M:%S})")
+    print(
+        f"{status} (last non-admin activity {age_minutes:.1f} min ago, "
+        f"at {last_activity:%Y-%m-%d %H:%M:%S})"
+    )
     return 1 if status == "ACTIVE" else 0
 
 

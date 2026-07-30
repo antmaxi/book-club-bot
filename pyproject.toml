@@ -1,0 +1,50 @@
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = [".", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # line length — Black
+    "BLE001", # broad except — used in logging / user-facing error paths
+    "EXE001", # shebang on bookclub_bot.py
+    "B008",   # defaults in telegram handler wiring
+    "SIM105", # suppress — not always clearer in handlers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bookclub_bot"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["bookclub_bot.py", "scripts/check_bot_idle.py"]
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "bookclub_bot"
+disable_error_code = ["union-attr", "index"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

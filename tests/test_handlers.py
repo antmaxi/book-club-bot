@@ -5,19 +5,20 @@ Tests Telegram command/callback handlers using mocked Update + Context.
 No real Telegram API calls are made.
 """
 
-import unittest
-import sqlite3
 import os
+import sqlite3
+import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import bookclub_bot as bot
-from telegram import Update, Message, User, Chat, MessageEntity, Bot
+from telegram import Bot, Chat, Message, MessageEntity, Update, User
 from telegram.error import NetworkError
 from telegram.ext import ConversationHandler
 
+import bookclub_bot as bot
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
+
 
 class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
     """Base class: creates a fresh temp DB and standard mock update/ctx."""
@@ -37,7 +38,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot._membership_cache.clear()
 
         self.update = MagicMock(spec=Update)
-        self.update.callback_query = None # Explicitly set to None by default
+        self.update.callback_query = None  # Explicitly set to None by default
         self.ctx = MagicMock()
         self.ctx.user_data = {"lang": "en"}
         self.ctx.bot = AsyncMock()
@@ -70,12 +71,24 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         self.update.callback_query = q
         return q
 
-    def _add_book(self, title="Book", author="Author", pages=100,
-                  fiction=True, review="", desc="", user_id=1, username="u"):
-        return bot.db_add_book(title, author, pages, fiction, review, desc, user_id, username)
+    def _add_book(
+        self,
+        title="Book",
+        author="Author",
+        pages=100,
+        fiction=True,
+        review="",
+        desc="",
+        user_id=1,
+        username="u",
+    ):
+        return bot.db_add_book(
+            title, author, pages, fiction, review, desc, user_id, username
+        )
 
 
 # ── /start and /help ───────────────────────────────────────────────────────────
+
 
 class TestStartHelp(BotHandlerTestCase):
 
@@ -108,6 +121,7 @@ class TestStartHelp(BotHandlerTestCase):
 
 # ── /info ─────────────────────────────────────────────────────────────────────
 
+
 class TestInfo(BotHandlerTestCase):
 
     # Git reports the commit time as a Unix timestamp (--format=%ct), which the
@@ -125,7 +139,10 @@ class TestInfo(BotHandlerTestCase):
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Book Club Bot", text)
         import datetime
-        expected = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH))
+
+        expected = bot.fmt_dt_utc(
+            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH)
+        )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
         self.assertIn("https://test.repo", text)
@@ -140,14 +157,19 @@ class TestInfo(BotHandlerTestCase):
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Последнее обновление", text)
         import datetime
-        expected = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH))
+
+        expected = bot.fmt_dt_utc(
+            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH)
+        )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
 
     @patch("os.path.exists")
     @patch("os.path.getmtime")
     @patch("subprocess.check_output")
-    async def test_cmd_info_git_fallback_to_mtime(self, mock_git, mock_mtime, mock_exists):
+    async def test_cmd_info_git_fallback_to_mtime(
+        self, mock_git, mock_mtime, mock_exists
+    ):
         # Git exists but fails
         mock_exists.return_value = True
         mock_git.side_effect = Exception("git error")
@@ -160,6 +182,7 @@ class TestInfo(BotHandlerTestCase):
         # The exact string depends on local timezone, so build the expectation
         # the same way the handler does.
         import datetime
+
         expected_date = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(1775728800))
         self.assertIn(expected_date, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -169,17 +192,18 @@ class TestInfo(BotHandlerTestCase):
     async def test_cmd_info_no_git_dir_fallback(self, mock_git, mock_exists):
         # No .git directory
         mock_exists.return_value = False
-        
+
         await bot.cmd_info(self.update, self.ctx)
-        
+
         # Should not even call git
         mock_git.assert_not_called()
-        
+
         text = self.message.reply_text.call_args[0][0]
-        self.assertIn("20", text) # Should have a date starting with 20...
+        self.assertIn("20", text)  # Should have a date starting with 20...
 
 
 # ── set_user_commands ──────────────────────────────────────────────────────────
+
 
 class TestSetUserCommands(BotHandlerTestCase):
 
@@ -193,7 +217,9 @@ class TestSetUserCommands(BotHandlerTestCase):
         await bot.set_user_commands(mock_bot, self.update, "en")
 
         mock_bot.delete_my_commands.assert_called_once_with(scope=mock_scope)
-        mock_bot.set_my_commands.assert_called_once_with(bot.COMMANDS["en"], scope=mock_scope)
+        mock_bot.set_my_commands.assert_called_once_with(
+            bot.COMMANDS["en"], scope=mock_scope
+        )
 
     @patch("bookclub_bot.BotCommandScopeChatMember")
     async def test_group_chat_uses_member_scope(self, mock_scope_cls):
@@ -204,7 +230,9 @@ class TestSetUserCommands(BotHandlerTestCase):
 
         await bot.set_user_commands(mock_bot, self.update, "ru")
 
-        mock_bot.set_my_commands.assert_called_once_with(bot.COMMANDS["ru"], scope=mock_scope)
+        mock_bot.set_my_commands.assert_called_once_with(
+            bot.COMMANDS["ru"], scope=mock_scope
+        )
 
     async def test_set_user_commands_exception_does_not_propagate(self):
         mock_bot = AsyncMock()
@@ -214,6 +242,7 @@ class TestSetUserCommands(BotHandlerTestCase):
 
 
 # ── COMMANDS menu structure ────────────────────────────────────────────────────
+
 
 class TestCommandsMenu(BotHandlerTestCase):
 
@@ -225,14 +254,20 @@ class TestCommandsMenu(BotHandlerTestCase):
     async def test_language_not_in_menus(self):
         for lang in ("en", "ru"):
             cmds = [c.command for c in bot.COMMANDS[lang]]
-            self.assertNotIn("language", cmds, f"'language' should not be in {lang} menu")
+            self.assertNotIn(
+                "language", cmds, f"'language' should not be in {lang} menu"
+            )
 
     async def test_settings_description_en(self):
-        desc = next(c.description for c in bot.COMMANDS["en"] if c.command == "settings")
+        desc = next(
+            c.description for c in bot.COMMANDS["en"] if c.command == "settings"
+        )
         self.assertEqual(desc, "⚙️ Settings")
 
     async def test_settings_description_ru(self):
-        desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "settings")
+        desc = next(
+            c.description for c in bot.COMMANDS["ru"] if c.command == "settings"
+        )
         self.assertEqual(desc, "⚙️ Настройки")
 
     async def test_info_in_both_menus(self):
@@ -250,6 +285,7 @@ class TestCommandsMenu(BotHandlerTestCase):
 
 
 # ── /list ──────────────────────────────────────────────────────────────────────
+
 
 class TestList(BotHandlerTestCase):
 
@@ -293,13 +329,17 @@ class TestList(BotHandlerTestCase):
     async def test_list_triggers_optin_when_setting_missing(self):
         """First-time users without a notify setting see the opt-in prompt."""
         with sqlite3.connect(bot.DB_PATH) as conn:
-            conn.execute("DELETE FROM user_settings WHERE user_id=?",
-                         (self.update.effective_user.id,))
+            conn.execute(
+                "DELETE FROM user_settings WHERE user_id=?",
+                (self.update.effective_user.id,),
+            )
         q = self._callback_query("list:all")
         await bot.list_choice_cb(self.update, self.ctx)
         q.edit_message_text.assert_called_once()
-        self.assertIn("Would you like to receive notifications",
-                      q.edit_message_text.call_args[0][0])
+        self.assertIn(
+            "Would you like to receive notifications",
+            q.edit_message_text.call_args[0][0],
+        )
         self.assertEqual(self.ctx.user_data["pending_list_choice"], "all")
 
     async def test_list_no_optin_when_setting_already_set(self):
@@ -313,6 +353,7 @@ class TestList(BotHandlerTestCase):
 
 
 # ── /top ──────────────────────────────────────────────────────────────────────
+
 
 class TestTop(BotHandlerTestCase):
 
@@ -389,6 +430,7 @@ class TestTop(BotHandlerTestCase):
 
 # ── score_calc_cb ──────────────────────────────────────────────────────────────
 
+
 class TestScoreCalc(BotHandlerTestCase):
 
     async def test_score_calc_cb_shows_alert(self):
@@ -408,6 +450,7 @@ class TestScoreCalc(BotHandlerTestCase):
 
 
 # ── /add conversation ──────────────────────────────────────────────────────────
+
 
 class TestAddConversation(BotHandlerTestCase):
 
@@ -454,8 +497,10 @@ class TestAddConversation(BotHandlerTestCase):
         self.ctx.user_data["new_book"] = {}
         self.message.text = "https://goodreads.com/book/1"
         state = await bot.add_review(self.update, self.ctx)
-        self.assertEqual(self.ctx.user_data["new_book"]["review_link"],
-                         "https://goodreads.com/book/1")
+        self.assertEqual(
+            self.ctx.user_data["new_book"]["review_link"],
+            "https://goodreads.com/book/1",
+        )
         self.assertEqual(state, bot.ADDING_DESCRIPTION)
 
     async def test_add_review_invalid_url(self):
@@ -466,8 +511,11 @@ class TestAddConversation(BotHandlerTestCase):
 
     async def test_add_description_completes_and_schedules_job(self):
         self.ctx.user_data["new_book"] = {
-            "title": "T", "author": "A", "pages": 100,
-            "fiction": True, "review_link": "http://x.com",
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
         }
         self.message.text = "Great book"
         self.ctx.job_queue = MagicMock()
@@ -486,8 +534,11 @@ class TestAddConversation(BotHandlerTestCase):
 
     async def test_add_description_no_job_queue(self):
         self.ctx.user_data["new_book"] = {
-            "title": "T", "author": "A", "pages": 100,
-            "fiction": True, "review_link": "http://x.com",
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
         }
         self.message.text = "Desc"
         self.ctx.job_queue = None
@@ -499,8 +550,11 @@ class TestAddConversation(BotHandlerTestCase):
 
     async def test_add_description_skip(self):
         self.ctx.user_data["new_book"] = {
-            "title": "T", "author": "A", "pages": 100,
-            "fiction": True, "review_link": "http://x.com",
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
         }
         self.message.text = "/skip"
         self.ctx.job_queue = None
@@ -526,6 +580,7 @@ class TestAddConversation(BotHandlerTestCase):
 
 # ── /settings ─────────────────────────────────────────────────────────────────
 
+
 class TestSettings(BotHandlerTestCase):
 
     async def test_cmd_settings_shows_panel(self):
@@ -539,22 +594,28 @@ class TestSettings(BotHandlerTestCase):
         # Default is -1; first toggle → 1
         q = self._callback_query("settings:toggle_notify")
         await bot.settings_choice_cb(self.update, self.ctx)
-        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id,
-                                                  "notify_new_books"), 1)
+        self.assertEqual(
+            bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"),
+            1,
+        )
 
     async def test_settings_toggle_notify_one_to_zero(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 1)
         q = self._callback_query("settings:toggle_notify")
         await bot.settings_choice_cb(self.update, self.ctx)
-        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id,
-                                                  "notify_new_books"), 0)
+        self.assertEqual(
+            bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"),
+            0,
+        )
 
     async def test_settings_toggle_notify_zero_to_one(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
         q = self._callback_query("settings:toggle_notify")
         await bot.settings_choice_cb(self.update, self.ctx)
-        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id,
-                                                  "notify_new_books"), 1)
+        self.assertEqual(
+            bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"),
+            1,
+        )
 
     @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
     async def test_settings_toggle_lang_en_to_ru(self, mock_set):
@@ -575,30 +636,39 @@ class TestSettings(BotHandlerTestCase):
 
     async def test_optin_yes_sets_notify_and_continues_list(self):
         with sqlite3.connect(bot.DB_PATH) as conn:
-            conn.execute("DELETE FROM user_settings WHERE user_id=?",
-                         (self.update.effective_user.id,))
+            conn.execute(
+                "DELETE FROM user_settings WHERE user_id=?",
+                (self.update.effective_user.id,),
+            )
         self._add_book("Book 1")
         self.ctx.user_data["pending_list_choice"] = "unvoted"
         q = self._callback_query("settings:optin:1")
         await bot.settings_choice_cb(self.update, self.ctx)
-        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id,
-                                                  "notify_new_books"), 1)
+        self.assertEqual(
+            bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"),
+            1,
+        )
         q.answer.assert_called_once_with("✅ Settings saved!")
         self.ctx.bot.send_message.assert_called_once()
         self.assertIn("Book 1", self.ctx.bot.send_message.call_args[1]["text"])
 
     async def test_optin_no_sets_zero(self):
         with sqlite3.connect(bot.DB_PATH) as conn:
-            conn.execute("DELETE FROM user_settings WHERE user_id=?",
-                         (self.update.effective_user.id,))
+            conn.execute(
+                "DELETE FROM user_settings WHERE user_id=?",
+                (self.update.effective_user.id,),
+            )
         self.ctx.user_data["pending_list_choice"] = "all"
         q = self._callback_query("settings:optin:0")
         await bot.settings_choice_cb(self.update, self.ctx)
-        self.assertEqual(bot.db_get_user_setting(self.update.effective_user.id,
-                                                  "notify_new_books"), 0)
+        self.assertEqual(
+            bot.db_get_user_setting(self.update.effective_user.id, "notify_new_books"),
+            0,
+        )
 
 
 # ── Membership gate ────────────────────────────────────────────────────────────
+
 
 class TestMembershipGate(BotHandlerTestCase):
 
@@ -622,7 +692,7 @@ class TestMembershipGate(BotHandlerTestCase):
     async def test_gate_allows_member_status(self):
         bot.ALLOWED_CHAT_ID = -1001111111111
         for status in ("member", "administrator", "creator", "restricted"):
-            bot._membership_cache.clear()   # else only the first status is tested
+            bot._membership_cache.clear()  # else only the first status is tested
             member = MagicMock()
             member.status = status
             self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
@@ -632,7 +702,7 @@ class TestMembershipGate(BotHandlerTestCase):
     async def test_gate_blocks_non_member(self):
         bot.ALLOWED_CHAT_ID = -1001111111111
         for status in ("left", "kicked"):
-            bot._membership_cache.clear()   # else only the first status is tested
+            bot._membership_cache.clear()  # else only the first status is tested
             member = MagicMock()
             member.status = status
             self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
@@ -698,6 +768,7 @@ class TestMembershipGate(BotHandlerTestCase):
 
 # ── Startup / shutdown notifications ──────────────────────────────────────────
 
+
 class TestStartupShutdown(BotHandlerTestCase):
 
     async def test_bot_notify_startup_sends_to_first_admin(self):
@@ -756,6 +827,7 @@ class TestStartupShutdown(BotHandlerTestCase):
 
 # ── /cancel ────────────────────────────────────────────────────────────────────
 
+
 class TestCancel(BotHandlerTestCase):
 
     async def test_conv_cancel_clears_user_data(self):
@@ -772,6 +844,7 @@ class TestCancel(BotHandlerTestCase):
 
 
 # ── /adminconsole ─────────────────────────────────────────────────────────────
+
 
 class TestAdminConsole(BotHandlerTestCase):
 
@@ -845,22 +918,22 @@ class TestAdminConsole(BotHandlerTestCase):
         # 1. Setup books
         bid1 = self._add_book("Top Book 1")
         bid2 = self._add_book("Top Book 2")
-        
+
         # 2. Setup user with notifications ON
         user_id = 12345
         bot.db_set_user_setting(user_id, "notify_new_books", 1)
         # Ensure user has NOT voted for bid1 and bid2
-        
+
         # 3. Trigger notify
         q = self._callback_query("admin:notify")
         state = await bot.admin_notify_top_cb(self.update, self.ctx)
-        
+
         self.assertEqual(state, ConversationHandler.END)
         # Check if bot.send_message was called for the user
         # 1 message for reminder text + 2 messages for books = 3 messages
         # Our mock bot is self.ctx.bot
         self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
-        
+
         # Verify confirm message to admin
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
@@ -868,20 +941,20 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_admin_notify_top_no_unvoted_books(self):
         # 1. Setup book
         bid = self._add_book("Voted Book")
-        
+
         # 2. Setup user who already voted
         user_id = 12345
         bot.db_set_user_setting(user_id, "notify_new_books", 1)
         bot.db_cast_vote(user_id, bid, 1)
-        
+
         # 3. Trigger notify
         q = self._callback_query("admin:notify")
         state = await bot.admin_notify_top_cb(self.update, self.ctx)
-        
+
         self.assertEqual(state, ConversationHandler.END)
         # No messages should be sent to user
         self.ctx.bot.send_message.assert_not_called()
-        
+
         # Verify info message to admin
         q.edit_message_text.assert_called_once()
         self.assertIn("No users to notify", q.edit_message_text.call_args[0][0])
@@ -889,19 +962,19 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_admin_notify_pick_sends_reminders(self):
         # 1. Setup book
         bid = self._add_book("Target Book")
-        
+
         # 2. Setup user with notifications ON
         user_id = 12345
         bot.db_set_user_setting(user_id, "notify_new_books", 1)
-        
+
         # 3. Select book for notification
         q = self._callback_query(f"admin_notify_pick:{bid}")
         state = await bot.admin_notify_pick_cb(self.update, self.ctx)
-        
+
         self.assertEqual(state, ConversationHandler.END)
         # Check if bot.send_message was called for the user
         self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
-        
+
         # Verify confirm message to admin
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
@@ -909,12 +982,12 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
         self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)
-        
+
         # Toggle ON
         q = self._callback_query("admin:toggle_chat")
         await bot.admin_menu_cb(self.update, self.ctx)
         self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 1)
-        
+
         # Toggle OFF
         q = self._callback_query("admin:toggle_chat")
         await bot.admin_menu_cb(self.update, self.ctx)
@@ -924,7 +997,7 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Chatty Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
-        
+
         # Setup job mock. The adder's language is deliberately English to show
         # the shared group post does NOT follow it — group messages use CHAT_LANG.
         self.ctx.job = MagicMock()
@@ -937,8 +1010,8 @@ class TestAdminConsole(BotHandlerTestCase):
         # Should be called once for ALLOWED_CHAT_ID (and 0 users opted in by default in this test)
         self.ctx.bot.send_message.assert_called()
         args, kwargs = self.ctx.bot.send_message.call_args
-        self.assertEqual(kwargs['chat_id'], -100123)
-        self.assertIn("New book added", kwargs['text'])
+        self.assertEqual(kwargs["chat_id"], -100123)
+        self.assertIn("New book added", kwargs["text"])
 
     async def test_chat_post_uses_chat_lang_not_adder_lang(self):
         """A shared group post must not follow the adder's personal language."""
@@ -948,7 +1021,7 @@ class TestAdminConsole(BotHandlerTestCase):
 
         self.ctx.job = MagicMock()
         self.ctx.job.data = {"book_id": bid, "adder_id": 999}
-        self.ctx.application.user_data = {999: {"lang": "en"}}   # adder prefers English
+        self.ctx.application.user_data = {999: {"lang": "en"}}  # adder prefers English
 
         with patch.object(bot, "CHAT_LANG", "ru"):
             await bot.notify_new_book_job(self.ctx)
@@ -961,7 +1034,7 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Hidden Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
-        bot.db_toggle_hidden(bid)   # admin hid it inside the 10-minute window
+        bot.db_toggle_hidden(bid)  # admin hid it inside the 10-minute window
 
         self.ctx.job = MagicMock()
         self.ctx.job.data = {"book_id": bid, "adder_id": 999}
@@ -975,13 +1048,13 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Quiet Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 0)
-        
+
         self.ctx.job = MagicMock()
         self.ctx.job.data = {"book_id": bid, "adder_id": 999}
         self.ctx.application.user_data = {}
 
         await bot.notify_new_book_job(self.ctx)
-        
+
         # Should NOT be called for ALLOWED_CHAT_ID
         # (It might be called if there were opted-in users, but there are none)
         self.ctx.bot.send_message.assert_not_called()
@@ -990,6 +1063,7 @@ class TestAdminConsole(BotHandlerTestCase):
 # ── Voting in a shared group message ──────────────────────────────────────────
 
 # ── Voting in a shared group message ──────────────────────────────────────────
+
 
 class TestGroupVoteCard(BotHandlerTestCase):
     """A card posted to the club chat is shared, so it must stay impersonal."""
@@ -1008,8 +1082,11 @@ class TestGroupVoteCard(BotHandlerTestCase):
         with patch.object(bot, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
         text = q.edit_message_text.call_args[0][0]
-        self.assertNotIn("Your current vote", text,
-                         "shared group card must not show one member's vote")
+        self.assertNotIn(
+            "Your current vote",
+            text,
+            "shared group card must not show one member's vote",
+        )
 
     async def test_group_card_updates_statistics_after_vote(self):
         """Group chat message must show updated aggregate stats after voting."""
@@ -1094,17 +1171,19 @@ class TestGroupVoteCard(BotHandlerTestCase):
             with patch.object(bot, "CHAT_LANG", "en"):
                 await bot.vote_cast_cb(self.update, self.ctx)
             self.assertEqual(
-                bot.db_get_user_vote(self.update.effective_user.id, bid), 1)
+                bot.db_get_user_vote(self.update.effective_user.id, bid), 1
+            )
 
 
 # ── Admin authorization on callbacks ──────────────────────────────────────────
+
 
 class TestAdminCallbackGuards(BotHandlerTestCase):
 
     def setUp(self):
         super().setUp()
         self._orig_admins = bot.ADMIN_IDS[:]
-        bot.ADMIN_IDS = [11111]                      # caller (67890) is NOT admin
+        bot.ADMIN_IDS = [11111]  # caller (67890) is NOT admin
 
     def tearDown(self):
         bot.ADMIN_IDS = self._orig_admins
@@ -1117,8 +1196,11 @@ class TestAdminCallbackGuards(BotHandlerTestCase):
         self.assertEqual(result, ConversationHandler.END)
         q.answer.assert_called_once()
         self.assertIn("admins only", q.answer.call_args[0][0])
-        self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat", 0), before,
-                         "non-admin must not flip the chat-posting setting")
+        self.assertEqual(
+            bot.db_get_admin_setting("post_new_books_to_chat", 0),
+            before,
+            "non-admin must not flip the chat-posting setting",
+        )
 
     async def test_admin_notify_pick_cb_rejects_non_admin(self):
         self._callback_query("admin_notify_pick:1")
@@ -1142,6 +1224,7 @@ class TestAdminCallbackGuards(BotHandlerTestCase):
 
 # ── Stale conversation state ──────────────────────────────────────────────────
 
+
 class TestStaleState(BotHandlerTestCase):
 
     async def test_mark_date_without_book_id_ends_gracefully(self):
@@ -1159,6 +1242,7 @@ class TestStaleState(BotHandlerTestCase):
 
 # ── Conversation wiring ───────────────────────────────────────────────────────
 
+
 class TestConversationWiring(unittest.TestCase):
     """Guards the state/fallback ordering in register_handlers().
 
@@ -1175,8 +1259,10 @@ class TestConversationWiring(unittest.TestCase):
         for h in added:
             if not isinstance(h, ConversationHandler):
                 continue
-            names = {getattr(e, "commands", None) and tuple(e.commands)
-                     for e in h.entry_points}
+            names = {
+                getattr(e, "commands", None) and tuple(e.commands)
+                for e in h.entry_points
+            }
             if (entry_command,) in names:
                 return h
         self.fail(f"No ConversationHandler with entry /{entry_command}")
@@ -1195,7 +1281,8 @@ class TestConversationWiring(unittest.TestCase):
         # CommandHandler slices text[1:length] to read the command name.
         msg.entities = (
             [MagicMock(type="bot_command", offset=0, length=len(text))]
-            if is_command else []
+            if is_command
+            else []
         )
         return any(h.check_update(update) for h in handlers)
 
@@ -1210,8 +1297,10 @@ class TestConversationWiring(unittest.TestCase):
     def test_description_state_still_accepts_skip_and_plain_text(self):
         conv = self._states("add")
         handlers = conv.states[bot.ADDING_DESCRIPTION]
-        self.assertTrue(self._matches(handlers, "/skip", is_command=True),
-                        "/skip must still be handled")
+        self.assertTrue(
+            self._matches(handlers, "/skip", is_command=True),
+            "/skip must still be handled",
+        )
         self.assertTrue(self._matches(handlers, "a description", is_command=False))
 
     def test_mark_date_state_lets_cancel_reach_fallback(self):
@@ -1244,8 +1333,9 @@ class TestConversationReentry(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.bot_obj = Bot("123456:AAHkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")
-        cls.bot_obj._bot_user = User(id=1, first_name="B", is_bot=True,
-                                     username="testbot")
+        cls.bot_obj._bot_user = User(
+            id=1, first_name="B", is_bot=True, username="testbot"
+        )
 
     def _conversations(self):
         added = []
@@ -1265,7 +1355,11 @@ class TestConversationReentry(unittest.TestCase):
         chat = Chat(id=-100123, type="supergroup")
         user = User(id=99, first_name="Admin", is_bot=False)
         msg = Message(
-            message_id=1, date=datetime.now(), chat=chat, from_user=user, text=text,
+            message_id=1,
+            date=datetime.now(),
+            chat=chat,
+            from_user=user,
+            text=text,
             entities=[MessageEntity(type="bot_command", offset=0, length=len(text))],
         )
         msg.set_bot(self.bot_obj)
@@ -1284,19 +1378,26 @@ class TestConversationReentry(unittest.TestCase):
     def test_adminconsole_recovers_from_every_open_state(self):
         conv = self._conv("adminconsole")
         upd = self._command_update("/adminconsole")
-        for state in (bot.ADMIN_MENU, bot.ADMIN_MARK_CHOOSE, bot.ADMIN_MARK_DATE,
-                      bot.ADMIN_HIDE_CHOOSE, bot.ADMIN_NOTIFY_PICK):
+        for state in (
+            bot.ADMIN_MENU,
+            bot.ADMIN_MARK_CHOOSE,
+            bot.ADMIN_MARK_DATE,
+            bot.ADMIN_HIDE_CHOOSE,
+            bot.ADMIN_NOTIFY_PICK,
+        ):
             self.assertTrue(
                 self._handled(conv, upd, state),
                 f"/adminconsole did nothing while stuck in state {state}",
             )
 
     def test_add_edit_delete_recover_from_open_state(self):
-        for command, state in (("add", bot.ADDING_TITLE),
-                               ("add", bot.ADDING_DESCRIPTION),
-                               ("edit", bot.EDITING_CHOOSE),
-                               ("edit", bot.EDITING_FIELD),
-                               ("delete", bot.DELETING_CHOOSE)):
+        for command, state in (
+            ("add", bot.ADDING_TITLE),
+            ("add", bot.ADDING_DESCRIPTION),
+            ("edit", bot.EDITING_CHOOSE),
+            ("edit", bot.EDITING_FIELD),
+            ("delete", bot.DELETING_CHOOSE),
+        ):
             conv = self._conv(command)
             upd = self._command_update(f"/{command}")
             self.assertTrue(
@@ -1311,13 +1412,15 @@ class TestConversationReentry(unittest.TestCase):
 
     def test_all_conversations_allow_reentry(self):
         for conv in self._conversations():
-            self.assertTrue(conv.allow_reentry,
-                            "every conversation must be re-enterable")
+            self.assertTrue(
+                conv.allow_reentry, "every conversation must be re-enterable"
+            )
 
 
 # ── Global error handler ──────────────────────────────────────────────────────
 
 # ── Global error handler ──────────────────────────────────────────────────────
+
 
 class TestErrorHandler(BotHandlerTestCase):
     """Without an error handler the bot replies with silence when a handler
@@ -1368,9 +1471,10 @@ class TestErrorHandler(BotHandlerTestCase):
     async def test_error_handler_network_error_logs_warning_only(self):
         """Transient API failures must not alert the admin or message the user."""
         self.ctx.error = NetworkError("Bad Gateway")
-        with patch.object(bot.logger, "warning") as mock_warn, patch.object(
-            bot.logger, "error"
-        ) as mock_err:
+        with (
+            patch.object(bot.logger, "warning") as mock_warn,
+            patch.object(bot.logger, "error") as mock_err,
+        ):
             await bot.error_handler(self.update, self.ctx)
             mock_warn.assert_called_once()
             mock_err.assert_not_called()

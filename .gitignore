@@ -12,6 +12,8 @@ bookclub.db
 /data/
 __pycache__/
 *.pyc
+.mypy_cache/
+.ruff_cache/
 .venv/
 # database backups (bookclub_dbs/, philoclub_dbs/, …)
 *_dbs/

@@ -29,40 +29,56 @@ Commands:
   /cancel          - Cancel the current operation
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import logging.handlers
-import sqlite3
 import os
+import sqlite3
 from collections import deque
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeChatMember
+from typing import Any, Literal, cast
+
+from telegram import (
+    Bot,
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeChatMember,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
-    PicklePersistence,
-    CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
-    ConversationHandler,
+    CommandHandler,
     ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    PicklePersistence,
     TypeHandler,
     filters,
 )
 
+Lang = Literal["en", "ru"]
+TranslationValue = str | Callable[..., str]
+BookLike = sqlite3.Row | Mapping[str, Any]
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-ADMIN_IDS = [
-    int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()
-]
+ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/book-club-bot")
 DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 
 # Members of this chat are allowed to use the bot.
 # Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
 # Leave empty to allow everyone (useful during initial setup).
-ALLOWED_CHAT_ID   = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
+ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
 ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб")
 
 # Language for messages the bot posts into the group chat. Group messages are
@@ -79,9 +95,11 @@ CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
     ADDING_DESCRIPTION,
 ) = range(6)
 EDITING_CHOOSE = 6
-EDITING_FIELD  = 7   # waiting for new value of current field
+EDITING_FIELD = 7  # waiting for new value of current field
 DELETING_CHOOSE = 8
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK = range(9, 14)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK = (
+    range(9, 14)
+)
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
 
@@ -90,7 +108,7 @@ _log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_fmt)
 
-_handlers = [_console_handler]
+_handlers: list[logging.Handler] = [_console_handler]
 
 # The log directory is not in git (see .gitignore), so on a fresh clone it does
 # not exist yet and RotatingFileHandler would raise at import time — taking the
@@ -117,18 +135,23 @@ logger = logging.getLogger(__name__)
 # file. The logging handler runs synchronously (and may fire before the event
 # loop even exists, e.g. during import), so it only *buffers* records; a
 # background task started at startup drains the buffer and does the sending.
-ERROR_ALERTS = os.environ.get("ERROR_ALERTS", "1").lower() not in ("0", "false", "no", "")
+ERROR_ALERTS = os.environ.get("ERROR_ALERTS", "1").lower() not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 # Optional label so a shared admin can tell which bot an alert came from.
 INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "")
 
 # Bounded so a burst of errors — or a wedged loop that never drains this —
 # can't grow memory without limit; oldest alerts are dropped first.
 _ALERT_BUFFER_MAX = 200
-_alert_buffer: "deque[str]" = deque(maxlen=_ALERT_BUFFER_MAX)
+_alert_buffer: deque[str] = deque(maxlen=_ALERT_BUFFER_MAX)
 _alert_dropped = 0  # records discarded because the buffer was full
 
-_ALERT_FLUSH_INTERVAL = 3.0   # seconds between sends — a basic rate limit
-_ALERT_MAX_PER_FLUSH = 5      # records coalesced into one message per flush
+_ALERT_FLUSH_INTERVAL = 3.0  # seconds between sends — a basic rate limit
+_ALERT_MAX_PER_FLUSH = 5  # records coalesced into one message per flush
 
 # Loggers whose failures we must NOT alert on, or we risk a feedback loop:
 # sending an alert can itself fail deep inside httpx/telegram and log an error,
@@ -166,7 +189,7 @@ if ERROR_ALERTS:
     logging.getLogger().addHandler(_alert_handler)
 
 
-async def _drain_alert_queue(app: "Application") -> None:
+async def _drain_alert_queue(app: Application) -> None:
     """Forward buffered ERROR logs to the main admin.
 
     Runs for the lifetime of the bot. Coalesces up to _ALERT_MAX_PER_FLUSH
@@ -181,7 +204,7 @@ async def _drain_alert_queue(app: "Application") -> None:
         if not _alert_buffer:
             continue
 
-        batch = []
+        batch: list[str] = []
         while _alert_buffer and len(batch) < _ALERT_MAX_PER_FLUSH:
             batch.append(_alert_buffer.popleft())
         dropped, _alert_dropped = _alert_dropped, 0
@@ -206,7 +229,7 @@ async def _drain_alert_queue(app: "Application") -> None:
 
 
 # ── Translations ───────────────────────────────────────────────────────────────
-T = {
+T: dict[str, dict[str, TranslationValue]] = {
     "en": {
         "welcome": (
             "📚 <b>Welcome to the Book Club Bot!</b>\n\n"
@@ -221,104 +244,104 @@ T = {
             "🛠 /adminconsole — Admin console\n"
             "❓ /help — Show this message"
         ),
-        "lang_set":            "🇬🇧 Language set to English.",
-        "ask_title":           "📖 What is the <b>title</b> of the book?",
-        "ask_author":          "✍️ Who is the <b>author</b>?",
-        "ask_pages":           "📄 How many <b>pages</b> does it have? (enter a number)",
-        "invalid_pages":       "⚠️ Please enter a valid number of pages (e.g. 320):",
-        "ask_fiction":         "📂 Is it <b>Fiction</b> or <b>Non-fiction</b>?",
-        "fiction_btn":         "📖 Fiction",
-        "nonfiction_btn":      "📰 Non-fiction",
-        "ask_review":          "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
-        "invalid_review":      "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
-        "ask_desc":            "📝 Add a <b>description</b> (or /skip to leave empty):",
-        "book_added":          "✅ Book added!",
-        "no_books":            "📭 No books yet. Use /add to add one!",
-        "no_undiscussed":      "📭 No undiscussed books — use /discussed to see past reads.",
-        "no_votes":            "No votes yet. Use /list to see books and vote inline!",
-        "no_books_edit":       "📭 No books to edit yet.",
-        "no_books_delete":     "📭 No books to delete yet.",
-        "cancelled":           "❌ Cancelled.",
-        "unexpected_error":    "⚠️ Something went wrong on my side. Please try again — use /cancel first if you were in the middle of something.",
-        "choose_vote":         "📊 Choose a book to vote on:",
-        "choose_edit":         "✏️ Choose a book to edit:",
-        "choose_delete":       "🗑 Choose a book to delete:",
-        "your_vote":           "Your current vote",
-        "none_vote":           "—",
-        "rate_book":           "📊 Vote on <b>{title}</b>",
-        "desc_updated":        "✅ Description updated!",
-        "top_title":           "🏆 <b>Top Books</b>\nSorted by total score.\n\n",
-        "added_by":            "Added by",
-        "added_on":            "Added on",
-        "pages_label":         "Pages",
-        "review_label":        "Review",
-        "cancel_btn":          "❌ Cancel",
-        "edit_field_prompt":   "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
-        "edit_yes_btn":        "✏️ Yes, change it",
-        "edit_no_btn":         "⏭ Skip",
-        "edit_ask_new":        "Send the new value for <b>{field}</b>:",
-        "edit_done":           "✅ Book updated!",
-        "edit_invalid_pages":  "⚠️ Must be a positive number. Send again:",
-        "edit_invalid_url":    "⚠️ Must start with http:// or https://. Send again:",
-        "field_title":         "Title",
-        "field_author":        "Author",
-        "field_pages":         "Pages",
-        "field_fiction":       "Fiction / Non-fiction",
-        "field_review":        "Review link",
-        "field_description":   "Description",
-        "deleted":             "🗑 <b>{title}</b> has been deleted.",
-        "fiction_label":       "Fiction",
-        "nonfiction_label":    "Non-fiction",
-        "votes_label":         lambda n: f"({n} vote{'s' if n != 1 else ''})",
-        "want_label":          "✅ want to read",
-        "meh_label":           "😐 don't care",
-        "no_label":            "❌ don't want to read",
-        "vote_registered":     "Your vote: {label}",
-        "want_btn":            "✅ Want",
-        "meh_btn":             "😐 Don't care",
-        "no_btn":              "❌ Don't want",
-        "voted_msg":           "✅ Vote saved for <b>{title}</b>",
-        "score_label":         "Score",
-        "no_permission":       "⛔ You can only edit or delete books you added.",
-        "no_own_books":        "📭 You have no books to edit or delete.",
-        "admin_only":          "⛔ This command is for admins only.",
+        "lang_set": "🇬🇧 Language set to English.",
+        "ask_title": "📖 What is the <b>title</b> of the book?",
+        "ask_author": "✍️ Who is the <b>author</b>?",
+        "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
+        "invalid_pages": "⚠️ Please enter a valid number of pages (e.g. 320):",
+        "ask_fiction": "📂 Is it <b>Fiction</b> or <b>Non-fiction</b>?",
+        "fiction_btn": "📖 Fiction",
+        "nonfiction_btn": "📰 Non-fiction",
+        "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
+        "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
+        "ask_desc": "📝 Add a <b>description</b> (or /skip to leave empty):",
+        "book_added": "✅ Book added!",
+        "no_books": "📭 No books yet. Use /add to add one!",
+        "no_undiscussed": "📭 No undiscussed books — use /discussed to see past reads.",
+        "no_votes": "No votes yet. Use /list to see books and vote inline!",
+        "no_books_edit": "📭 No books to edit yet.",
+        "no_books_delete": "📭 No books to delete yet.",
+        "cancelled": "❌ Cancelled.",
+        "unexpected_error": "⚠️ Something went wrong on my side. Please try again — use /cancel first if you were in the middle of something.",
+        "choose_vote": "📊 Choose a book to vote on:",
+        "choose_edit": "✏️ Choose a book to edit:",
+        "choose_delete": "🗑 Choose a book to delete:",
+        "your_vote": "Your current vote",
+        "none_vote": "—",
+        "rate_book": "📊 Vote on <b>{title}</b>",
+        "desc_updated": "✅ Description updated!",
+        "top_title": "🏆 <b>Top Books</b>\nSorted by total score.\n\n",
+        "added_by": "Added by",
+        "added_on": "Added on",
+        "pages_label": "Pages",
+        "review_label": "Review",
+        "cancel_btn": "❌ Cancel",
+        "edit_field_prompt": "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
+        "edit_yes_btn": "✏️ Yes, change it",
+        "edit_no_btn": "⏭ Skip",
+        "edit_ask_new": "Send the new value for <b>{field}</b>:",
+        "edit_done": "✅ Book updated!",
+        "edit_invalid_pages": "⚠️ Must be a positive number. Send again:",
+        "edit_invalid_url": "⚠️ Must start with http:// or https://. Send again:",
+        "field_title": "Title",
+        "field_author": "Author",
+        "field_pages": "Pages",
+        "field_fiction": "Fiction / Non-fiction",
+        "field_review": "Review link",
+        "field_description": "Description",
+        "deleted": "🗑 <b>{title}</b> has been deleted.",
+        "fiction_label": "Fiction",
+        "nonfiction_label": "Non-fiction",
+        "votes_label": lambda n: f"({n} vote{'s' if n != 1 else ''})",
+        "want_label": "✅ want to read",
+        "meh_label": "😐 don't care",
+        "no_label": "❌ don't want to read",
+        "vote_registered": "Your vote: {label}",
+        "want_btn": "✅ Want",
+        "meh_btn": "😐 Don't care",
+        "no_btn": "❌ Don't want",
+        "voted_msg": "✅ Vote saved for <b>{title}</b>",
+        "score_label": "Score",
+        "no_permission": "⛔ You can only edit or delete books you added.",
+        "no_own_books": "📭 You have no books to edit or delete.",
+        "admin_only": "⛔ This command is for admins only.",
         "admin_console_title": "🛠 <b>Admin Console</b>",
-        "admin_mark_btn":      "📌 Mark discussed",
-        "admin_hide_btn":      "👻 Hide book",
-        "admin_notify_btn":    "🔔 Send voting reminder (top)",
-        "admin_notify_one_btn":"🔔 Send reminder for a specific book",
-        "admin_toggle_chat_btn":"💬 Post to chat: {state}",
-        "admin_unhide_btn":    "👁 Show book",
-        "choose_hide":         "👻 Choose a book to hide from the list:",
-        "choose_notify":       "🔔 Choose a book to send a reminder for:",
-        "book_hidden":         "✅ <b>{title}</b> is now hidden.",
-        "book_unhidden":       "✅ <b>{title}</b> is now visible.",
-        "choose_mark":         "📌 Choose a book to mark as discussed:",
-        "no_unmark":           "📭 No undiscussed books to mark.",
-        "ask_discuss_date":    "📅 Enter the <b>discussion date</b> (YYYY-MM-DD), or /today to use today:",
-        "invalid_date":        "⚠️ Invalid date. Use YYYY-MM-DD format (e.g. 2026-03-17):",
-        "marked_discussed":    "✅ <b>{title}</b> marked as discussed on {date}.",
-        "discussed_title":     "✅ <b>Discussed Books</b>\n\n",
-        "no_discussed":        "📭 No books have been discussed yet.",
-        "discussed_on":        "Discussed on",
-        "list_prompt":         "📋 <b>List of Books</b>\nShow all books or only those you haven't voted for yet?",
-        "list_all_btn":        "📚 All books",
-        "list_unvoted_btn":    "🗳 Unvoted only",
-        "score_calc_btn":      "📊 How a score is calculated",
-        "score_calc_info":     "✅ Want: +1 point\n😐 Don't care: +0.5 points\n❌ Don't want: -1 point\nTotal score = sum of all votes (not average).Sorted by this score, then by date added.",
-        "settings_title":      "⚙️ <b>Settings</b>",
+        "admin_mark_btn": "📌 Mark discussed",
+        "admin_hide_btn": "👻 Hide book",
+        "admin_notify_btn": "🔔 Send voting reminder (top)",
+        "admin_notify_one_btn": "🔔 Send reminder for a specific book",
+        "admin_toggle_chat_btn": "💬 Post to chat: {state}",
+        "admin_unhide_btn": "👁 Show book",
+        "choose_hide": "👻 Choose a book to hide from the list:",
+        "choose_notify": "🔔 Choose a book to send a reminder for:",
+        "book_hidden": "✅ <b>{title}</b> is now hidden.",
+        "book_unhidden": "✅ <b>{title}</b> is now visible.",
+        "choose_mark": "📌 Choose a book to mark as discussed:",
+        "no_unmark": "📭 No undiscussed books to mark.",
+        "ask_discuss_date": "📅 Enter the <b>discussion date</b> (YYYY-MM-DD), or /today to use today:",
+        "invalid_date": "⚠️ Invalid date. Use YYYY-MM-DD format (e.g. 2026-03-17):",
+        "marked_discussed": "✅ <b>{title}</b> marked as discussed on {date}.",
+        "discussed_title": "✅ <b>Discussed Books</b>\n\n",
+        "no_discussed": "📭 No books have been discussed yet.",
+        "discussed_on": "Discussed on",
+        "list_prompt": "📋 <b>List of Books</b>\nShow all books or only those you haven't voted for yet?",
+        "list_all_btn": "📚 All books",
+        "list_unvoted_btn": "🗳 Unvoted only",
+        "score_calc_btn": "📊 How a score is calculated",
+        "score_calc_info": "✅ Want: +1 point\n😐 Don't care: +0.5 points\n❌ Don't want: -1 point\nTotal score = sum of all votes (not average).Sorted by this score, then by date added.",
+        "settings_title": "⚙️ <b>Settings</b>",
         "settings_notify_label": "Notifications for new books:",
-        "settings_notify_on":   "🔔 Enabled (10 min delay)",
-        "settings_notify_off":  "🔕 Disabled",
-        "settings_notify_btn":  "Toggle Notifications",
-        "settings_lang_btn":    "🌐 Switch to Russian",
+        "settings_notify_on": "🔔 Enabled (10 min delay)",
+        "settings_notify_off": "🔕 Disabled",
+        "settings_notify_btn": "Toggle Notifications",
+        "settings_lang_btn": "🌐 Switch to Russian",
         "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new books?",
-        "notify_optin_yes":    "🔔 Yes, notify me",
-        "notify_optin_no":     "🔕 No, thanks",
+        "notify_optin_yes": "🔔 Yes, notify me",
+        "notify_optin_no": "🔕 No, thanks",
         "notify_optin_success": "✅ Settings saved!",
         "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
         "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
-        "not_member":  "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
+        "not_member": "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
         "admin_notify_confirm": "🔔 Voting reminder sent to {count} users.",
@@ -346,108 +369,108 @@ T = {
             "🛠 /adminconsole — Админ-панель\n"
             "❓ /help — Показать это сообщение"
         ),
-        "lang_set":            "🇷🇺 Язык установлен: Русский.",
-        "ask_title":           "📖 Как называется книга (<b>название</b>)?",
-        "ask_author":          "✍️ Кто <b>автор</b>?",
-        "ask_pages":           "📄 Сколько <b>страниц</b> в книге? (введите число)",
-        "invalid_pages":       "⚠️ Введите корректное число страниц (например, 320):",
-        "ask_fiction":         "📂 Это <b>художественная</b> или <b>нехудожественная</b> литература?",
-        "fiction_btn":         "📖 Худ. литература",
-        "nonfiction_btn":      "📰 Нехуд. литература",
-        "ask_review":          "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
-        "invalid_review":      "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
-        "ask_desc":            "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
-        "book_added":          "✅ Книга добавлена!",
-        "no_books":            "📭 Книг пока нет. Используйте /add, чтобы добавить!",
-        "no_undiscussed":      "📭 Необсуждённых книг нет — используйте /discussed для просмотра прочитанных.",
-        "no_votes":            "Голосов пока нет. Используйте /list для голосования!",
-        "no_books_edit":       "📭 Нет книг для редактирования.",
-        "no_books_delete":     "📭 Нет книг для удаления.",
-        "cancelled":           "❌ Отменено.",
-        "unexpected_error":    "⚠️ Что-то пошло не так с моей стороны. Попробуйте ещё раз — если вы были в середине команды, сначала используйте /cancel.",
-        "choose_vote":         "📊 Выберите книгу для голосования:",
-        "choose_edit":         "✏️ Выберите книгу для редактирования:",
-        "choose_delete":       "🗑 Выберите книгу для удаления:",
-        "your_vote":           "Ваш текущий голос",
-        "none_vote":           "—",
-        "rate_book":           "📊 Голосование: <b>{title}</b>",
-        "desc_updated":        "✅ Описание обновлено!",
-        "top_title":           "🏆 <b>Топ книг</b>\nСортировка по общему баллу.\n\n",
-        "added_by":            "Добавил",
-        "added_on":            "Добавлено",
-        "pages_label":         "Страниц",
-        "review_label":        "Рецензия",
-        "cancel_btn":          "❌ Отмена",
-        "edit_field_prompt":   "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
-        "edit_yes_btn":        "✏️ Да, изменить",
-        "edit_no_btn":         "⏭ Пропустить",
-        "edit_ask_new":        "Отправьте новое значение для <b>{field}</b>:",
-        "edit_done":           "✅ Книга обновлена!",
-        "edit_invalid_pages":  "⚠️ Должно быть положительным числом. Отправьте снова:",
-        "edit_invalid_url":    "⚠️ Должна начинаться с http:// или https://. Отправьте снова:",
-        "field_title":         "Название",
-        "field_author":        "Автор",
-        "field_pages":         "Страниц",
-        "field_fiction":       "Fiction / Non-fiction",
-        "field_review":        "Ссылка на рецензию",
-        "field_description":   "Описание",
-        "deleted":             "🗑 <b>{title}</b> удалена.",
-        "fiction_label":       "Fiction",
-        "nonfiction_label":    "Non-fiction",
-        "votes_label":         lambda n: (
-            f"({n} оценка)" if n == 1 else
-            f"({n} оценки)" if 2 <= n <= 4 else
-            f"({n} оценок)"
+        "lang_set": "🇷🇺 Язык установлен: Русский.",
+        "ask_title": "📖 Как называется книга (<b>название</b>)?",
+        "ask_author": "✍️ Кто <b>автор</b>?",
+        "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
+        "invalid_pages": "⚠️ Введите корректное число страниц (например, 320):",
+        "ask_fiction": "📂 Это <b>художественная</b> или <b>нехудожественная</b> литература?",
+        "fiction_btn": "📖 Худ. литература",
+        "nonfiction_btn": "📰 Нехуд. литература",
+        "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
+        "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
+        "ask_desc": "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
+        "book_added": "✅ Книга добавлена!",
+        "no_books": "📭 Книг пока нет. Используйте /add, чтобы добавить!",
+        "no_undiscussed": "📭 Необсуждённых книг нет — используйте /discussed для просмотра прочитанных.",
+        "no_votes": "Голосов пока нет. Используйте /list для голосования!",
+        "no_books_edit": "📭 Нет книг для редактирования.",
+        "no_books_delete": "📭 Нет книг для удаления.",
+        "cancelled": "❌ Отменено.",
+        "unexpected_error": "⚠️ Что-то пошло не так с моей стороны. Попробуйте ещё раз — если вы были в середине команды, сначала используйте /cancel.",
+        "choose_vote": "📊 Выберите книгу для голосования:",
+        "choose_edit": "✏️ Выберите книгу для редактирования:",
+        "choose_delete": "🗑 Выберите книгу для удаления:",
+        "your_vote": "Ваш текущий голос",
+        "none_vote": "—",
+        "rate_book": "📊 Голосование: <b>{title}</b>",
+        "desc_updated": "✅ Описание обновлено!",
+        "top_title": "🏆 <b>Топ книг</b>\nСортировка по общему баллу.\n\n",
+        "added_by": "Добавил",
+        "added_on": "Добавлено",
+        "pages_label": "Страниц",
+        "review_label": "Рецензия",
+        "cancel_btn": "❌ Отмена",
+        "edit_field_prompt": "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
+        "edit_yes_btn": "✏️ Да, изменить",
+        "edit_no_btn": "⏭ Пропустить",
+        "edit_ask_new": "Отправьте новое значение для <b>{field}</b>:",
+        "edit_done": "✅ Книга обновлена!",
+        "edit_invalid_pages": "⚠️ Должно быть положительным числом. Отправьте снова:",
+        "edit_invalid_url": "⚠️ Должна начинаться с http:// или https://. Отправьте снова:",
+        "field_title": "Название",
+        "field_author": "Автор",
+        "field_pages": "Страниц",
+        "field_fiction": "Fiction / Non-fiction",
+        "field_review": "Ссылка на рецензию",
+        "field_description": "Описание",
+        "deleted": "🗑 <b>{title}</b> удалена.",
+        "fiction_label": "Fiction",
+        "nonfiction_label": "Non-fiction",
+        "votes_label": lambda n: (
+            f"({n} оценка)"
+            if n == 1
+            else f"({n} оценки)" if 2 <= n <= 4 else f"({n} оценок)"
         ),
-        "want_label":          "✅ хочу читать",
-        "meh_label":           "😐 всё равно",
-        "no_label":            "❌ не хочу читать",
-        "vote_registered":     "Ваш голос: {label}",
-        "want_btn":            "✅ Хочу",
-        "meh_btn":             "😐 Всё равно",
-        "no_btn":              "❌ Не хочу",
-        "voted_msg":           "✅ Голос сохранён для <b>{title}</b>",
-        "score_label":         "Балл",
-        "no_permission":       "⛔ Вы можете редактировать или удалять только добавленные вами книги.",
-        "no_own_books":        "📭 У вас нет книг для редактирования или удаления.",
-        "admin_only":          "⛔ Эта команда доступна только администраторам.",
+        "want_label": "✅ хочу читать",
+        "meh_label": "😐 всё равно",
+        "no_label": "❌ не хочу читать",
+        "vote_registered": "Ваш голос: {label}",
+        "want_btn": "✅ Хочу",
+        "meh_btn": "😐 Всё равно",
+        "no_btn": "❌ Не хочу",
+        "voted_msg": "✅ Голос сохранён для <b>{title}</b>",
+        "score_label": "Балл",
+        "no_permission": "⛔ Вы можете редактировать или удалять только добавленные вами книги.",
+        "no_own_books": "📭 У вас нет книг для редактирования или удаления.",
+        "admin_only": "⛔ Эта команда доступна только администраторам.",
         "admin_console_title": "🛠 <b>Админ-панель</b>",
-        "admin_mark_btn":      "📌 Отметить обсуждённой",
-        "admin_hide_btn":      "👻 Скрыть книгу",
-        "admin_notify_btn":    "🔔 Напомнить о голосовании (топ)",
-        "admin_notify_one_btn":"🔔 Напомнить об одной книге",
-        "admin_toggle_chat_btn":"💬 Писать в чат: {state}",
-        "admin_unhide_btn":    "👁 Показать книгу",
-        "choose_hide":         "👻 Выберите книгу, чтобы скрыть её из списка:",
-        "choose_notify":       "🔔 Выберите книгу для напоминания:",
-        "book_hidden":         "✅ Книга <b>{title}</b> скрыта.",
-        "book_unhidden":       "✅ Книга <b>{title}</b> снова видна.",
-        "choose_mark":         "📌 Выберите книгу для отметки как обсуждённой:",
-        "no_unmark":           "📭 Нет необсуждённых книг для отметки.",
-        "ask_discuss_date":    "📅 Введите <b>дату обсуждения</b> (ГГГГ-ММ-ДД) или /today для сегодняшней даты:",
-        "invalid_date":        "⚠️ Неверный формат даты. Используйте ГГГГ-ММ-ДД (например, 2026-03-17):",
-        "marked_discussed":    "✅ <b>{title}</b> отмечена как обсуждённая {date}.",
-        "discussed_title":     "✅ <b>Обсуждённые книги</b>\n\n",
-        "no_discussed":        "📭 Пока ни одна книга не была обсуждена.",
-        "discussed_on":        "Обсуждено",
-        "list_prompt":         "📋 <b>Список книг</b>\nПоказать все книги или только те, за которые вы ещё не голосовали?",
-        "list_all_btn":        "📚 Все книги",
-        "list_unvoted_btn":    "🗳 Только без моего голоса",
-        "score_calc_btn":      "📊 Как рассчитывается балл",
-        "score_calc_info":     "✅ Хочу: +1 балл\n😐 Всё равно: +0.5 баллов\n❌ Не хочу: -1 балл\n\nСортировка по суммарному баллу, затем по дате добавления.",
-        "settings_title":      "⚙️ <b>Настройки</b>",
+        "admin_mark_btn": "📌 Отметить обсуждённой",
+        "admin_hide_btn": "👻 Скрыть книгу",
+        "admin_notify_btn": "🔔 Напомнить о голосовании (топ)",
+        "admin_notify_one_btn": "🔔 Напомнить об одной книге",
+        "admin_toggle_chat_btn": "💬 Писать в чат: {state}",
+        "admin_unhide_btn": "👁 Показать книгу",
+        "choose_hide": "👻 Выберите книгу, чтобы скрыть её из списка:",
+        "choose_notify": "🔔 Выберите книгу для напоминания:",
+        "book_hidden": "✅ Книга <b>{title}</b> скрыта.",
+        "book_unhidden": "✅ Книга <b>{title}</b> снова видна.",
+        "choose_mark": "📌 Выберите книгу для отметки как обсуждённой:",
+        "no_unmark": "📭 Нет необсуждённых книг для отметки.",
+        "ask_discuss_date": "📅 Введите <b>дату обсуждения</b> (ГГГГ-ММ-ДД) или /today для сегодняшней даты:",
+        "invalid_date": "⚠️ Неверный формат даты. Используйте ГГГГ-ММ-ДД (например, 2026-03-17):",
+        "marked_discussed": "✅ <b>{title}</b> отмечена как обсуждённая {date}.",
+        "discussed_title": "✅ <b>Обсуждённые книги</b>\n\n",
+        "no_discussed": "📭 Пока ни одна книга не была обсуждена.",
+        "discussed_on": "Обсуждено",
+        "list_prompt": "📋 <b>Список книг</b>\nПоказать все книги или только те, за которые вы ещё не голосовали?",
+        "list_all_btn": "📚 Все книги",
+        "list_unvoted_btn": "🗳 Только без моего голоса",
+        "score_calc_btn": "📊 Как рассчитывается балл",
+        "score_calc_info": "✅ Хочу: +1 балл\n😐 Всё равно: +0.5 баллов\n❌ Не хочу: -1 балл\n\nСортировка по суммарному баллу, затем по дате добавления.",
+        "settings_title": "⚙️ <b>Настройки</b>",
         "settings_notify_label": "Уведомления о новых книгах:",
-        "settings_notify_on":   "🔔 Включены (задержка 10 мин)",
-        "settings_notify_off":  "🔕 Выключены",
-        "settings_notify_btn":  "Переключить уведомления",
-        "settings_lang_btn":    "🌐 Switch to English",
+        "settings_notify_on": "🔔 Включены (задержка 10 мин)",
+        "settings_notify_off": "🔕 Выключены",
+        "settings_notify_btn": "Переключить уведомления",
+        "settings_lang_btn": "🌐 Switch to English",
         "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые книги?",
-        "notify_optin_yes":    "🔔 Да, уведомлять",
-        "notify_optin_no":     "🔕 Нет, спасибо",
+        "notify_optin_yes": "🔔 Да, уведомлять",
+        "notify_optin_no": "🔕 Нет, спасибо",
         "notify_optin_success": "✅ Настройки сохранены!",
         "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
         "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
-        "not_member":  "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
+        "not_member": "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
         "admin_notify_confirm": "🔔 Напоминание о голосовании отправлено {count} пользователям.",
@@ -469,36 +492,61 @@ PM = "HTML"
 IMPORTED_USER_ID = 0  # sentinel for books imported without a real user_id
 
 
-def can_modify(user_id: int, book, username: str = None) -> bool:
+def can_modify(user_id: int, book: BookLike, username: str | None = None) -> bool:
     """Admin always wins. For imported books (added_by=0), match by @username."""
     if user_id in ADMIN_IDS:
         return True
     if book["added_by"] == IMPORTED_USER_ID:
         # Imported book — allow if the caller's @username matches
         stored = book["added_by_username"]
-        clean  = (username or "").lstrip("@")
+        clean = (username or "").lstrip("@")
         return bool(clean and stored and clean.lower() == stored.lower())
-    return user_id == book["added_by"]
+    return bool(user_id == book["added_by"])
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-def get_lang(ctx):
-    return ctx.user_data.get("lang", "ru")
+def get_lang(ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    return str(ctx.user_data.get("lang", "ru"))
 
 
-def tr(ctx_or_lang, key, **kwargs):
+def tr(ctx_or_lang: ContextTypes.DEFAULT_TYPE | str, key: str, **kwargs: Any) -> str:
     lang = ctx_or_lang if isinstance(ctx_or_lang, str) else get_lang(ctx_or_lang)
     val = T[lang][key]
     if callable(val):
-        return val(**kwargs)
-    return val.format(**kwargs) if kwargs else val
+        result = val(**kwargs)
+        return str(result)
+    return val.format(**kwargs) if kwargs else str(val)
+
+
+def s(lang: str, key: str) -> str:
+    """Plain-string translation (not callable)."""
+    val = T[lang][key]
+    if not isinstance(val, str):
+        raise TypeError(f"translation {key!r} is not a plain string")
+    return val
+
+
+_VOTE_LABEL_KEYS = {1: "want_label", 0: "meh_label", -1: "no_label"}
+
+
+def vote_label_text(lang: str, score: int | None) -> str:
+    if score not in _VOTE_LABEL_KEYS:
+        raise ValueError(f"invalid vote score: {score!r}")
+    return s(lang, _VOTE_LABEL_KEYS[score])
+
+
+def require_book(book_id: int) -> sqlite3.Row:
+    book = db_get_book(book_id)
+    if book is None:
+        raise RuntimeError(f"book {book_id} not found")
+    return book
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
-def init_db():
+def init_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("""
@@ -521,12 +569,12 @@ def init_db():
         """)
         # Migrate existing DB: add book columns if missing
         for col, definition in [
-            ("pages",             "INTEGER NOT NULL DEFAULT 0"),
-            ("fiction",           "INTEGER NOT NULL DEFAULT 1"),
-            ("review_link",       "TEXT NOT NULL DEFAULT ''"),
-            ("hidden",            "INTEGER NOT NULL DEFAULT 0"),
-            ("discussed",         "INTEGER NOT NULL DEFAULT 0"),
-            ("discussed_at",      "TEXT DEFAULT NULL"),
+            ("pages", "INTEGER NOT NULL DEFAULT 0"),
+            ("fiction", "INTEGER NOT NULL DEFAULT 1"),
+            ("review_link", "TEXT NOT NULL DEFAULT ''"),
+            ("hidden", "INTEGER NOT NULL DEFAULT 0"),
+            ("discussed", "INTEGER NOT NULL DEFAULT 0"),
+            ("discussed_at", "TEXT DEFAULT NULL"),
             ("added_by_username", "TEXT DEFAULT NULL"),
         ]:
             try:
@@ -560,7 +608,17 @@ def init_db():
         conn.commit()
 
 
-def db_add_book(title, author, pages, fiction, review_link, description, user_id, user_name, username=None):
+def db_add_book(
+    title: str,
+    author: str,
+    pages: int,
+    fiction: bool,
+    review_link: str,
+    description: str,
+    user_id: int,
+    user_name: str,
+    username: str | None = None,
+) -> int | None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.execute(
@@ -568,13 +626,26 @@ def db_add_book(title, author, pages, fiction, review_link, description, user_id
                (title, author, pages, fiction, review_link, description,
                 added_by, added_by_name, added_by_username, added_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (title, author, pages, int(fiction), review_link, description,
-             user_id, user_name, username, datetime.now().strftime("%Y-%m-%d")),
+            (
+                title,
+                author,
+                pages,
+                int(fiction),
+                review_link,
+                description,
+                user_id,
+                user_name,
+                username,
+                datetime.now().strftime("%Y-%m-%d"),
+            ),
         )
         return cur.lastrowid
 
 
-def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added_at DESC"):
+def _books_query(
+    extra_where: str = "",
+    order: str = "avg_score DESC, vote_count DESC, b.added_at DESC",
+) -> str:
     # Note: avg_score is actually the SUM of weighted scores:
     # 1.0 for 'want', 0.5 for 'don''t care', -1.0 for 'don''t want'
     return f"""
@@ -600,7 +671,11 @@ def _books_query(extra_where="", order="avg_score DESC, vote_count DESC, b.added
     """
 
 
-def db_get_books(discussed=False, user_id_unvoted=None, include_hidden=False):
+def db_get_books(
+    discussed: bool = False,
+    user_id_unvoted: int | None = None,
+    include_hidden: bool = False,
+) -> list[sqlite3.Row]:
     """Return books. discussed=False → undiscussed, discussed=True → discussed.
     If user_id_unvoted is provided, only return books that this user has NOT voted for yet.
     """
@@ -617,22 +692,29 @@ def db_get_books(discussed=False, user_id_unvoted=None, include_hidden=False):
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn.execute(
-            _books_query(where,
-                         "b.discussed_at DESC" if discussed else "avg_score DESC, vote_count DESC, b.added_at DESC"),
-            tuple(params)
+            _books_query(
+                where,
+                (
+                    "b.discussed_at DESC"
+                    if discussed
+                    else "avg_score DESC, vote_count DESC, b.added_at DESC"
+                ),
+            ),
+            tuple(params),
         ).fetchall()
 
 
-def db_get_book(book_id):
+def db_get_book(book_id: int) -> sqlite3.Row | None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn.execute(
-            _books_query("WHERE b.id = ?"), (book_id,)
-        ).fetchone()
+        return cast(
+            sqlite3.Row | None,
+            conn.execute(_books_query("WHERE b.id = ?"), (book_id,)).fetchone(),
+        )
 
 
-def db_update_book_field(book_id, field, value):
+def db_update_book_field(book_id: int, field: str, value: Any) -> None:
     """Update a single whitelisted field."""
     allowed = {"title", "author", "pages", "fiction", "review_link", "description"}
     if field not in allowed:
@@ -644,16 +726,16 @@ def db_update_book_field(book_id, field, value):
         conn.commit()
 
 
-def db_mark_discussed(book_id, date_str):
+def db_mark_discussed(book_id: int, date_str: str) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
-            (date_str, book_id)
+            (date_str, book_id),
         )
 
 
-def db_toggle_hidden(book_id):
+def db_toggle_hidden(book_id: int) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
@@ -663,14 +745,14 @@ def db_toggle_hidden(book_id):
         conn.commit()
 
 
-def db_delete_book(book_id):
+def db_delete_book(book_id: int) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
 
 
-def db_cast_vote(user_id, book_id, score):
+def db_cast_vote(user_id: int, book_id: int, score: int) -> None:
     """score: -1 = don't want, 0 = don't care, 1 = want to read"""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -682,7 +764,7 @@ def db_cast_vote(user_id, book_id, score):
         conn.commit()
 
 
-def db_get_user_vote(user_id, book_id):
+def db_get_user_vote(user_id: int, book_id: int) -> int | None:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
@@ -690,7 +772,7 @@ def db_get_user_vote(user_id, book_id):
         return row[0] if row else None
 
 
-def db_get_user_setting(user_id, key, default=-1):
+def db_get_user_setting(user_id: int, key: str, default: int = -1) -> int:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT setting_val FROM user_settings WHERE user_id=? AND setting_key=?",
@@ -699,7 +781,7 @@ def db_get_user_setting(user_id, key, default=-1):
         return row[0] if row is not None else default
 
 
-def db_set_user_setting(user_id, key, value):
+def db_set_user_setting(user_id: int, key: str, value: int) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO user_settings (user_id, setting_key, setting_val) VALUES (?,?,?) "
@@ -709,7 +791,7 @@ def db_set_user_setting(user_id, key, value):
         conn.commit()
 
 
-def db_get_users_with_setting(key, value):
+def db_get_users_with_setting(key: str, value: int) -> list[int]:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT user_id FROM user_settings WHERE setting_key=? AND setting_val=?",
@@ -720,20 +802,23 @@ def db_get_users_with_setting(key, value):
 
 ADMIN_USER_ID = 0
 
-def db_get_admin_setting(key, default=0):
+
+def db_get_admin_setting(key: str, default: int = 0) -> int:
     return db_get_user_setting(ADMIN_USER_ID, key, default)
 
-def db_set_admin_setting(key, value):
+
+def db_set_admin_setting(key: str, value: int) -> None:
     db_set_user_setting(ADMIN_USER_ID, key, value)
 
 
 # ── Formatting ─────────────────────────────────────────────────────────────────
-def format_user(book) -> str:
+def format_user(book: BookLike) -> str:
     """Return @username if available, otherwise fall back to display name."""
     username = book["added_by_username"]
     if username:
         return f"@{h(username)}"
     return h(book["added_by_name"] or "unknown")
+
 
 def h(text: str) -> str:
     # `"` must be escaped too: h() is used inside href="..." attributes, where a
@@ -748,7 +833,7 @@ def h(text: str) -> str:
     )
 
 
-def fmt_dt_utc(dt) -> str:
+def fmt_dt_utc(dt: datetime) -> str:
     """Format a datetime as 'YYYY-MM-DD HH:MM:SS UTC±HH:MM'.
 
     Naive datetimes are assumed to be in the server's local timezone. The
@@ -756,79 +841,104 @@ def fmt_dt_utc(dt) -> str:
     the value without having to know where the server is.
     """
     if dt.tzinfo is None:
-        dt = dt.astimezone()          # attach the server's local tz
-    off = dt.strftime("%z")           # +0200 / -0500 / +0000
+        dt = dt.astimezone()  # attach the server's local tz
+    off = dt.strftime("%z")  # +0200 / -0500 / +0000
     return dt.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:5]}"
 
 
 SCORE_EMOJI = {1: "✅", 0: "😐", -1: "❌", None: "—"}
 
 
-def score_display(book, lang="en"):
+def score_display(book: BookLike, lang: str = "en") -> str:
     """Show vote tally: ✅12  😐3  ❌2  (N votes)"""
-    yes   = book["votes_yes"]
-    meh   = book["votes_meh"]
-    no    = book["votes_no"]
+    yes = book["votes_yes"]
+    meh = book["votes_meh"]
+    no = book["votes_no"]
     total = book["vote_count"]
     if total == 0:
-        return T[lang]['votes_label'](0)
-    return f"✅ {yes}  😐 {meh}  ❌ {no}  {T[lang]['votes_label'](total)}"
+        votes_label = T[lang]["votes_label"]
+        if not callable(votes_label):
+            raise TypeError("votes_label must be callable")
+        return str(votes_label(0))
+    votes_label = T[lang]["votes_label"]
+    if not callable(votes_label):
+        raise TypeError("votes_label must be callable")
+    return f"✅ {yes}  😐 {meh}  ❌ {no}  {votes_label(total)}"
 
 
-def book_card(book, lang="en", user_vote=None):
-    fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
+def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) -> str:
+    fiction_label = (
+        s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
+    )
     lines = [
         f"📖 <b>{h(book['title'])}</b>",
         f"✍️ {h(book['author'])}",
-        f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(T[lang]['pages_label'])}",
+        f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(s(lang, 'pages_label'))}",
         score_display(book, lang),
     ]
     if user_vote is not None:
-        vote_label = T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[user_vote]]
-        lines[-1] += f"  <i>({h(T[lang]['your_vote'])}: {h(vote_label)})</i>"
+        vote_label = vote_label_text(lang, user_vote)
+        lines[-1] += f"  <i>({h(s(lang, 'your_vote'))}: {h(vote_label)})</i>"
     if book["review_link"]:
-        lines.append(f'🔗 <a href="{h(book["review_link"])}">{h(T[lang]["review_label"])}</a>')
+        lines.append(
+            f'🔗 <a href="{h(book["review_link"])}">{h(s(lang, "review_label"))}</a>'
+        )
     if book["description"]:
         lines += ["", f"<i>{h(book['description'])}</i>"]
     meta = (
-        f"<i>{h(T[lang]['added_by'])}: {h(format_user(book))}"
-        f"  •  {h(T[lang]['added_on'])}: {h(book['added_at'])}"
+        f"<i>{h(s(lang, 'added_by'))}: {h(format_user(book))}"
+        f"  •  {h(s(lang, 'added_on'))}: {h(book['added_at'])}"
     )
     if book["discussed"] and book["discussed_at"]:
-        meta += f"  •  ✅ {h(T[lang]['discussed_on'])}: {h(book['discussed_at'])}"
+        meta += f"  •  ✅ {h(s(lang, 'discussed_on'))}: {h(book['discussed_at'])}"
     meta += "</i>"
     lines += ["", meta]
     return "\n".join(lines)
 
-def books_keyboard(books, prefix, cancel_label):
+
+def books_keyboard(
+    books: Sequence[BookLike], prefix: str, cancel_label: str
+) -> InlineKeyboardMarkup:
     buttons = []
     for b in books:
         label = f"{b['title']} — {b['author']}"
         if len(label) > 48:
             label = label[:45] + "…"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"{prefix}:{b['id']}")])
-    buttons.append([InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")])
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"{prefix}:{b['id']}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
+    )
     return InlineKeyboardMarkup(buttons)
 
 
-def fiction_keyboard(lang):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(T[lang]["fiction_btn"],    callback_data="fiction:1"),
-        InlineKeyboardButton(T[lang]["nonfiction_btn"], callback_data="fiction:0"),
-    ]])
+def fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(s(lang, "fiction_btn"), callback_data="fiction:1"),
+                InlineKeyboardButton(
+                    s(lang, "nonfiction_btn"), callback_data="fiction:0"
+                ),
+            ]
+        ]
+    )
 
 
-def score_keyboard(book_id, lang, current=None):
+def score_keyboard(
+    book_id: int, lang: str, current: int | None = None
+) -> InlineKeyboardMarkup:
     """Compact 3-button vote row to attach directly to book cards."""
     options = [
-        (1,  T[lang]["want_btn"]),
-        (0,  T[lang]["meh_btn"]),
-        (-1, T[lang]["no_btn"]),
+        (1, s(lang, "want_btn")),
+        (0, s(lang, "meh_btn")),
+        (-1, s(lang, "no_btn")),
     ]
     row = [
         InlineKeyboardButton(
             label + (" ✓" if current == score else ""),
-            callback_data=f"vote_cast:{book_id}:{score}"
+            callback_data=f"vote_cast:{book_id}:{score}",
         )
         for score, label in options
     ]
@@ -846,7 +956,7 @@ def is_valid_url(text: str) -> bool:
     return bool(text.split("://", 1)[1])
 
 
-def parse_date(text: str):
+def parse_date(text: str) -> str | None:
     """Return date string if valid YYYY-MM-DD, DD.MM.YYYY, or DD/MM/YYYY, else None."""
     text = text.strip()
     for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
@@ -862,42 +972,48 @@ def parse_date(text: str):
 # ── Per-language command menus ─────────────────────────────────────────────────
 COMMANDS = {
     "en": [
-        BotCommand("add",           "➕ Add a book"),
-        BotCommand("list",          "📋 List books & vote inline"),
-        BotCommand("top",           "🏆 Top rated books"),
-        BotCommand("settings",      "⚙️ Settings"),
-        BotCommand("discussed",     "✅ Books already discussed"),
-        BotCommand("edit",          "✏️ Edit a book entry"),
-        BotCommand("delete",        "🗑 Delete a book"),
-        BotCommand("adminconsole",  "🛠 Admin console"),
-        BotCommand("info",          "ℹ️ About the bot"),
-        BotCommand("help",          "❓ Show help"),
-        BotCommand("cancel",        "❌ Cancel current action"),
+        BotCommand("add", "➕ Add a book"),
+        BotCommand("list", "📋 List books & vote inline"),
+        BotCommand("top", "🏆 Top rated books"),
+        BotCommand("settings", "⚙️ Settings"),
+        BotCommand("discussed", "✅ Books already discussed"),
+        BotCommand("edit", "✏️ Edit a book entry"),
+        BotCommand("delete", "🗑 Delete a book"),
+        BotCommand("adminconsole", "🛠 Admin console"),
+        BotCommand("info", "ℹ️ About the bot"),
+        BotCommand("help", "❓ Show help"),
+        BotCommand("cancel", "❌ Cancel current action"),
     ],
     "ru": [
-        BotCommand("add",           "➕ Добавить книгу"),
-        BotCommand("list",          "📋 Список книг и голосование"),
-        BotCommand("top",           "🏆 Топ книг"),
-        BotCommand("settings",      "⚙️ Настройки"),
-        BotCommand("discussed",     "✅ Обсуждённые книги"),
-        BotCommand("edit",          "✏️ Редактировать запись"),
-        BotCommand("delete",        "🗑 Удалить книгу"),
-        BotCommand("adminconsole",  "🛠 Админ-панель"),
-        BotCommand("info",          "ℹ️ О боте"),
-        BotCommand("help",          "❓ Показать помощь"),
-        BotCommand("cancel",        "❌ Отменить действие"),
+        BotCommand("add", "➕ Добавить книгу"),
+        BotCommand("list", "📋 Список книг и голосование"),
+        BotCommand("top", "🏆 Топ книг"),
+        BotCommand("settings", "⚙️ Настройки"),
+        BotCommand("discussed", "✅ Обсуждённые книги"),
+        BotCommand("edit", "✏️ Редактировать запись"),
+        BotCommand("delete", "🗑 Удалить книгу"),
+        BotCommand("adminconsole", "🛠 Админ-панель"),
+        BotCommand("info", "ℹ️ О боте"),
+        BotCommand("help", "❓ Показать помощь"),
+        BotCommand("cancel", "❌ Отменить действие"),
     ],
 }
 
 
-async def set_user_commands(bot, update: "Update", lang: str) -> None:
+async def set_user_commands(bot: Bot, update: Update, lang: str) -> None:
     """Set the command menu for a specific user in their chosen language.
     Uses BotCommandScopeChatMember for groups, BotCommandScopeChat for private."""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat is None or user is None:
+        return
+    chat_id = chat.id
+    user_id = user.id
     try:
-        if update.effective_chat.type == "private":
-            scope = BotCommandScopeChat(chat_id=chat_id)
+        if chat.type == "private":
+            scope: BotCommandScopeChat | BotCommandScopeChatMember = (
+                BotCommandScopeChat(chat_id=chat_id)
+            )
             await bot.delete_my_commands(scope=scope)
             await bot.set_my_commands(COMMANDS[lang], scope=scope)
         else:
@@ -908,53 +1024,94 @@ async def set_user_commands(bot, update: "Update", lang: str) -> None:
         logger.warning(f"Could not set commands for user {user_id}: {e}")
 
 
-async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     notify = db_get_user_setting(user_id, "notify_new_books")
-    
+
     # -1 means not set, we'll treat it as Off (0) for the UI if they just run /settings
     # but the logic for /list will still trigger the opt-in if it's -1.
     val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
-    
-    text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
-        [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
-    ])
+
+    text = (
+        f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+    )
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "settings_notify_btn"),
+                    callback_data="settings:toggle_notify",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang"
+                )
+            ],
+        ]
+    )
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
 
 
-async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data.split(":")
-    
+
     if data[1] == "toggle_notify":
         await query.answer()
         current = db_get_user_setting(user_id, "notify_new_books")
         new_val = 1 if current <= 0 else 0
         db_set_user_setting(user_id, "notify_new_books", new_val)
-        
-        val_str = tr(ctx, "settings_notify_on" if new_val == 1 else "settings_notify_off")
+
+        val_str = tr(
+            ctx, "settings_notify_on" if new_val == 1 else "settings_notify_off"
+        )
         text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
-            [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
-        ])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "settings_notify_btn"),
+                        callback_data="settings:toggle_notify",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "settings_lang_btn"),
+                        callback_data="settings:toggle_lang",
+                    )
+                ],
+            ]
+        )
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
     elif data[1] == "toggle_lang":
         new_lang = "ru" if get_lang(ctx) == "en" else "en"
         ctx.user_data["lang"] = new_lang
         await set_user_commands(ctx.bot, update, new_lang)
         await query.answer(tr(ctx, "lang_set"))
-        
+
         notify = db_get_user_setting(user_id, "notify_new_books")
-        val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
+        val_str = tr(
+            ctx, "settings_notify_on" if notify == 1 else "settings_notify_off"
+        )
         text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(tr(ctx, "settings_notify_btn"), callback_data="settings:toggle_notify")],
-            [InlineKeyboardButton(tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang")]
-        ])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "settings_notify_btn"),
+                        callback_data="settings:toggle_notify",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "settings_lang_btn"),
+                        callback_data="settings:toggle_lang",
+                    )
+                ],
+            ]
+        )
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
     elif data[1] == "optin":
         val = int(data[2])
@@ -968,18 +1125,18 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await list_choice_cb(update, ctx)
 
 
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await set_user_commands(ctx.bot, update, get_lang(ctx))
     await update.message.reply_text(tr(ctx, "welcome"), parse_mode=PM)
 
 
-async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_start(update, ctx)
 
 
-async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    import subprocess
+async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     import os
+    import subprocess
 
     last_commit = None
     # 1. Try git log — commit time as a Unix timestamp, so it goes through the
@@ -987,10 +1144,13 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     #    instead of git's own zone-dependent rendering.
     try:
         if os.path.exists(".git"):
-            ct = subprocess.check_output(
-                ["git", "log", "-1", "--format=%ct"],
-                stderr=subprocess.DEVNULL
-            ).decode("utf-8").strip()
+            ct = (
+                subprocess.check_output(
+                    ["git", "log", "-1", "--format=%ct"], stderr=subprocess.DEVNULL
+                )
+                .decode("utf-8")
+                .strip()
+            )
             last_commit = fmt_dt_utc(datetime.fromtimestamp(int(ct)))
     except Exception as e:
         logger.warning(f"Could not get last commit via git: {e}")
@@ -1008,22 +1168,23 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=PM, disable_web_page_preview=True)
 
 
-async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    lang = get_lang(ctx)
-    keyboard = InlineKeyboardMarkup([
+async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton(tr(ctx, "list_all_btn"), callback_data="list:all"),
-            InlineKeyboardButton(tr(ctx, "list_unvoted_btn"), callback_data="list:unvoted"),
+            [
+                InlineKeyboardButton(tr(ctx, "list_all_btn"), callback_data="list:all"),
+                InlineKeyboardButton(
+                    tr(ctx, "list_unvoted_btn"), callback_data="list:unvoted"
+                ),
+            ]
         ]
-    ])
+    )
     await update.message.reply_text(
-        tr(ctx, "list_prompt"),
-        reply_markup=keyboard,
-        parse_mode=PM
+        tr(ctx, "list_prompt"), reply_markup=keyboard, parse_mode=PM
     )
 
 
-async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     # We might be called from settings_choice_cb, so query might be None-ish or already answered
     if query.data.startswith("settings:optin:"):
@@ -1041,11 +1202,23 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Check for notification opt-in
     if db_get_user_setting(user_id, "notify_new_books") == -1:
         ctx.user_data["pending_list_choice"] = choice
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(tr(ctx, "notify_optin_yes"), callback_data="settings:optin:1")],
-            [InlineKeyboardButton(tr(ctx, "notify_optin_no"), callback_data="settings:optin:0")]
-        ])
-        await query.edit_message_text(tr(ctx, "notify_optin_prompt"), reply_markup=keyboard, parse_mode=PM)
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "notify_optin_yes"), callback_data="settings:optin:1"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "notify_optin_no"), callback_data="settings:optin:0"
+                    )
+                ],
+            ]
+        )
+        await query.edit_message_text(
+            tr(ctx, "notify_optin_prompt"), reply_markup=keyboard, parse_mode=PM
+        )
         return
 
     lang = get_lang(ctx)
@@ -1061,15 +1234,21 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 text = tr(ctx, "no_undiscussed")
             else:
                 # User has voted on everything
-                text = "✅ " + ("You've voted on all books!" if lang == "en" else "Вы проголосовали за все книги!")
+                text = "✅ " + (
+                    "You've voted on all books!"
+                    if lang == "en"
+                    else "Вы проголосовали за все книги!"
+                )
         else:
             text = tr(ctx, "no_undiscussed")
-        
+
         try:
             await query.edit_message_text(text, parse_mode=PM)
         except Exception as e:
             if "Message to edit not found" in str(e):
-                await ctx.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode=PM)
+                await ctx.bot.send_message(
+                    chat_id=update.effective_chat.id, text=text, parse_mode=PM
+                )
             else:
                 raise
         return
@@ -1098,7 +1277,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"list_choice_cb: failed to send book {book['id']}: {e}")
 
 
-async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_lang(ctx)
     books = db_get_books(discussed=True)
     if not books:
@@ -1109,10 +1288,12 @@ async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=PM)
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])
-        await update.message.reply_text(book_card(book, lang, user_vote=uv), parse_mode=PM)
+        await update.message.reply_text(
+            book_card(book, lang, user_vote=uv), parse_mode=PM
+        )
 
 
-async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_lang(ctx)
     books = db_get_books(discussed=False)
     if not books:
@@ -1128,19 +1309,24 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             # Check if this book has the same score and vote count as the 5th one (index 4)
             fifth = books[4]
-            if book["avg_score"] == fifth["avg_score"] and book["vote_count"] == fifth["vote_count"]:
+            if (
+                book["avg_score"] == fifth["avg_score"]
+                and book["vote_count"] == fifth["vote_count"]
+            ):
                 top_books.append(book)
             else:
                 break
 
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):
-        fiction_label = T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
+        fiction_label = (
+            s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
+        )
         score_val = book["avg_score"]
         score_fmt = f"{score_val:g}"
         lines.append(
             f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
-            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(T[lang]['pages_label'])}  •  <b>{h(T[lang]['score_label'])}: {score_fmt}</b>\n"
+            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(s(lang, 'pages_label'))}  •  <b>{h(s(lang, 'score_label'))}: {score_fmt}</b>\n"
             f"   {score_display(book, lang)}"
         )
 
@@ -1162,44 +1348,47 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(chunk, parse_mode=PM)
 
     # Add "How a score is calculated" button
-    reply_markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton(tr(ctx, "score_calc_btn"), callback_data="score_calc_info")
-    ]])
+    reply_markup = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "score_calc_btn"), callback_data="score_calc_info"
+                )
+            ]
+        ]
+    )
     await update.message.reply_text(
-        "---", # Visual separator or just a small text
+        "---",  # Visual separator or just a small text
         reply_markup=reply_markup,
-        parse_mode=PM
+        parse_mode=PM,
     )
 
 
-async def score_calc_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def score_calc_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer(
-        text=tr(ctx, "score_calc_info"),
-        show_alert=True
-    )
+    await query.answer(text=tr(ctx, "score_calc_info"), show_alert=True)
 
 
 # ── /add conversation ──────────────────────────────────────────────────────────
-async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"] = {}
     await update.message.reply_text(tr(ctx, "ask_title"), parse_mode=PM)
     return ADDING_TITLE
 
 
-async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"]["title"] = update.message.text.strip()
     await update.message.reply_text(tr(ctx, "ask_author"), parse_mode=PM)
     return ADDING_AUTHOR
 
 
-async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"]["author"] = update.message.text.strip()
     await update.message.reply_text(tr(ctx, "ask_pages"), parse_mode=PM)
     return ADDING_PAGES
 
 
-async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text(tr(ctx, "invalid_pages"), parse_mode=PM)
@@ -1213,7 +1402,7 @@ async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ADDING_FICTION
 
 
-async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     _, value = query.data.split(":")
@@ -1222,7 +1411,7 @@ async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ADDING_REVIEW
 
 
-async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     if not is_valid_url(text):
         await update.message.reply_text(tr(ctx, "invalid_review"), parse_mode=PM)
@@ -1232,52 +1421,65 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ADDING_DESCRIPTION
 
 
-async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
     text = update.message.text.strip() if update.message and update.message.text else ""
     desc = "" if text == "/skip" else text
-    
-    if "new_book" not in ctx.user_data:
+
+    if ctx.user_data is None or "new_book" not in ctx.user_data:
         # Should not happen in normal conversation, but could if user sends message after timeout
-        logger.warning(f"User {update.effective_user.id} tried to add description but 'new_book' is missing.")
+        logger.warning(
+            f"User {update.effective_user.id} tried to add description but 'new_book' is missing."
+        )
         await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
 
     nb = ctx.user_data["new_book"]
     user = update.effective_user
     book_id = db_add_book(
-        nb["title"], nb["author"], nb["pages"], nb["fiction"],
-        nb["review_link"], desc, user.id, user.full_name, user.username,
+        nb["title"],
+        nb["author"],
+        nb["pages"],
+        nb["fiction"],
+        nb["review_link"],
+        desc,
+        user.id,
+        user.full_name,
+        user.username,
     )
+    if book_id is None:
+        raise RuntimeError("db_add_book did not return a book id")
     book = db_get_book(book_id)
-    
+    if book is None:
+        raise RuntimeError(f"book {book_id} missing immediately after insert")
+
     # Mention the 10-minute delay in the confirmation message
     confirm_text = f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}{tr(ctx, 'new_book_delay_note')}"
-    
+
     await update.message.reply_text(confirm_text, parse_mode=PM)
     ctx.user_data.pop("new_book", None)
-    
+
     # Schedule notifications for others
     if ctx.job_queue:
         ctx.job_queue.run_once(
             notify_new_book_job,
-            when=600, # 10 minutes
+            when=600,  # 10 minutes
             data={"book_id": book_id, "adder_id": user.id},
-            name=f"notify_book_{book_id}"
+            name=f"notify_book_{book_id}",
         )
     else:
         logger.error(
             "JobQueue is None — notifications will not be sent.\n"
-            "Fix: pip install \"python-telegram-bot[job-queue]\"\n"
+            'Fix: pip install "python-telegram-bot[job-queue]"\n'
             "Then restart the bot."
         )
-    
+
     return ConversationHandler.END
 
 
-async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
+async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Fired 10 minutes after a book is added. Sends a card to all opted-in users."""
-    book_id  = ctx.job.data["book_id"]
+    book_id = ctx.job.data["book_id"]
     adder_id = ctx.job.data["adder_id"]
 
     book = db_get_book(book_id)
@@ -1292,7 +1494,9 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
-    logger.info(f"notify_new_book_job: notifying {len(user_ids)} user(s) about book {book_id}.")
+    logger.info(
+        f"notify_new_book_job: notifying {len(user_ids)} user(s) about book {book_id}."
+    )
 
     sent = 0
     for user_id in user_ids:
@@ -1302,8 +1506,10 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
         user_data = ctx.application.user_data.get(user_id, {})
         lang = user_data.get("lang", "ru")
         try:
-            uv   = db_get_user_vote(user_id, book_id)
-            text = tr(lang, "new_book_notification") + book_card(book, lang, user_vote=uv)
+            uv = db_get_user_vote(user_id, book_id)
+            text = tr(lang, "new_book_notification") + book_card(
+                book, lang, user_vote=uv
+            )
             await ctx.bot.send_message(
                 chat_id=user_id,
                 text=text,
@@ -1327,14 +1533,18 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE):
                 parse_mode=PM,
                 reply_markup=score_keyboard(book_id, chat_lang),
             )
-            logger.info(f"notify_new_book_job: posted book {book_id} to chat {ALLOWED_CHAT_ID}.")
+            logger.info(
+                f"notify_new_book_job: posted book {book_id} to chat {ALLOWED_CHAT_ID}."
+            )
         except Exception as e:
-            logger.warning(f"notify_new_book_job: failed to post to chat {ALLOWED_CHAT_ID}: {e}")
+            logger.warning(
+                f"notify_new_book_job: failed to post to chat {ALLOWED_CHAT_ID}: {e}"
+            )
 
     logger.info(f"notify_new_book_job: done — sent to {sent} user(s).")
 
 
-async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
     ctx.user_data.clear()
     return ConversationHandler.END
@@ -1343,7 +1553,7 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── /vote removed — voting now done inline in /list ──────────────────────────
 
 
-async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline voting callbacks — works for both private and group chats.
 
     Vote statistics are recalculated after each vote and the message is updated
@@ -1355,7 +1565,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _, book_id, score = query.data.split(":")
     if book_id == "cancel":
         await query.answer()
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return
     book_id, score = int(book_id), int(score)
     if score not in (-1, 0, 1):
@@ -1371,7 +1581,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Save vote to database (will INSERT or UPDATE — commits immediately)
     db_cast_vote(user_id, book_id, score)
 
-    book = db_get_book(book_id)
+    book = require_book(book_id)
     uv = db_get_user_vote(user_id, book_id)
 
     chat = update.effective_chat
@@ -1381,7 +1591,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if chat is not None and chat.type != "private":
             # Group chat: acknowledge voter, skip edit entirely
             # (statistics would be identical anyway)
-            vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+            vote_label = vote_label_text(CHAT_LANG, uv)
             await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
             logger.info(
                 f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
@@ -1390,7 +1600,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         else:
             # Private chat: same vote, message would be identical — skip edit
-            vote_label = T[lang][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+            vote_label = vote_label_text(lang, uv)
             await query.answer(tr(lang, "vote_registered", label=vote_label))
             logger.info(
                 f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
@@ -1401,7 +1611,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # === NORMAL VOTE PROCESSING (first vote or changed vote) ===
     if chat is not None and chat.type != "private":
         # Shared message: visible to whole club, show AGGREGATED statistics only
-        vote_label = T[CHAT_LANG][{1: "want_label", 0: "meh_label", -1: "no_label"}[uv]]
+        vote_label = vote_label_text(CHAT_LANG, uv)
         await query.answer(tr(CHAT_LANG, "vote_registered", label=vote_label))
 
         # Build the message content with fresh statistics
@@ -1426,7 +1636,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             f"vote_cast_cb: race condition detected (attempt {attempt+1}/{max_retries}), "
                             f"refetching book {book_id}..."
                         )
-                        book = db_get_book(book_id)  # Fresh aggregates
+                        book = require_book(book_id)  # Fresh aggregates
                         new_text = book_card(book, CHAT_LANG)
                         new_markup = score_keyboard(book_id, CHAT_LANG)
                     else:
@@ -1472,43 +1682,68 @@ async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     return True
 
 
-async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
-    
+
     last_act = ctx.bot_data.get("last_non_admin_activity")
-    if last_act:
-        last_act_str = fmt_dt_utc(last_act)
-    else:
-        last_act_str = tr(ctx, "never")
-        
-    text = tr(ctx, "admin_console_title") + f"\n\n{tr(ctx, 'last_activity_label')}: <code>{last_act_str}</code>"
-    
+    last_act_str = fmt_dt_utc(last_act) if last_act else tr(ctx, "never")
+
+    text = (
+        tr(ctx, "admin_console_title")
+        + f"\n\n{tr(ctx, 'last_activity_label')}: <code>{last_act_str}</code>"
+    )
+
     post_chat = db_get_admin_setting("post_new_books_to_chat", 0)
     chat_state = "✅" if post_chat else "❌"
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(tr(ctx, "admin_mark_btn"), callback_data="admin:mark")],
-        [InlineKeyboardButton(tr(ctx, "admin_hide_btn"), callback_data="admin:hide")],
-        [InlineKeyboardButton(tr(ctx, "admin_notify_btn"), callback_data="admin:notify")],
-        [InlineKeyboardButton(tr(ctx, "admin_notify_one_btn"), callback_data="admin:notify_pick")],
-        [InlineKeyboardButton(tr(ctx, "admin_toggle_chat_btn", state=chat_state), callback_data="admin:toggle_chat")],
-    ])
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_mark_btn"), callback_data="admin:mark"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_hide_btn"), callback_data="admin:hide"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_btn"), callback_data="admin:notify"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_one_btn"), callback_data="admin:notify_pick"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_toggle_chat_btn", state=chat_state),
+                    callback_data="admin:toggle_chat",
+                )
+            ],
+        ]
+    )
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
+        await update.callback_query.edit_message_text(
+            text, reply_markup=keyboard, parse_mode=PM
+        )
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
     return ADMIN_MENU
 
 
-async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     data = query.data.split(":")[1]
-    
+
     if data == "mark":
         books = db_get_books(discussed=False, include_hidden=True)
         if not books:
@@ -1516,7 +1751,9 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         await query.edit_message_text(
             tr(ctx, "choose_mark"),
-            reply_markup=books_keyboard(books, "admin_mark_pick", tr(ctx, "cancel_btn")),
+            reply_markup=books_keyboard(
+                books, "admin_mark_pick", tr(ctx, "cancel_btn")
+            ),
         )
         return ADMIN_MARK_CHOOSE
     elif data == "hide":
@@ -1525,14 +1762,26 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not books:
             await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
             return ConversationHandler.END
-        
+
         # Custom keyboard to show current hidden status
         keyboard_btns = []
         for b in books:
             label = ("👁 " if b["hidden"] else "") + b["title"]
-            keyboard_btns.append([InlineKeyboardButton(label, callback_data=f"admin_hide_pick:{b['id']}")])
-        keyboard_btns.append([InlineKeyboardButton(tr(ctx, "cancel_btn"), callback_data="admin_hide_pick:cancel")])
-        
+            keyboard_btns.append(
+                [
+                    InlineKeyboardButton(
+                        label, callback_data=f"admin_hide_pick:{b['id']}"
+                    )
+                ]
+            )
+        keyboard_btns.append(
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "cancel_btn"), callback_data="admin_hide_pick:cancel"
+                )
+            ]
+        )
+
         await query.edit_message_text(
             tr(ctx, "choose_hide"),
             reply_markup=InlineKeyboardMarkup(keyboard_btns),
@@ -1547,7 +1796,9 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         await query.edit_message_text(
             tr(ctx, "choose_notify"),
-            reply_markup=books_keyboard(books, "admin_notify_pick", tr(ctx, "cancel_btn")),
+            reply_markup=books_keyboard(
+                books, "admin_notify_pick", tr(ctx, "cancel_btn")
+            ),
         )
         return ADMIN_NOTIFY_PICK
     elif data == "toggle_chat":
@@ -1557,17 +1808,16 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
-    lang = get_lang(ctx)
-    
+
     books = db_get_books(discussed=False)
     if not books:
         await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
         return ConversationHandler.END
-    
+
     # Top 5 selection (same logic as /top)
     top_books = []
     for i, book in enumerate(books):
@@ -1575,29 +1825,32 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             top_books.append(book)
         else:
             fifth = books[4]
-            if book["avg_score"] == fifth["avg_score"] and book["vote_count"] == fifth["vote_count"]:
+            if (
+                book["avg_score"] == fifth["avg_score"]
+                and book["vote_count"] == fifth["vote_count"]
+            ):
                 top_books.append(book)
             else:
                 break
-                
+
     user_ids = db_get_users_with_setting("notify_new_books", 1)
     notified_count = 0
-    
+
     for user_id in user_ids:
         # For each user, find which of the top books they HAVEN'T voted for
         unvoted_tops = []
         for b in top_books:
             if db_get_user_vote(user_id, b["id"]) is None:
                 unvoted_tops.append(b)
-        
+
         if not unvoted_tops:
             continue
-            
+
         # Send reminder to this user
         user_data = ctx.application.user_data.get(user_id, {})
         user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
         text = tr(user_lang, "vote_reminder_msg")
-        
+
         # We'll send the reminder text and then the book cards
         try:
             await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
@@ -1606,32 +1859,34 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     chat_id=user_id,
                     text=book_card(b, user_lang),
                     parse_mode=PM,
-                    reply_markup=score_keyboard(b["id"], user_lang)
+                    reply_markup=score_keyboard(b["id"], user_lang),
                 )
             notified_count += 1
         except Exception as e:
             logger.warning(f"admin_notify_top_cb: failed to notify user {user_id}: {e}")
-            
+
     if notified_count > 0:
-        await query.edit_message_text(tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+        )
     else:
         await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
-        
+
     return ConversationHandler.END
 
 
-async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
     _, book_id = query.data.split(":", 1)
-    
+
     if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
-        
+
     book_id = int(book_id)
     book = db_get_book(book_id)
     if not book:
@@ -1640,15 +1895,15 @@ async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
     notified_count = 0
-    
+
     for user_id in user_ids:
         # Check if user has NOT voted for this book
         if db_get_user_vote(user_id, book_id) is not None:
             continue
-            
+
         user_data = ctx.application.user_data.get(user_id, {})
         user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
-        
+
         try:
             # Send reminder to this user
             text = tr(user_lang, "vote_reminder_msg")
@@ -1657,21 +1912,25 @@ async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 chat_id=user_id,
                 text=book_card(book, user_lang),
                 parse_mode=PM,
-                reply_markup=score_keyboard(book_id, user_lang)
+                reply_markup=score_keyboard(book_id, user_lang),
             )
             notified_count += 1
         except Exception as e:
-            logger.warning(f"admin_notify_pick_cb: failed to notify user {user_id}: {e}")
-            
+            logger.warning(
+                f"admin_notify_pick_cb: failed to notify user {user_id}: {e}"
+            )
+
     if notified_count > 0:
-        await query.edit_message_text(tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+        )
     else:
         await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
-        
+
     return ConversationHandler.END
 
 
-async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
@@ -1679,14 +1938,16 @@ async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
     ctx.user_data["mark_book_id"] = int(book_id)
     await query.edit_message_text(tr(ctx, "ask_discuss_date"), parse_mode=PM)
     return ADMIN_MARK_DATE
 
 
-async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_mark_date_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
@@ -1695,17 +1956,18 @@ async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE
     if text == "/today":
         date_str = datetime.now().strftime("%Y-%m-%d")
     else:
-        date_str = parse_date(text)
-        if not date_str:
+        parsed = parse_date(text)
+        if parsed is None:
             await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
             return ADMIN_MARK_DATE
+        date_str = parsed
     book_id = ctx.user_data.pop("mark_book_id", None)
     if book_id is None:
         # State was lost (e.g. bot restarted mid-conversation).
         await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
     db_mark_discussed(book_id, date_str)
-    book = db_get_book(book_id)
+    book = require_book(book_id)
     await update.message.reply_text(
         T[lang]["marked_discussed"].format(title=h(book["title"]), date=h(date_str)),
         parse_mode=PM,
@@ -1713,7 +1975,7 @@ async def admin_mark_date_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
@@ -1721,13 +1983,13 @@ async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(ctx)
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
-    
+
     book_id = int(book_id)
     db_toggle_hidden(book_id)
     book = db_get_book(book_id)
-    
+
     msg_key = "book_hidden" if book["hidden"] else "book_unhidden"
     await query.edit_message_text(
         tr(ctx, msg_key, title=h(book["title"])),
@@ -1741,14 +2003,16 @@ async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 EDIT_FIELDS = ["title", "author", "pages", "fiction", "review_link", "description"]
 
 
-def edit_field_key(field):
+def edit_field_key(field: str) -> str:
     return f"field_{field.replace('_link', '').replace('review', 'review')}"
 
 
-def edit_current_value(book, field, lang):
+def edit_current_value(book: BookLike, field: str, lang: str) -> str:
     """Return human-readable current value for a field."""
     if field == "fiction":
-        return T[lang]["fiction_label"] if book["fiction"] else T[lang]["nonfiction_label"]
+        return (
+            s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
+        )
     if field == "review_link":
         return book["review_link"] or ("—" if lang == "en" else "—")
     if field == "description":
@@ -1756,21 +2020,41 @@ def edit_current_value(book, field, lang):
     return str(book[field])
 
 
-def edit_yn_keyboard(lang):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(T[lang]["edit_yes_btn"], callback_data="edit_yn:yes"),
-        InlineKeyboardButton(T[lang]["edit_no_btn"],  callback_data="edit_yn:no"),
-    ]])
+def edit_yn_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "edit_yes_btn"), callback_data="edit_yn:yes"
+                ),
+                InlineKeyboardButton(
+                    s(lang, "edit_no_btn"), callback_data="edit_yn:no"
+                ),
+            ]
+        ]
+    )
 
 
-def edit_fiction_keyboard(lang):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(T[lang]["fiction_btn"],    callback_data="edit_fiction:1"),
-        InlineKeyboardButton(T[lang]["nonfiction_btn"], callback_data="edit_fiction:0"),
-    ]])
+def edit_fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "fiction_btn"), callback_data="edit_fiction:1"
+                ),
+                InlineKeyboardButton(
+                    s(lang, "nonfiction_btn"), callback_data="edit_fiction:0"
+                ),
+            ]
+        ]
+    )
 
 
-async def _ask_edit_field(update_or_query, ctx, is_callback=False):
+async def _ask_edit_field(
+    update_or_query: Any,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    is_callback: bool = False,
+) -> int:
     """Ask user about the next field to edit. Returns next state or END."""
     lang = get_lang(ctx)
     fields = ctx.user_data.get("edit_fields", [])
@@ -1780,8 +2064,8 @@ async def _ask_edit_field(update_or_query, ctx, is_callback=False):
         changes = ctx.user_data.pop("edit_changes", {})
         for field, value in changes.items():
             db_update_book_field(book_id, field, value)
-        book = db_get_book(book_id)
-        text = f"{T[lang]['edit_done']}\n\n{book_card(book, lang)}"
+        book = require_book(book_id)
+        text = f"{s(lang, 'edit_done')}\n\n{book_card(book, lang)}"
         if is_callback:
             await update_or_query.edit_message_text(text, parse_mode=PM)
         else:
@@ -1790,10 +2074,11 @@ async def _ask_edit_field(update_or_query, ctx, is_callback=False):
         return ConversationHandler.END
 
     field = fields[0]
-    book = db_get_book(ctx.user_data["edit_book_id"])
-    field_name = T[lang][f"field_{field}" if field != "review_link" else "field_review"]
-    current    = edit_current_value(book, field, lang)
-    text       = T[lang]["edit_field_prompt"].format(field=field_name, value=h(current))
+    book = require_book(ctx.user_data["edit_book_id"])
+    field_key = f"field_{field}" if field != "review_link" else "field_review"
+    field_name = s(lang, field_key)
+    current = edit_current_value(book, field, lang)
+    text = T[lang]["edit_field_prompt"].format(field=field_name, value=h(current))
 
     if is_callback:
         await update_or_query.edit_message_text(
@@ -1806,9 +2091,9 @@ async def _ask_edit_field(update_or_query, ctx, is_callback=False):
     return EDITING_FIELD
 
 
-async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    uname   = update.effective_user.username
+    uname = update.effective_user.username
     all_books = db_get_books(discussed=False) + list(db_get_books(discussed=True))
     books = [b for b in all_books if can_modify(user_id, b, uname)]
     if not books:
@@ -1821,32 +2106,34 @@ async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return EDITING_CHOOSE
 
 
-async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
     book_id = int(book_id)
-    book    = db_get_book(book_id)
-    if not can_modify(query.from_user.id, book, query.from_user.username):
-        await query.edit_message_text(T[lang]["no_permission"], parse_mode=PM)
+    book = db_get_book(book_id)
+    if book is None or not can_modify(
+        query.from_user.id, book, query.from_user.username
+    ):
+        await query.edit_message_text(s(lang, "no_permission"), parse_mode=PM)
         return ConversationHandler.END
     ctx.user_data["edit_book_id"] = book_id
-    ctx.user_data["edit_fields"]  = list(EDIT_FIELDS)
+    ctx.user_data["edit_fields"] = list(EDIT_FIELDS)
     ctx.user_data["edit_changes"] = {}
     return await _ask_edit_field(query, ctx, is_callback=True)
 
 
-async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """User clicked Yes or No on whether to edit the current field."""
     query = update.callback_query
     await query.answer()
-    lang    = get_lang(ctx)
-    _, ans  = query.data.split(":")
-    field   = ctx.user_data["edit_fields"][0]
+    lang = get_lang(ctx)
+    _, ans = query.data.split(":")
+    field = ctx.user_data["edit_fields"][0]
 
     if ans == "no":
         ctx.user_data["edit_fields"].pop(0)
@@ -1855,9 +2142,7 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ans == "yes" — ask for new value
     if field == "fiction":
         await query.edit_message_text(
-            T[lang]["edit_ask_new"].format(
-                field=T[lang]["field_fiction"]
-            ),
+            T[lang]["edit_ask_new"].format(field=T[lang]["field_fiction"]),
             parse_mode=PM,
             reply_markup=edit_fiction_keyboard(lang),
         )
@@ -1871,7 +2156,7 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return EDITING_FIELD
 
 
-async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """User picked Fiction/Non-fiction via inline button."""
     query = update.callback_query
     await query.answer()
@@ -1881,16 +2166,18 @@ async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return await _ask_edit_field(query, ctx, is_callback=True)
 
 
-async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """User typed a new value for the current field."""
-    lang  = get_lang(ctx)
-    text  = update.message.text.strip()
+    text = update.message.text.strip()
     field = ctx.user_data["edit_fields"][0]
 
     # Validate
+    value: int | str
     if field == "pages":
         if not text.isdigit() or int(text) <= 0:
-            await update.message.reply_text(tr(ctx, "edit_invalid_pages"), parse_mode=PM)
+            await update.message.reply_text(
+                tr(ctx, "edit_invalid_pages"), parse_mode=PM
+            )
             return EDITING_FIELD
         value = int(text)
     elif field == "review_link":
@@ -1907,7 +2194,7 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ── /delete ────────────────────────────────────────────────────────────────────
-async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     all_books = db_get_books(discussed=False) + list(db_get_books(discussed=True))
     books = [b for b in all_books if can_modify(user_id, b)]
@@ -1921,18 +2208,20 @@ async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return DELETING_CHOOSE
 
 
-async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
-        await query.edit_message_text(T[lang]["cancelled"])
+        await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
     book_id = int(book_id)
     book = db_get_book(book_id)
-    if not can_modify(query.from_user.id, book, query.from_user.username):
-        await query.edit_message_text(T[lang]["no_permission"], parse_mode=PM)
+    if book is None or not can_modify(
+        query.from_user.id, book, query.from_user.username
+    ):
+        await query.edit_message_text(s(lang, "no_permission"), parse_mode=PM)
         return ConversationHandler.END
     title = book["title"]
     db_delete_book(book_id)
@@ -1942,7 +2231,7 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def bot_notify_startup(app: Application):
+async def bot_notify_startup(app: Application) -> None:
     """Notify first admin that bot has started, and set default command menu."""
     # Register the default (Russian) command menu for users who haven't set a language yet
     try:
@@ -1961,28 +2250,23 @@ async def bot_notify_startup(app: Application):
     try:
         # We don't have user_data here, default to English for system notifications.
         await app.bot.send_message(
-            chat_id=admin_id,
-            text=T["en"]["bot_started"],
-            parse_mode=PM
+            chat_id=admin_id, text=T["en"]["bot_started"], parse_mode=PM
         )
     except Exception as e:
         logger.error(f"Failed to send startup notification: {e}")
 
 
-async def bot_notify_shutdown(app: Application):
+async def bot_notify_shutdown(app: Application) -> None:
     """Notify first admin that bot is shutting down."""
     if not ADMIN_IDS:
         return
     admin_id = ADMIN_IDS[0]
     try:
         await app.bot.send_message(
-            chat_id=admin_id,
-            text=T["en"]["bot_stopped"],
-            parse_mode=PM
+            chat_id=admin_id, text=T["en"]["bot_stopped"], parse_mode=PM
         )
     except Exception as e:
         logger.error(f"Failed to send shutdown notification: {e}")
-
 
 
 # ── Chat membership gate ───────────────────────────────────────────────────────
@@ -2048,10 +2332,12 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if await _check_membership(update, ctx):
         return
-    user_id = update.effective_user.id if update.effective_user else "?"
-    logger.info(f"Blocked user {user_id} — not a member of chat {ALLOWED_CHAT_ID}")
+    blocked_uid = update.effective_user.id if update.effective_user else None
+    logger.info(
+        f"Blocked user {blocked_uid or '?'} — not a member of chat {ALLOWED_CHAT_ID}"
+    )
     lang = get_lang(ctx) if ctx.user_data else "ru"
-    text = T[lang]["not_member"].format(chat=h(ALLOWED_CHAT_NAME))
+    text = s(lang, "not_member").format(chat=h(ALLOWED_CHAT_NAME))
     try:
         if update.callback_query:
             await update.callback_query.answer(
@@ -2060,7 +2346,7 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         elif update.message:
             await update.message.reply_text(text, parse_mode=PM)
     except Exception as e:
-        logger.warning(f"Could not send not-member message to {user_id}: {e}")
+        logger.warning(f"Could not send not-member message to {blocked_uid}: {e}")
     raise ApplicationHandlerStop
 
 
@@ -2078,7 +2364,9 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     at WARNING only — they are retried by the library and should not page the admin.
     """
     if isinstance(ctx.error, NetworkError):
-        logger.warning("Telegram network error while processing update:", exc_info=ctx.error)
+        logger.warning(
+            "Telegram network error while processing update:", exc_info=ctx.error
+        )
         return
 
     logger.error("Unhandled exception while processing update:", exc_info=ctx.error)
@@ -2111,7 +2399,7 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
-def register_handlers(app) -> None:
+def register_handlers(app: Application) -> None:
     """Attach every handler to the application.
 
     Split out of main() so tests can inspect the wiring — the state/fallback
@@ -2120,88 +2408,124 @@ def register_handlers(app) -> None:
     # Gate: silently block users not in the allowed chat (runs before all handlers)
     app.add_handler(TypeHandler(Update, membership_gate), group=-1)
 
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("add", cmd_add)],
-        states={
-            ADDING_TITLE:       [MessageHandler(filters.TEXT & ~filters.COMMAND, add_title)],
-            ADDING_AUTHOR:      [MessageHandler(filters.TEXT & ~filters.COMMAND, add_author)],
-            ADDING_PAGES:       [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages)],
-            ADDING_FICTION:     [CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:")],
-            ADDING_REVIEW:      [MessageHandler(filters.TEXT & ~filters.COMMAND, add_review)],
-            # /skip needs its own handler: a bare filters.TEXT here would also
-            # swallow /cancel (state handlers are matched before fallbacks).
-            ADDING_DESCRIPTION: [
-                CommandHandler("skip", add_description),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", conv_cancel)],
-        per_message=False,
-        # Without this, re-sending the entry command while the conversation is
-        # still open matches nothing at all and the bot answers with silence —
-        # an abandoned /adminconsole would stay stuck until the bot restarted.
-        allow_reentry=True,
-    ))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("add", cmd_add)],
+            states={
+                ADDING_TITLE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_title)
+                ],
+                ADDING_AUTHOR: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_author)
+                ],
+                ADDING_PAGES: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages)
+                ],
+                ADDING_FICTION: [
+                    CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:")
+                ],
+                ADDING_REVIEW: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_review)
+                ],
+                # /skip needs its own handler: a bare filters.TEXT here would also
+                # swallow /cancel (state handlers are matched before fallbacks).
+                ADDING_DESCRIPTION: [
+                    CommandHandler("skip", add_description),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            per_message=False,
+            # Without this, re-sending the entry command while the conversation is
+            # still open matches nothing at all and the bot answers with silence —
+            # an abandoned /adminconsole would stay stuck until the bot restarted.
+            allow_reentry=True,
+        )
+    )
 
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("adminconsole", cmd_admin_console)],
-        states={
-            ADMIN_MENU:        [CallbackQueryHandler(admin_menu_cb,      pattern=r"^admin:")],
-            ADMIN_MARK_CHOOSE: [CallbackQueryHandler(admin_mark_pick_cb, pattern=r"^admin_mark_pick:")],
-            # /today needs its own handler — see the ADDING_DESCRIPTION note above.
-            ADMIN_MARK_DATE:   [
-                CommandHandler("today", admin_mark_date_handler),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_mark_date_handler),
-            ],
-            ADMIN_HIDE_CHOOSE: [CallbackQueryHandler(admin_hide_pick_cb, pattern=r"^admin_hide_pick:")],
-            ADMIN_NOTIFY_PICK: [CallbackQueryHandler(admin_notify_pick_cb, pattern=r"^admin_notify_pick:")],
-        },
-        fallbacks=[CommandHandler("cancel", conv_cancel)],
-        per_message=False,
-        # Without this, re-sending the entry command while the conversation is
-        # still open matches nothing at all and the bot answers with silence —
-        # an abandoned /adminconsole would stay stuck until the bot restarted.
-        allow_reentry=True,
-    ))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("adminconsole", cmd_admin_console)],
+            states={
+                ADMIN_MENU: [CallbackQueryHandler(admin_menu_cb, pattern=r"^admin:")],
+                ADMIN_MARK_CHOOSE: [
+                    CallbackQueryHandler(
+                        admin_mark_pick_cb, pattern=r"^admin_mark_pick:"
+                    )
+                ],
+                # /today needs its own handler — see the ADDING_DESCRIPTION note above.
+                ADMIN_MARK_DATE: [
+                    CommandHandler("today", admin_mark_date_handler),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, admin_mark_date_handler
+                    ),
+                ],
+                ADMIN_HIDE_CHOOSE: [
+                    CallbackQueryHandler(
+                        admin_hide_pick_cb, pattern=r"^admin_hide_pick:"
+                    )
+                ],
+                ADMIN_NOTIFY_PICK: [
+                    CallbackQueryHandler(
+                        admin_notify_pick_cb, pattern=r"^admin_notify_pick:"
+                    )
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            per_message=False,
+            # Without this, re-sending the entry command while the conversation is
+            # still open matches nothing at all and the bot answers with silence —
+            # an abandoned /adminconsole would stay stuck until the bot restarted.
+            allow_reentry=True,
+        )
+    )
 
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("edit", cmd_edit)],
-        states={
-            EDITING_CHOOSE: [CallbackQueryHandler(edit_pick_cb, pattern=r"^edit_pick:")],
-            EDITING_FIELD:  [
-                CallbackQueryHandler(edit_yn_cb,      pattern=r"^edit_yn:"),
-                CallbackQueryHandler(edit_fiction_cb, pattern=r"^edit_fiction:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", conv_cancel)],
-        per_message=False,
-        # Without this, re-sending the entry command while the conversation is
-        # still open matches nothing at all and the bot answers with silence —
-        # an abandoned /adminconsole would stay stuck until the bot restarted.
-        allow_reentry=True,
-    ))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("edit", cmd_edit)],
+            states={
+                EDITING_CHOOSE: [
+                    CallbackQueryHandler(edit_pick_cb, pattern=r"^edit_pick:")
+                ],
+                EDITING_FIELD: [
+                    CallbackQueryHandler(edit_yn_cb, pattern=r"^edit_yn:"),
+                    CallbackQueryHandler(edit_fiction_cb, pattern=r"^edit_fiction:"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            per_message=False,
+            # Without this, re-sending the entry command while the conversation is
+            # still open matches nothing at all and the bot answers with silence —
+            # an abandoned /adminconsole would stay stuck until the bot restarted.
+            allow_reentry=True,
+        )
+    )
 
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("delete", cmd_delete)],
-        states={
-            DELETING_CHOOSE: [CallbackQueryHandler(delete_pick_cb, pattern=r"^del_pick:")],
-        },
-        fallbacks=[CommandHandler("cancel", conv_cancel)],
-        per_message=False,
-        # Without this, re-sending the entry command while the conversation is
-        # still open matches nothing at all and the bot answers with silence —
-        # an abandoned /adminconsole would stay stuck until the bot restarted.
-        allow_reentry=True,
-    ))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("delete", cmd_delete)],
+            states={
+                DELETING_CHOOSE: [
+                    CallbackQueryHandler(delete_pick_cb, pattern=r"^del_pick:")
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            per_message=False,
+            # Without this, re-sending the entry command while the conversation is
+            # still open matches nothing at all and the bot answers with silence —
+            # an abandoned /adminconsole would stay stuck until the bot restarted.
+            allow_reentry=True,
+        )
+    )
 
-    app.add_handler(CommandHandler("start",          cmd_start))
-    app.add_handler(CommandHandler("help",           cmd_help))
-    app.add_handler(CommandHandler("info",           cmd_info))
-    app.add_handler(CommandHandler("list",           cmd_list))
-    app.add_handler(CommandHandler("settings",       cmd_settings))
-    app.add_handler(CommandHandler("top",            cmd_top))
-    app.add_handler(CommandHandler("discussed",      cmd_discussed))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("info", cmd_info))
+    app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("settings", cmd_settings))
+    app.add_handler(CommandHandler("top", cmd_top))
+    app.add_handler(CommandHandler("discussed", cmd_discussed))
 
     app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
@@ -2213,7 +2537,7 @@ def register_handlers(app) -> None:
     app.add_error_handler(error_handler)
 
 
-def main():
+def main() -> None:
     # Fail loudly here rather than letting Telegram reject the placeholder with
     # an opaque 401 several seconds into startup.
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
@@ -2227,11 +2551,15 @@ def main():
     persistence_path = os.environ.get("PERSISTENCE_PATH", "bot_persistence")
     # Ensure persistence_path is a file, not a directory
     if os.path.isdir(persistence_path):
-        logger.warning(f"Persistence path '{persistence_path}' is a directory. Removing it to allow file creation.")
+        logger.warning(
+            f"Persistence path '{persistence_path}' is a directory. Removing it to allow file creation."
+        )
         try:
             os.rmdir(persistence_path)
         except OSError:
-            logger.error(f"Could not remove directory '{persistence_path}'. Please remove it manually.")
+            logger.error(
+                f"Could not remove directory '{persistence_path}'. Please remove it manually."
+            )
 
     persistence = PicklePersistence(filepath=persistence_path)
     app = (
@@ -2246,7 +2574,7 @@ def main():
     if app.job_queue is None:
         logger.error(
             "JobQueue is not available! New book notifications will not work.\n"
-            "Fix: pip install \"python-telegram-bot[job-queue]\""
+            'Fix: pip install "python-telegram-bot[job-queue]"'
         )
 
     register_handlers(app)

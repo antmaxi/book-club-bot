@@ -199,33 +199,76 @@ step is shipping these same log files to Loki via Promtail.
 
 The project includes a suite of unit and integration tests.
 
-To run tests using Docker:
-```bash
-docker compose run --rm \
-  -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
-  -v "$(pwd)/tests:/app/tests:ro" \
-  bot python -m unittest discover tests
-```
+### Code quality (Ruff, Black, mypy, pytest)
 
-### Git Pre-commit Hook
+Dev dependencies live in `requirements-dev.txt` (runtime deps are in `requirements.txt`):
 
-To ensure tests pass before every commit, a Git pre-commit hook has been added. It automatically runs the test suite using Docker.
-
-If you need to install it manually on another machine:
-1. Create `.git/hooks/pre-commit` with the following content:
-```bash
-#!/bin/bash
-docker compose run --rm \
-  -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
-  -v "$(pwd)/tests:/app/tests:ro" \
-  bot python -m unittest discover tests
-```
-2. Make it executable: `chmod +x .git/hooks/pre-commit`
-
-Or manually in a virtual environment:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python -m unittest discover tests
+pip install -r requirements-dev.txt
+ruff check bookclub_bot.py scripts/check_bot_idle.py tests/
+black bookclub_bot.py scripts/check_bot_idle.py tests/
+mypy
+pytest tests/
+```
+
+Configuration: `pyproject.toml` (`[tool.ruff]`, `[tool.black]`, `[tool.mypy]`, `[tool.pytest.ini_options]`).
+
+To run **all** local checks (Ruff, Black, mypy, pytest, and Docker pytest):
+
+```bash
+./scripts/precommit_checks.sh
+```
+
+### pre-commit framework
+
+Install hooks (Ruff, Black, mypy, pytest on commit; Docker pytest on **pre-push**):
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+Run every hook manually:
+
+```bash
+pre-commit run --all-files
+pre-commit run --hook-stage pre-push docker-tests --all-files
+```
+
+To run tests in Docker only:
+
+```bash
+./scripts/docker_tests.sh
+```
+
+Or:
+
+```bash
+docker compose run --rm \
+  -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
+  -v "$(pwd)/tests:/app/tests:ro" \
+  bot python -m pytest tests/
+```
+
+### Git pre-commit hook (shell)
+
+`scripts/precommit_checks.sh` runs the full pipeline. Install:
+
+```bash
+cp scripts/git-pre-commit-hook.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit scripts/precommit_checks.sh scripts/docker_tests.sh
+```
+
+You need `pip install -r requirements-dev.txt` in a venv (or the tools on your PATH). Docker is required for the final test step.
+
+Quick test run in a venv (no Docker):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest tests/
 ```
