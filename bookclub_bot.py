@@ -97,8 +97,8 @@ CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
 EDITING_CHOOSE = 6
 EDITING_FIELD = 7  # waiting for new value of current field
 DELETING_CHOOSE = 8
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK = (
-    range(9, 14)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK = (
+    range(9, 15)
 )
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
@@ -310,6 +310,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_hide_btn": "👻 Hide book",
         "admin_notify_btn": "🔔 Send voting reminder (top)",
         "admin_notify_one_btn": "🔔 Send reminder for a specific book",
+        "admin_notify_chat_btn": "💬 Post voting reminder to chat (top)",
+        "admin_notify_chat_one_btn": "💬 Post reminder to chat (pick book)",
+        "choose_notify_chat": "💬 Choose a book to post a voting reminder in the group chat:",
+        "vote_reminder_chat": "🔔 <b>Voting reminder!</b>\n\n",
+        "admin_notify_chat_confirm": "💬 Voting reminder posted to the group chat ({count} book(s)).",
+        "admin_notify_chat_no_chat": "ℹ️ Group chat is not configured (ALLOWED_CHAT_ID).",
+        "admin_notify_chat_failed": "⚠️ Failed to post to the group chat.",
         "admin_toggle_chat_btn": "💬 Post to chat: {state}",
         "admin_unhide_btn": "👁 Show book",
         "choose_hide": "👻 Choose a book to hide from the list:",
@@ -439,6 +446,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_hide_btn": "👻 Скрыть книгу",
         "admin_notify_btn": "🔔 Напомнить о голосовании (топ)",
         "admin_notify_one_btn": "🔔 Напомнить об одной книге",
+        "admin_notify_chat_btn": "💬 Напомнить в чате (топ)",
+        "admin_notify_chat_one_btn": "💬 Напомнить в чате (выбрать книгу)",
+        "choose_notify_chat": "💬 Выберите книгу для напоминания о голосовании в общем чате:",
+        "vote_reminder_chat": "🔔 <b>Напоминание о голосовании!</b>\n\n",
+        "admin_notify_chat_confirm": "💬 Напоминание о голосовании отправлено в общий чат ({count} книг(и)).",
+        "admin_notify_chat_no_chat": "ℹ️ Общий чат не настроен (ALLOWED_CHAT_ID).",
+        "admin_notify_chat_failed": "⚠️ Не удалось отправить сообщение в общий чат.",
         "admin_toggle_chat_btn": "💬 Писать в чат: {state}",
         "admin_unhide_btn": "👁 Показать книгу",
         "choose_hide": "👻 Выберите книгу, чтобы скрыть её из списка:",
@@ -926,6 +940,52 @@ def fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def books_top_n(books: Sequence[BookLike], n: int = 5) -> list[BookLike]:
+    """First n books by rank, including all ties at the nth position."""
+    top: list[BookLike] = []
+    for i, book in enumerate(books):
+        if i < n:
+            top.append(book)
+        elif n > 0:
+            nth = books[n - 1]
+            if (
+                book["avg_score"] == nth["avg_score"]
+                and book["vote_count"] == nth["vote_count"]
+            ):
+                top.append(book)
+            else:
+                break
+        else:
+            break
+    return top
+
+
+async def post_book_voting_to_group_chat(
+    bot: Bot, book: BookLike, *, intro_key: str
+) -> bool:
+    """Post a book card with inline vote buttons to the configured group chat."""
+    if not ALLOWED_CHAT_ID:
+        return False
+    try:
+        chat_lang = CHAT_LANG
+        text = tr(chat_lang, intro_key) + book_card(book, chat_lang)
+        await bot.send_message(
+            chat_id=ALLOWED_CHAT_ID,
+            text=text,
+            parse_mode=PM,
+            reply_markup=score_keyboard(book["id"], chat_lang),
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "post_book_voting_to_group_chat: failed to post book %s to chat %s: %s",
+            book["id"],
+            ALLOWED_CHAT_ID,
+            e,
+        )
+        return False
+
+
 def score_keyboard(
     book_id: int, lang: str, current: int | None = None
 ) -> InlineKeyboardMarkup:
@@ -1302,20 +1362,7 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Show top 5, but if there's a tie for the 5th place, show all tied books.
     # Sorting is already done in db_get_books by (avg_score DESC, vote_count DESC, added_at DESC)
-    top_books = []
-    for i, book in enumerate(books):
-        if i < 5:
-            top_books.append(book)
-        else:
-            # Check if this book has the same score and vote count as the 5th one (index 4)
-            fifth = books[4]
-            if (
-                book["avg_score"] == fifth["avg_score"]
-                and book["vote_count"] == fifth["vote_count"]
-            ):
-                top_books.append(book)
-            else:
-                break
+    top_books = books_top_n(books)
 
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):
@@ -1521,24 +1568,11 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
             logger.warning(f"notify_new_book_job: failed to notify user {user_id}: {e}")
 
     if ALLOWED_CHAT_ID and db_get_admin_setting("post_new_books_to_chat", 0):
-        try:
-            # The group post is shared, so it uses the configured chat language
-            # rather than the adder's personal preference.
-            chat_lang = CHAT_LANG
-
-            text = tr(chat_lang, "new_book_notification") + book_card(book, chat_lang)
-            await ctx.bot.send_message(
-                chat_id=ALLOWED_CHAT_ID,
-                text=text,
-                parse_mode=PM,
-                reply_markup=score_keyboard(book_id, chat_lang),
-            )
+        if await post_book_voting_to_group_chat(
+            ctx.bot, book, intro_key="new_book_notification"
+        ):
             logger.info(
                 f"notify_new_book_job: posted book {book_id} to chat {ALLOWED_CHAT_ID}."
-            )
-        except Exception as e:
-            logger.warning(
-                f"notify_new_book_job: failed to post to chat {ALLOWED_CHAT_ID}: {e}"
             )
 
     logger.info(f"notify_new_book_job: done — sent to {sent} user(s).")
@@ -1722,6 +1756,17 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
             ],
             [
                 InlineKeyboardButton(
+                    tr(ctx, "admin_notify_chat_btn"), callback_data="admin:notify_chat"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_chat_one_btn"),
+                    callback_data="admin:notify_chat_pick",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     tr(ctx, "admin_toggle_chat_btn", state=chat_state),
                     callback_data="admin:toggle_chat",
                 )
@@ -1801,6 +1846,20 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             ),
         )
         return ADMIN_NOTIFY_PICK
+    elif data == "notify_chat":
+        return await admin_notify_chat_top_cb(update, ctx)
+    elif data == "notify_chat_pick":
+        books = db_get_books(discussed=False)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_notify_chat"),
+            reply_markup=books_keyboard(
+                books, "admin_notify_chat_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_NOTIFY_CHAT_PICK
     elif data == "toggle_chat":
         current = db_get_admin_setting("post_new_books_to_chat", 0)
         db_set_admin_setting("post_new_books_to_chat", 1 - current)
@@ -1819,19 +1878,7 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         return ConversationHandler.END
 
     # Top 5 selection (same logic as /top)
-    top_books = []
-    for i, book in enumerate(books):
-        if i < 5:
-            top_books.append(book)
-        else:
-            fifth = books[4]
-            if (
-                book["avg_score"] == fifth["avg_score"]
-                and book["vote_count"] == fifth["vote_count"]
-            ):
-                top_books.append(book)
-            else:
-                break
+    top_books = books_top_n(books)
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
     notified_count = 0
@@ -1926,6 +1973,76 @@ async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         )
     else:
         await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_notify_chat_top_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+
+    if not ALLOWED_CHAT_ID:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
+        return ConversationHandler.END
+
+    books = db_get_books(discussed=False)
+    if not books:
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return ConversationHandler.END
+
+    top_books = books_top_n(books)
+    posted = 0
+    for b in top_books:
+        if await post_book_voting_to_group_chat(
+            ctx.bot, b, intro_key="vote_reminder_chat"
+        ):
+            posted += 1
+
+    if posted > 0:
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_notify_chat_pick_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    if not ALLOWED_CHAT_ID:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    if await post_book_voting_to_group_chat(
+        ctx.bot, book, intro_key="vote_reminder_chat"
+    ):
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_confirm", count=1), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
 
     return ConversationHandler.END
 
@@ -2468,6 +2585,11 @@ def register_handlers(app: Application) -> None:
                 ADMIN_NOTIFY_PICK: [
                     CallbackQueryHandler(
                         admin_notify_pick_cb, pattern=r"^admin_notify_pick:"
+                    )
+                ],
+                ADMIN_NOTIFY_CHAT_PICK: [
+                    CallbackQueryHandler(
+                        admin_notify_chat_pick_cb, pattern=r"^admin_notify_chat_pick:"
                     )
                 ],
             },

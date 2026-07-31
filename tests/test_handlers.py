@@ -979,6 +979,51 @@ class TestAdminConsole(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
 
+    async def test_admin_notify_chat_top_posts_to_group(self):
+        bid1 = self._add_book("Chat Top 1")
+        bid2 = self._add_book("Chat Top 2")
+        bot.ALLOWED_CHAT_ID = -100123
+
+        q = self._callback_query("admin:notify_chat")
+        with patch.object(bot, "CHAT_LANG", "en"):
+            state = await bot.admin_notify_chat_top_cb(self.update, self.ctx)
+
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertEqual(self.ctx.bot.send_message.call_count, 2)
+        for call in self.ctx.bot.send_message.call_args_list:
+            self.assertEqual(call.kwargs["chat_id"], -100123)
+            self.assertIn("Voting reminder", call.kwargs["text"])
+            self.assertIsNotNone(call.kwargs.get("reply_markup"))
+
+        q.edit_message_text.assert_called_once()
+        self.assertIn("group chat", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_notify_chat_pick_posts_to_group(self):
+        bid = self._add_book("Chat Pick Book")
+        bot.ALLOWED_CHAT_ID = -100123
+
+        q = self._callback_query(f"admin_notify_chat_pick:{bid}")
+        with patch.object(bot, "CHAT_LANG", "en"):
+            state = await bot.admin_notify_chat_pick_cb(self.update, self.ctx)
+
+        self.assertEqual(state, ConversationHandler.END)
+        self.ctx.bot.send_message.assert_called_once()
+        kwargs = self.ctx.bot.send_message.call_args.kwargs
+        self.assertEqual(kwargs["chat_id"], -100123)
+        self.assertIn("Voting reminder", kwargs["text"])
+        self.assertIsNotNone(kwargs.get("reply_markup"))
+
+    async def test_admin_notify_chat_no_allowed_chat_id(self):
+        bot.ALLOWED_CHAT_ID = None
+        self._add_book("Orphan Book")
+
+        q = self._callback_query("admin:notify_chat")
+        state = await bot.admin_notify_chat_top_cb(self.update, self.ctx)
+
+        self.assertEqual(state, ConversationHandler.END)
+        self.ctx.bot.send_message.assert_not_called()
+        self.assertIn("ALLOWED_CHAT_ID", q.edit_message_text.call_args[0][0])
+
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
         self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)
@@ -1384,6 +1429,7 @@ class TestConversationReentry(unittest.TestCase):
             bot.ADMIN_MARK_DATE,
             bot.ADMIN_HIDE_CHOOSE,
             bot.ADMIN_NOTIFY_PICK,
+            bot.ADMIN_NOTIFY_CHAT_PICK,
         ):
             self.assertTrue(
                 self._handled(conv, upd, state),
