@@ -16,8 +16,8 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - Notifications include a voting card to vote directly from the message.
   - Opt-in or out via `/settings`.
   - **Admin Notifications:** The main admin (first ID in `ADMIN_IDS`) receives notifications when the bot starts up or shuts down.
-  - **Voting Reminders:** Admins can send reminders to users who haven't voted for top-rated books or specific titles.
-  - **Group Chat Notifications:** Optionally post new book announcements directly to the club chat (toggleable in `/adminconsole`).
+  - **Voting Reminders:** Admins can nudge users who have not voted yet — either for the current Top 5 (including ties at 5th place) or for one chosen book. Reminders go to users who opted in to new-book notifications in `/settings`.
+  - **Group Chat Notifications:** Optionally post new book announcements to the club chat (toggle in `/adminconsole`). Admins can also post on-demand voting reminders to the group chat for the Top 5 or a single book — same card format as new-book posts, with inline vote buttons so members can vote in the common chat.
 - **Access Control:** Optionally restrict bot usage to members of a specific Telegram chat (via `ALLOWED_CHAT_ID`). For this bot should be inside the chat too
 - **Archive:** Track books that have already been discussed.
 
@@ -39,8 +39,9 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
 - `/adminconsole`: Centralized panel for admins to:
   - **Mark discussed:** Mark a book as discussed and move it to the archive.
   - **Hide books:** Temporarily hide books from the `/list` and `/top` without deleting them.
-  - **Send Reminders:** Broadcast a voting reminder to all users for either the current Top 5 books or a specific selected book.
-  - **Chat Notifications:** Toggle whether new books should be posted to the group chat automatically.
+  - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
+  - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
+  - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 10-minute delay).
 
 ## 🖼 Screenshots
 ![Top](screenshots/2026-04-04_screenshot_top.png)
@@ -71,8 +72,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    ```
-   `CHAT_LANG` applies only to shared group posts (new-book announcements and the
-   vote cards attached to them). Messages sent to individuals always follow that
+   `CHAT_LANG` applies only to shared group posts (automatic new-book announcements, admin-posted voting reminders in the group, and the vote cards attached to them). Messages sent to individuals always follow that
    person's own `/settings` language.
 
 3. **Run the bot using Docker:**
