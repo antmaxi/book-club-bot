@@ -1,9 +1,10 @@
 #!/bin/bash
 #
 # deploy_bots.sh — update one or more book-club-bot instances on this server:
-# for each configured subfolder, check whether the bot has seen any non-admin
-# activity recently, confirm with the operator, then stop the containers,
-# git pull, and bring them back up rebuilt.
+# for each configured subfolder, fetch origin and skip repos that are already
+# up to date; otherwise check whether the bot has seen any non-admin activity
+# recently, confirm with the operator, then stop the containers, git pull, and
+# bring them back up rebuilt.
 #
 # The idle check reads ctx.bot_data["last_non_admin_activity"], which
 # bookclub_bot.py's membership_gate() stamps on every update from a
@@ -84,6 +85,56 @@ SKIPPED=()
 FAILED=()
 TO_DEPLOY=()
 
+# After a successful print_repo_status: up-to-date | behind | check-failed
+REPO_UPSTREAM_STATUS=""
+
+# Fetch origin and compare HEAD to the tracking branch. Sets REPO_UPSTREAM_STATUS and
+# REPO_UPSTREAM_LINE (human-readable). Returns 0 if the repo is a valid git checkout.
+check_upstream_updates() {
+    local repo="$1"
+    REPO_UPSTREAM_STATUS="check-failed"
+    REPO_UPSTREAM_LINE="(could not check — see log)"
+
+    if ! git -C "$repo" fetch origin --quiet 2>>"$LOG_FILE"; then
+        log "[$REPO_NAME] WARN — git fetch origin failed"
+        return 0
+    fi
+
+    local upstream_ref=""
+    if git -C "$repo" rev-parse '@{u}' >/dev/null 2>&1; then
+        upstream_ref='@{u}'
+    elif git -C "$repo" rev-parse --verify origin/main >/dev/null 2>&1; then
+        upstream_ref=origin/main
+    elif git -C "$repo" rev-parse --verify origin/master >/dev/null 2>&1; then
+        upstream_ref=origin/master
+    else
+        log "[$REPO_NAME] WARN — no upstream branch (set tracking branch or origin/main)"
+        REPO_UPSTREAM_LINE="(no upstream branch)"
+        return 0
+    fi
+
+    local behind
+    behind="$(git -C "$repo" rev-list --count HEAD.."$upstream_ref" 2>/dev/null || true)"
+    if [ -z "$behind" ] || ! [[ "$behind" =~ ^[0-9]+$ ]]; then
+        log "[$REPO_NAME] WARN — could not compare HEAD to $upstream_ref"
+        return 0
+    fi
+
+    if [ "$behind" -eq 0 ]; then
+        REPO_UPSTREAM_STATUS="up-to-date"
+        REPO_UPSTREAM_LINE="up to date with origin"
+    else
+        REPO_UPSTREAM_STATUS="behind"
+        REPO_UPSTREAM_BEHIND="$behind"
+        if [ "$behind" -eq 1 ]; then
+            REPO_UPSTREAM_LINE="1 new commit on origin"
+        else
+            REPO_UPSTREAM_LINE="$behind new commits on origin"
+        fi
+    fi
+    return 0
+}
+
 # Print status for one repo. Sets globals: REPO_NAME, REPO_STATUS_WORD (or empty if skipped).
 print_repo_status() {
     local repo="$1"
@@ -123,6 +174,8 @@ print_repo_status() {
     echo "  containers: ${running} running"
     echo "  activity:   $status_line"
     echo "  commit:     ${head_info:-(unknown)}"
+    check_upstream_updates "$repo"
+    echo "  upstream:   $REPO_UPSTREAM_LINE"
     return 0
 }
 
@@ -187,6 +240,26 @@ for repo in "${REPOS[@]}"; do
     if [ "$CHECK_ONLY" -eq 1 ]; then
         continue
     fi
+
+    case "$REPO_UPSTREAM_STATUS" in
+        up-to-date)
+            log "[$REPO_NAME] SKIP — already up to date with origin"
+            SKIPPED+=("$REPO_NAME (up to date)")
+            continue
+            ;;
+        check-failed)
+            log "[$REPO_NAME] SKIP — could not determine whether origin has new commits"
+            SKIPPED+=("$REPO_NAME (origin check failed)")
+            continue
+            ;;
+        behind)
+            ;;
+        *)
+            log "[$REPO_NAME] SKIP — unknown upstream status"
+            SKIPPED+=("$REPO_NAME (origin check failed)")
+            continue
+            ;;
+    esac
 
     if ! decide_deploy "$REPO_STATUS_WORD"; then
         log "[$REPO_NAME] SKIP — declined ($REPO_STATUS_WORD)"
