@@ -733,5 +733,16 @@ class TestErrorAlertHandler(unittest.TestCase):
         self.assertIn(f"err{overflow - 1}", bot._alert_buffer[-1])
 
 
+class TestClubEntity(unittest.TestCase):
+    def test_film_overlay_english_labels(self):
+        film_en = bot.ENTITY_STRING_OVERLAYS["film"]["en"]
+        self.assertEqual(film_en["field_author"], "Director")
+        self.assertIn("watch", film_en["want_label"])
+
+    def test_valid_club_entities_include_book_and_film(self):
+        self.assertIn("book", bot._VALID_CLUB_ENTITIES)
+        self.assertIn("film", bot._VALID_CLUB_ENTITIES)
+
+
 if __name__ == "__main__":
     unittest.main()

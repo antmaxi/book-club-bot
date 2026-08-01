@@ -69,11 +69,26 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    GITHUB_REPO="https://github.com/yourusername/your-repo"
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
+   CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    ```
    `CHAT_LANG` applies only to shared group posts (automatic new-book announcements, admin-posted voting reminders in the group, and the vote cards attached to them). Messages sent to individuals always follow that
    person's own `/settings` language.
+
+### Club entity type (`CLUB_ENTITY`)
+
+Set `CLUB_ENTITY=book` (default) or `CLUB_ENTITY=film` to choose what members add and vote on. Voting, rankings, and the archive work the same; only prompts, labels, and command menu text change. If you do not set `ALLOWED_CHAT_NAME`, the default group name follows the entity (`Книжный клуб` vs `Киноклуб`).
+
+The database schema is shared. For films, fields are reused as follows:
+
+| Column in DB | Books | Films |
+|--------------|-------|-------|
+| `author` | Author | Director |
+| `pages` | Page count | Runtime (minutes) |
+| `fiction` | Fiction / non-fiction | Feature film / documentary |
+
+You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub_bot.py`.
 
 3. **Run the bot using Docker:**
    ```bash

@@ -79,7 +79,28 @@ DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 # Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
 # Leave empty to allow everyone (useful during initial setup).
 ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", "0")) or None
-ALLOWED_CHAT_NAME = os.environ.get("ALLOWED_CHAT_NAME", "Книжный клуб")
+
+# What members vote on: books (default) or films. Same DB schema; labels and prompts
+# differ. More kinds (podcast, TV series, …) can be added via ENTITY_STRING_OVERLAYS.
+_VALID_CLUB_ENTITIES = frozenset({"book", "film"})
+
+
+def _club_entity_from_env() -> str:
+    raw = os.environ.get("CLUB_ENTITY", "book").strip().lower()
+    if raw not in _VALID_CLUB_ENTITIES:
+        print(
+            f"Warning: unknown CLUB_ENTITY={raw!r}, using 'book'. "
+            f"Valid values: {', '.join(sorted(_VALID_CLUB_ENTITIES))}"
+        )
+        return "book"
+    return raw
+
+
+CLUB_ENTITY = _club_entity_from_env()
+_ENTITY_DEFAULT_CHAT_NAMES = {"book": "Книжный клуб", "film": "Киноклуб"}
+ALLOWED_CHAT_NAME = (
+    os.environ.get("ALLOWED_CHAT_NAME") or _ENTITY_DEFAULT_CHAT_NAMES[CLUB_ENTITY]
+)
 
 # Language for messages the bot posts into the group chat. Group messages are
 # shared, so they can't follow any single user's language preference.
@@ -356,8 +377,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top books yet. Take a look and cast your vote:\n\n",
         "last_activity_label": "Last non-admin activity",
         "never": "never",
+        "bot_name": "Book Club Bot",
+        "card_icon": "📖",
+        "subtitle_icon": "✍️",
+        "all_voted": "You've voted on all books!",
         "info_msg": (
-            "🤖 <b>Book Club Bot</b>\n\n"
+            "🤖 <b>{bot_name}</b>\n\n"
             "📅 <b>Last update:</b> {last_commit}\n"
             "🔗 <b>Source code:</b> {github_repo}"
         ),
@@ -492,13 +517,190 @@ T: dict[str, dict[str, TranslationValue]] = {
         "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы еще не проголосовали за некоторые популярные книги. Посмотрите и оставьте свой голос:\n\n",
         "last_activity_label": "Последняя активность (не админ)",
         "never": "никогда",
+        "bot_name": "Книжный клуб-бот",
+        "card_icon": "📖",
+        "subtitle_icon": "✍️",
+        "all_voted": "Вы проголосовали за все книги!",
         "info_msg": (
-            "🤖 <b>Book Club Bot</b>\n\n"
+            "🤖 <b>{bot_name}</b>\n\n"
             "📅 <b>Последнее обновление:</b> {last_commit}\n"
             "🔗 <b>Исходный код:</b> {github_repo}"
         ),
     },
 }
+
+# Per-entity copy overrides (DB columns stay: author, pages, fiction).
+ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
+    "film": {
+        "en": {
+            "welcome": (
+                "🎬 <b>Welcome to the Film Club Bot!</b>\n\n"
+                "➕ /add — Add a film\n"
+                "📋 /list — See all films\n"
+                "🏆 /top — Top rated films\n"
+                "⚙️ /settings — Settings\n"
+                "ℹ️ /info — About the bot\n"
+                "✏️ /edit — Edit a film entry\n"
+                "🗑 /delete — Delete a film\n"
+                "✅ /discussed — Films already discussed\n"
+                "🛠 /adminconsole — Admin console\n"
+                "❓ /help — Show this message"
+            ),
+            "bot_name": "Film Club Bot",
+            "card_icon": "🎬",
+            "subtitle_icon": "🎬",
+            "ask_title": "🎬 What is the <b>title</b> of the film?",
+            "ask_author": "🎬 Who is the <b>director</b>?",
+            "ask_pages": "⏱ How long is it (<b>runtime in minutes</b>)? (enter a number)",
+            "invalid_pages": "⚠️ Please enter a valid runtime in minutes (e.g. 120):",
+            "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
+            "fiction_btn": "🎬 Feature",
+            "nonfiction_btn": "📽 Documentary",
+            "book_added": "✅ Film added!",
+            "no_books": "📭 No films yet. Use /add to add one!",
+            "no_undiscussed": "📭 No undiscussed films — use /discussed to see past picks.",
+            "no_votes": "No votes yet. Use /list to see films and vote inline!",
+            "no_books_edit": "📭 No films to edit yet.",
+            "no_books_delete": "📭 No films to delete yet.",
+            "choose_vote": "📊 Choose a film to vote on:",
+            "choose_edit": "✏️ Choose a film to edit:",
+            "choose_delete": "🗑 Choose a film to delete:",
+            "rate_book": "📊 Vote on <b>{title}</b>",
+            "top_title": "🏆 <b>Top Films</b>\nSorted by total score.\n\n",
+            "pages_label": "min",
+            "edit_done": "✅ Film updated!",
+            "edit_invalid_pages": "⚠️ Must be a positive number of minutes. Send again:",
+            "field_author": "Director",
+            "field_pages": "Runtime (min)",
+            "field_fiction": "Feature / Documentary",
+            "fiction_label": "Feature",
+            "nonfiction_label": "Documentary",
+            "want_label": "✅ want to watch",
+            "no_label": "❌ don't want to watch",
+            "no_permission": "⛔ You can only edit or delete films you added.",
+            "no_own_books": "📭 You have no films to edit or delete.",
+            "admin_hide_btn": "👻 Hide film",
+            "admin_notify_one_btn": "🔔 Send reminder for a specific film",
+            "admin_notify_chat_one_btn": "💬 Post reminder to chat (pick film)",
+            "choose_notify_chat": "💬 Choose a film to post a voting reminder in the group chat:",
+            "admin_unhide_btn": "👁 Show film",
+            "choose_hide": "👻 Choose a film to hide from the list:",
+            "choose_notify": "🔔 Choose a film to send a reminder for:",
+            "choose_mark": "📌 Choose a film to mark as discussed:",
+            "no_unmark": "📭 No undiscussed films to mark.",
+            "marked_discussed": "✅ <b>{title}</b> marked as discussed on {date}.",
+            "discussed_title": "✅ <b>Discussed Films</b>\n\n",
+            "no_discussed": "📭 No films have been discussed yet.",
+            "list_prompt": "📋 <b>List of Films</b>\nShow all films or only those you haven't voted for yet?",
+            "list_all_btn": "🎬 All films",
+            "all_voted": "You've voted on all films!",
+            "settings_notify_label": "Notifications for new films:",
+            "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new films?",
+            "new_book_notification": "🆕 <b>New film added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
+            "new_book_delay_note": "\n\n<i>(Notifications for this film will be sent to others in 10 minutes)</i>",
+            "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top films yet. Take a look and cast your vote:\n\n",
+            "admin_notify_chat_confirm": "💬 Voting reminder posted to the group chat ({count} film(s)).",
+        },
+        "ru": {
+            "welcome": (
+                "🎬 <b>Добро пожаловать в Киноклуб!</b>\n\n"
+                "➕ /add — Добавить фильм\n"
+                "📋 /list — Список фильмов\n"
+                "🏆 /top — Топ фильмов\n"
+                "⚙️ /settings — Настройки\n"
+                "ℹ️ /info — О боте\n"
+                "✏️ /edit — Редактировать запись\n"
+                "🗑 /delete — Удалить фильм\n"
+                "✅ /discussed — Обсуждённые фильмы\n"
+                "🛠 /adminconsole — Админ-панель\n"
+                "❓ /help — Показать это сообщение"
+            ),
+            "bot_name": "Киноклуб-бот",
+            "card_icon": "🎬",
+            "subtitle_icon": "🎬",
+            "ask_title": "🎬 Как называется <b>фильм</b> (название)?",
+            "ask_author": "🎬 Кто <b>режиссёр</b>?",
+            "ask_pages": "⏱ Сколько <b>минут</b> длится фильм? (введите число)",
+            "invalid_pages": "⚠️ Введите корректную длительность в минутах (например, 120):",
+            "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
+            "fiction_btn": "🎬 Худ. фильм",
+            "nonfiction_btn": "📽 Документальный",
+            "book_added": "✅ Фильм добавлен!",
+            "no_books": "📭 Фильмов пока нет. Используйте /add, чтобы добавить!",
+            "no_undiscussed": "📭 Необсуждённых фильмов нет — используйте /discussed для архива.",
+            "no_votes": "Голосов пока нет. Используйте /list для голосования!",
+            "no_books_edit": "📭 Нет фильмов для редактирования.",
+            "no_books_delete": "📭 Нет фильмов для удаления.",
+            "choose_vote": "📊 Выберите фильм для голосования:",
+            "choose_edit": "✏️ Выберите фильм для редактирования:",
+            "choose_delete": "🗑 Выберите фильм для удаления:",
+            "rate_book": "📊 Голосование: <b>{title}</b>",
+            "top_title": "🏆 <b>Топ фильмов</b>\nСортировка по общему баллу.\n\n",
+            "pages_label": "мин",
+            "edit_done": "✅ Фильм обновлён!",
+            "edit_invalid_pages": "⚠️ Должно быть положительное число минут. Отправьте снова:",
+            "field_author": "Режиссёр",
+            "field_pages": "Длительность (мин)",
+            "field_fiction": "Худ. / документальный",
+            "fiction_label": "Худ. фильм",
+            "nonfiction_label": "Документальный",
+            "want_label": "✅ хочу смотреть",
+            "no_label": "❌ не хочу смотреть",
+            "no_permission": "⛔ Вы можете редактировать или удалять только добавленные вами фильмы.",
+            "no_own_books": "📭 У вас нет фильмов для редактирования или удаления.",
+            "admin_hide_btn": "👻 Скрыть фильм",
+            "admin_notify_one_btn": "🔔 Напомнить об одном фильме",
+            "admin_notify_chat_one_btn": "💬 Напомнить в чате (выбрать фильм)",
+            "choose_notify_chat": "💬 Выберите фильм для напоминания о голосовании в общем чате:",
+            "admin_unhide_btn": "👁 Показать фильм",
+            "choose_hide": "👻 Выберите фильм, чтобы скрыть его из списка:",
+            "choose_notify": "🔔 Выберите фильм для напоминания:",
+            "choose_mark": "📌 Выберите фильм для отметки как обсуждённого:",
+            "no_unmark": "📭 Нет необсуждённых фильмов для отметки.",
+            "marked_discussed": "✅ <b>{title}</b> отмечен как обсуждённый {date}.",
+            "discussed_title": "✅ <b>Обсуждённые фильмы</b>\n\n",
+            "no_discussed": "📭 Пока ни один фильм не был обсуждён.",
+            "list_prompt": "📋 <b>Список фильмов</b>\nПоказать все фильмы или только те, за которые вы ещё не голосовали?",
+            "list_all_btn": "🎬 Все фильмы",
+            "all_voted": "Вы проголосовали за все фильмы!",
+            "settings_notify_label": "Уведомления о новых фильмах:",
+            "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые фильмы?",
+            "new_book_notification": "🆕 <b>Добавлен новый фильм!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
+            "new_book_delay_note": "\n\n<i>(Уведомления об этом фильме будут разосланы остальным через 10 минут)</i>",
+            "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы ещё не проголосовали за некоторые популярные фильмы. Посмотрите и оставьте свой голос:\n\n",
+            "admin_notify_chat_confirm": "💬 Напоминание о голосовании отправлено в общий чат ({count} фильм(ов)).",
+        },
+    },
+}
+
+_COMMAND_DESC_OVERLAYS: dict[str, dict[str, dict[str, str]]] = {
+    "film": {
+        "en": {
+            "add": "➕ Add a film",
+            "list": "📋 List films & vote inline",
+            "top": "🏆 Top rated films",
+            "discussed": "✅ Films already discussed",
+            "edit": "✏️ Edit a film entry",
+            "delete": "🗑 Delete a film",
+        },
+        "ru": {
+            "add": "➕ Добавить фильм",
+            "list": "📋 Список фильмов и голосование",
+            "top": "🏆 Топ фильмов",
+            "discussed": "✅ Обсуждённые фильмы",
+            "edit": "✏️ Редактировать фильм",
+            "delete": "🗑 Удалить фильм",
+        },
+    },
+}
+
+
+def _apply_entity_string_overlays(entity: str) -> None:
+    for lang, keys in ENTITY_STRING_OVERLAYS.get(entity, {}).items():
+        T[lang].update(keys)
+
+
+_apply_entity_string_overlays(CLUB_ENTITY)
 
 PM = "HTML"
 
@@ -885,8 +1087,8 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
         s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
     )
     lines = [
-        f"📖 <b>{h(book['title'])}</b>",
-        f"✍️ {h(book['author'])}",
+        f"{s(lang, 'card_icon')} <b>{h(book['title'])}</b>",
+        f"{s(lang, 'subtitle_icon')} {h(book['author'])}",
         f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(s(lang, 'pages_label'))}",
         score_display(book, lang),
     ]
@@ -1060,6 +1262,18 @@ COMMANDS = {
 }
 
 
+def _apply_entity_command_overlays(entity: str) -> None:
+    cmd_overlay = _COMMAND_DESC_OVERLAYS.get(entity, {})
+    for lang, by_name in cmd_overlay.items():
+        COMMANDS[lang] = [
+            BotCommand(c.command, by_name.get(c.command, c.description))
+            for c in COMMANDS[lang]
+        ]
+
+
+_apply_entity_command_overlays(CLUB_ENTITY)
+
+
 async def set_user_commands(bot: Bot, update: Update, lang: str) -> None:
     """Set the command menu for a specific user in their chosen language.
     Uses BotCommandScopeChatMember for groups, BotCommandScopeChat for private."""
@@ -1224,7 +1438,13 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             logger.warning(f"Could not get file mtime: {e}")
             last_commit = "unknown"
 
-    text = tr(ctx, "info_msg", last_commit=last_commit, github_repo=GITHUB_REPO)
+    text = tr(
+        ctx,
+        "info_msg",
+        bot_name=s(get_lang(ctx), "bot_name"),
+        last_commit=last_commit,
+        github_repo=GITHUB_REPO,
+    )
     await update.message.reply_text(text, parse_mode=PM, disable_web_page_preview=True)
 
 
@@ -1293,12 +1513,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             if not all_undiscussed:
                 text = tr(ctx, "no_undiscussed")
             else:
-                # User has voted on everything
-                text = "✅ " + (
-                    "You've voted on all books!"
-                    if lang == "en"
-                    else "Вы проголосовали за все книги!"
-                )
+                text = "✅ " + tr(ctx, "all_voted")
         else:
             text = tr(ctx, "no_undiscussed")
 
@@ -2701,6 +2916,7 @@ def main() -> None:
 
     register_handlers(app)
 
+    logger.info("Club entity: %s", CLUB_ENTITY)
     logger.info("Bot is running...")
     app.run_polling()
 
