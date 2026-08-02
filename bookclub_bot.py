@@ -119,13 +119,14 @@ NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
     ADDING_PAGES,
     ADDING_FICTION,
     ADDING_REVIEW,
+    ADDING_ORIGINAL_LANGUAGE,
     ADDING_DESCRIPTION,
-) = range(6)
-EDITING_CHOOSE = 6
-EDITING_FIELD = 7  # waiting for new value of current field
-DELETING_CHOOSE = 8
+) = range(7)
+EDITING_CHOOSE = 7
+EDITING_FIELD = 8  # waiting for new value of current field
+DELETING_CHOOSE = 9
 ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
-    range(9, 18)
+    range(10, 19)
 )
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
@@ -281,6 +282,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "nonfiction_btn": "📰 Non-fiction",
         "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
+        "ask_original_language": "🌐 <b>Original language</b> of the book (or /skip if unsure):",
         "ask_desc": "📝 Add a <b>description</b> (or /skip to leave empty):",
         "book_added": "✅ Book added!",
         "no_books": "📭 No books yet. Use /add to add one!",
@@ -301,6 +303,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "added_by": "Added by",
         "added_on": "Added on",
         "pages_label": "Pages",
+        "original_language_label": "Original language",
         "review_label": "Review",
         "cancel_btn": "❌ Cancel",
         "edit_field_prompt": "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
@@ -316,6 +319,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_fiction": "Fiction / Non-fiction",
         "field_review": "Review link",
         "field_description": "Description",
+        "field_original_language": "Original language",
         "deleted": "🗑 <b>{title}</b> has been deleted.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -429,6 +433,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "nonfiction_btn": "📰 Нехуд. литература",
         "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
+        "ask_original_language": "🌐 <b>Язык оригинала</b> книги (или /skip, если не знаете):",
         "ask_desc": "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
         "book_added": "✅ Книга добавлена!",
         "no_books": "📭 Книг пока нет. Используйте /add, чтобы добавить!",
@@ -449,6 +454,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "added_by": "Добавил",
         "added_on": "Добавлено",
         "pages_label": "Страниц",
+        "original_language_label": "Язык оригинала",
         "review_label": "Рецензия",
         "cancel_btn": "❌ Отмена",
         "edit_field_prompt": "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
@@ -464,6 +470,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_fiction": "Fiction / Non-fiction",
         "field_review": "Ссылка на рецензию",
         "field_description": "Описание",
+        "field_original_language": "Язык оригинала",
         "deleted": "🗑 <b>{title}</b> удалена.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -584,6 +591,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_pages": "⏱ How long is it (<b>runtime in minutes</b>)? (enter a number)",
             "invalid_pages": "⚠️ Please enter a valid runtime in minutes (e.g. 120):",
             "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
+            "ask_original_language": "🌐 <b>Original language</b> of the film (or /skip if unsure):",
             "fiction_btn": "🎬 Feature",
             "nonfiction_btn": "📽 Documentary",
             "book_added": "✅ Film added!",
@@ -657,6 +665,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_pages": "⏱ Сколько <b>минут</b> длится фильм? (введите число)",
             "invalid_pages": "⚠️ Введите корректную длительность в минутах (например, 120):",
             "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
+            "ask_original_language": "🌐 <b>Язык оригинала</b> фильма (или /skip, если не знаете):",
             "fiction_btn": "🎬 Худ. фильм",
             "nonfiction_btn": "📽 Документальный",
             "book_added": "✅ Фильм добавлен!",
@@ -833,6 +842,7 @@ def init_db() -> None:
             ("notify_sent", "INTEGER NOT NULL DEFAULT 1"),
             ("notify_after", "TEXT DEFAULT NULL"),
             ("notify_adder_id", "INTEGER DEFAULT NULL"),
+            ("original_language", "TEXT DEFAULT NULL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
@@ -875,14 +885,17 @@ def db_add_book(
     user_id: int,
     user_name: str,
     username: str | None = None,
+    original_language: str | None = None,
 ) -> int | None:
+    lang = (original_language or "").strip() or None
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
+                original_language,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title,
                 author,
@@ -890,6 +903,7 @@ def db_add_book(
                 int(fiction),
                 review_link,
                 description,
+                lang,
                 user_id,
                 user_name,
                 username,
@@ -897,6 +911,59 @@ def db_add_book(
             ),
         )
         return cur.lastrowid
+
+
+def db_seed_book_exists(title: str, review_link: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM books WHERE title=? AND review_link=? LIMIT 1",
+            (title, review_link),
+        ).fetchone()
+        return row is not None
+
+
+def db_insert_seed_book(
+    *,
+    title: str,
+    author: str,
+    pages: int,
+    fiction: bool,
+    review_link: str,
+    description: str,
+    original_language: str | None,
+    added_at: str,
+    added_by_username: str,
+    added_by_name: str,
+) -> int:
+    """Insert a pre-seeded entry without scheduling new-book notifications."""
+    lang = (original_language or "").strip() or None
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.execute(
+            """INSERT INTO books
+               (title, author, pages, fiction, review_link, description,
+                original_language, hidden, discussed, discussed_at,
+                notify_sent, notify_after, notify_adder_id,
+                added_by, added_by_name, added_by_username, added_at)
+               VALUES (?,?,?,?,?,?,?,0,0,NULL,1,NULL,NULL,?,?,?,?)""",
+            (
+                title,
+                author,
+                pages,
+                int(fiction),
+                review_link,
+                description,
+                lang,
+                IMPORTED_USER_ID,
+                added_by_name,
+                added_by_username.lstrip("@"),
+                added_at,
+            ),
+        )
+        conn.commit()
+        if cur.lastrowid is None:
+            raise RuntimeError("seed insert did not return id")
+        return int(cur.lastrowid)
 
 
 def _books_query(
@@ -973,7 +1040,15 @@ def db_get_book(book_id: int) -> sqlite3.Row | None:
 
 def db_update_book_field(book_id: int, field: str, value: Any) -> None:
     """Update a single whitelisted field."""
-    allowed = {"title", "author", "pages", "fiction", "review_link", "description"}
+    allowed = {
+        "title",
+        "author",
+        "pages",
+        "fiction",
+        "review_link",
+        "description",
+        "original_language",
+    }
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
     with sqlite3.connect(DB_PATH) as conn:
@@ -1089,6 +1164,7 @@ def book_to_export_payload(book: BookLike) -> str:
             "fiction": bool(book["fiction"]),
             "review_link": book["review_link"] or "",
             "description": book["description"] or "",
+            "original_language": book["original_language"] or "",
             "hidden": bool(book["hidden"]),
             "discussed": bool(book["discussed"]),
             "discussed_at": book["discussed_at"],
@@ -1118,6 +1194,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
         fiction = 1 if int(fiction_raw) else 0
     review_link = str(raw.get("review_link", "") or "")
     description = str(raw.get("description", "") or "")
+    original_language = str(raw.get("original_language", "") or "").strip() or None
     hidden = 1 if raw.get("hidden") else 0
     discussed = 1 if raw.get("discussed") else 0
     discussed_at = raw.get("discussed_at")
@@ -1137,6 +1214,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
         "fiction": fiction,
         "review_link": review_link,
         "description": description,
+        "original_language": original_language,
         "hidden": hidden,
         "discussed": discussed,
         "discussed_at": discussed_at,
@@ -1183,9 +1261,10 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
+                original_language,
                 hidden, discussed, discussed_at,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 book_data["title"],
                 book_data["author"],
@@ -1193,6 +1272,7 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
                 book_data["fiction"],
                 book_data["review_link"],
                 book_data["description"],
+                book_data.get("original_language"),
                 book_data["hidden"],
                 book_data["discussed"],
                 book_data["discussed_at"],
@@ -1332,6 +1412,12 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
         f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(s(lang, 'pages_label'))}",
         score_display(book, lang),
     ]
+    orig_lang = book["original_language"] if book["original_language"] else None
+    if orig_lang:
+        lines.insert(
+            3,
+            f"🌐 {h(s(lang, 'original_language_label'))}: {h(str(orig_lang))}",
+        )
     if user_vote is not None:
         vote_label = vote_label_text(lang, user_vote)
         lines[-1] += f"  <i>({h(s(lang, 'your_vote'))}: {h(vote_label)})</i>"
@@ -1919,6 +2005,15 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(tr(ctx, "invalid_review"), parse_mode=PM)
         return ADDING_REVIEW
     ctx.user_data["new_book"]["review_link"] = text
+    await update.message.reply_text(tr(ctx, "ask_original_language"), parse_mode=PM)
+    return ADDING_ORIGINAL_LANGUAGE
+
+
+async def add_original_language(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    ctx.user_data["new_book"]["original_language"] = "" if text == "/skip" else text
     await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode=PM)
     return ADDING_DESCRIPTION
 
@@ -1948,6 +2043,7 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         user.id,
         user.full_name,
         user.username,
+        original_language=nb.get("original_language") or None,
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")
@@ -2750,7 +2846,15 @@ async def admin_import_handler(
 
 # ── /edit — sequential field-by-field editor ──────────────────────────────────
 # Fields edited in order: title, author, pages, fiction, review_link, description
-EDIT_FIELDS = ["title", "author", "pages", "fiction", "review_link", "description"]
+EDIT_FIELDS = [
+    "title",
+    "author",
+    "pages",
+    "fiction",
+    "review_link",
+    "original_language",
+    "description",
+]
 
 
 def edit_field_key(field: str) -> str:
@@ -2767,6 +2871,8 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
         return book["review_link"] or ("—" if lang == "en" else "—")
     if field == "description":
         return book["description"] or ("—" if lang == "en" else "—")
+    if field == "original_language":
+        return book["original_language"] or ("—" if lang == "en" else "—")
     return str(book[field])
 
 
@@ -3177,6 +3283,12 @@ def register_handlers(app: Application) -> None:
                 ],
                 ADDING_REVIEW: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_review)
+                ],
+                ADDING_ORIGINAL_LANGUAGE: [
+                    CommandHandler("skip", add_original_language),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, add_original_language
+                    ),
                 ],
                 # /skip needs its own handler: a bare filters.TEXT here would also
                 # swallow /cancel (state handlers are matched before fallbacks).

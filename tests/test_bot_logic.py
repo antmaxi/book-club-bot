@@ -35,6 +35,7 @@ def make_book(**kwargs):
         "added_at": "2025-01-01",
         "discussed": 0,
         "discussed_at": None,
+        "original_language": None,
     }
     defaults.update(kwargs)
     return defaults
@@ -333,6 +334,46 @@ class TestDatabase(unittest.TestCase):
     def test_parse_book_import_rejects_bad_json(self):
         with self.assertRaises(ValueError):
             bot.parse_book_import("not json")
+
+    def test_book_card_shows_original_language_when_set(self):
+        book = make_book(original_language="German")
+        text = bot.book_card(book, "en")
+        self.assertIn("Original language", text)
+        self.assertIn("German", text)
+
+    def test_book_card_hides_original_language_when_empty(self):
+        book = make_book(original_language=None)
+        text = bot.book_card(book, "en")
+        self.assertNotIn("Original language", text)
+
+    def test_seed_film_script_inserts_once(self):
+        inserted = 0
+        for entry in [
+            {
+                "title": "Seed Test Film",
+                "review_link": "https://example.com/seed-test",
+                "description": "d",
+            }
+        ]:
+            if bot.db_seed_book_exists(entry["title"], entry["review_link"]):
+                continue
+            bot.db_insert_seed_book(
+                title=entry["title"],
+                author="—",
+                pages=0,
+                fiction=True,
+                review_link=entry["review_link"],
+                description=entry["description"],
+                original_language="German",
+                added_at="2026-08-01",
+                added_by_username="CreAtors_we_makeArt",
+                added_by_name="CreAtors_we_makeArt",
+            )
+            inserted += 1
+        self.assertEqual(inserted, 1)
+        self.assertTrue(
+            bot.db_seed_book_exists("Seed Test Film", "https://example.com/seed-test")
+        )
 
     def test_db_begin_new_book_notify_is_idempotent(self):
         bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")

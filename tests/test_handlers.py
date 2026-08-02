@@ -508,6 +508,13 @@ class TestAddConversation(BotHandlerTestCase):
             self.ctx.user_data["new_book"]["review_link"],
             "https://goodreads.com/book/1",
         )
+        self.assertEqual(state, bot.ADDING_ORIGINAL_LANGUAGE)
+
+    async def test_add_original_language_skip(self):
+        self.ctx.user_data["new_book"] = {"review_link": "http://x.com"}
+        self.message.text = "/skip"
+        state = await bot.add_original_language(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["original_language"], "")
         self.assertEqual(state, bot.ADDING_DESCRIPTION)
 
     async def test_add_review_invalid_url(self):
@@ -523,6 +530,7 @@ class TestAddConversation(BotHandlerTestCase):
             "pages": 100,
             "fiction": True,
             "review_link": "http://x.com",
+            "original_language": "German",
         }
         self.message.text = "Great book"
         self.ctx.job_queue = MagicMock()
