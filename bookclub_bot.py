@@ -393,7 +393,9 @@ T: dict[str, dict[str, TranslationValue]] = {
         "info_msg": (
             "🤖 <b>{bot_name}</b>\n\n"
             "📅 <b>Last update:</b> {last_commit}\n"
-            "🔗 <b>Source code:</b> {github_repo}"
+            "🔗 <b>Source code:</b> {github_repo}\n\n"
+            "💬 Feel free to contact @antmaxi for suggestions on what to improve "
+            "or if you run into issues with the bot."
         ),
     },
     "ru": {
@@ -541,7 +543,9 @@ T: dict[str, dict[str, TranslationValue]] = {
         "info_msg": (
             "🤖 <b>{bot_name}</b>\n\n"
             "📅 <b>Последнее обновление:</b> {last_commit}\n"
-            "🔗 <b>Исходный код:</b> {github_repo}"
+            "🔗 <b>Исходный код:</b> {github_repo}\n\n"
+            "💬 Пишите @antmaxi с предложениями по улучшению бота или если что-то "
+            "не работает."
         ),
     },
 }
@@ -1880,12 +1884,22 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     await update.message.reply_text(confirm_text, parse_mode=PM)
     ctx.user_data.pop("new_book", None)
 
-    # Schedule notifications for others
-    if ctx.job_queue:
-        ctx.job_queue.run_once(
+    schedule_new_book_notifications(ctx.job_queue, book_id, user.id)
+
+    return ConversationHandler.END
+
+
+def schedule_new_book_notifications(
+    job_queue: Any,
+    book_id: int,
+    adder_id: int,
+) -> None:
+    """Schedule the standard 10-minute delayed new-book notifications."""
+    if job_queue:
+        job_queue.run_once(
             notify_new_book_job,
             when=600,  # 10 minutes
-            data={"book_id": book_id, "adder_id": user.id},
+            data={"book_id": book_id, "adder_id": adder_id},
             name=f"notify_book_{book_id}",
         )
     else:
@@ -1894,8 +1908,6 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
             'Fix: pip install "python-telegram-bot[job-queue]"\n'
             "Then restart the bot."
         )
-
-    return ConversationHandler.END
 
 
 async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2566,6 +2578,9 @@ async def admin_import_handler(
             local=h(CLUB_ENTITY),
         )
     await update.message.reply_text(msg, parse_mode=PM)
+    schedule_new_book_notifications(
+        ctx.job_queue, book_id, update.effective_user.id
+    )
     return ConversationHandler.END
 
 

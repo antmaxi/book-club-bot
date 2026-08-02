@@ -146,6 +146,7 @@ class TestInfo(BotHandlerTestCase):
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
         self.assertIn("https://test.repo", text)
+        self.assertIn("@antmaxi", text)
 
     @patch("os.path.exists")
     @patch("subprocess.check_output")
@@ -163,6 +164,7 @@ class TestInfo(BotHandlerTestCase):
         )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
+        self.assertIn("@antmaxi", text)
 
     @patch("os.path.exists")
     @patch("os.path.getmtime")
@@ -1064,6 +1066,24 @@ class TestAdminConsole(BotHandlerTestCase):
         books = bot.db_get_books(discussed=False, include_hidden=True)
         titles = [b["title"] for b in books]
         self.assertEqual(titles.count("Imported"), 2)
+
+    async def test_admin_import_handler_schedules_notification_job(self):
+        source = bot.db_get_book(self._add_book("Notify Me", author="Writer"))
+        payload = bot.book_to_export_payload(source)
+        self.update.message.text = payload
+        self.ctx.job_queue = MagicMock()
+
+        state = await bot.admin_import_handler(self.update, self.ctx)
+
+        self.assertEqual(state, ConversationHandler.END)
+        self.ctx.job_queue.run_once.assert_called_once()
+        job_kwargs = self.ctx.job_queue.run_once.call_args[1]
+        self.assertEqual(job_kwargs["when"], 600)
+        self.assertEqual(
+            job_kwargs["data"]["adder_id"], self.update.effective_user.id
+        )
+        imported_id = job_kwargs["data"]["book_id"]
+        self.assertNotEqual(imported_id, source["id"])
 
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
