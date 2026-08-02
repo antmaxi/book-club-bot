@@ -119,8 +119,8 @@ CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
 EDITING_CHOOSE = 6
 EDITING_FIELD = 7  # waiting for new value of current field
 DELETING_CHOOSE = 8
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
-    range(9, 17)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
+    range(9, 18)
 )
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
@@ -342,6 +342,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_toggle_chat_btn": "💬 Post to chat: {state}",
         "admin_unhide_btn": "👁 Show book",
         "choose_hide": "👻 Choose a book to hide from the list:",
+        "choose_unhide": "👁 Choose a hidden book to show again in the list:",
+        "no_hidden": "📭 No hidden books.",
         "choose_notify": "🔔 Choose a book to send a reminder for:",
         "book_hidden": "✅ <b>{title}</b> is now hidden.",
         "book_unhidden": "✅ <b>{title}</b> is now visible.",
@@ -492,6 +494,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_toggle_chat_btn": "💬 Писать в чат: {state}",
         "admin_unhide_btn": "👁 Показать книгу",
         "choose_hide": "👻 Выберите книгу, чтобы скрыть её из списка:",
+        "choose_unhide": "👁 Выберите скрытую книгу, чтобы снова показать её в списке:",
+        "no_hidden": "📭 Нет скрытых книг.",
         "choose_notify": "🔔 Выберите книгу для напоминания:",
         "book_hidden": "✅ Книга <b>{title}</b> скрыта.",
         "book_unhidden": "✅ Книга <b>{title}</b> снова видна.",
@@ -606,6 +610,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_notify_chat": "💬 Choose a film to post a voting reminder in the group chat:",
             "admin_unhide_btn": "👁 Show film",
             "choose_hide": "👻 Choose a film to hide from the list:",
+            "choose_unhide": "👁 Choose a hidden film to show again in the list:",
             "choose_notify": "🔔 Choose a film to send a reminder for:",
             "choose_mark": "📌 Choose a film to mark as discussed:",
             "no_unmark": "📭 No undiscussed films to mark.",
@@ -678,6 +683,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_notify_chat": "💬 Выберите фильм для напоминания о голосовании в общем чате:",
             "admin_unhide_btn": "👁 Показать фильм",
             "choose_hide": "👻 Выберите фильм, чтобы скрыть его из списка:",
+            "choose_unhide": "👁 Выберите скрытый фильм, чтобы снова показать его в списке:",
             "choose_notify": "🔔 Выберите фильм для напоминания:",
             "choose_mark": "📌 Выберите фильм для отметки как обсуждённого:",
             "no_unmark": "📭 Нет необсуждённых фильмов для отметки.",
@@ -976,6 +982,16 @@ def db_mark_discussed(book_id: int, date_str: str) -> None:
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id),
         )
+
+
+def db_set_hidden(book_id: int, hidden: bool) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "UPDATE books SET hidden = ? WHERE id = ?",
+            (int(hidden), book_id),
+        )
+        conn.commit()
 
 
 def db_toggle_hidden(book_id: int) -> None:
@@ -2132,6 +2148,11 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
             ],
             [
                 InlineKeyboardButton(
+                    tr(ctx, "admin_unhide_btn"), callback_data="admin:unhide"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     tr(ctx, "admin_notify_btn"), callback_data="admin:notify"
                 )
             ],
@@ -2198,36 +2219,34 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ADMIN_MARK_CHOOSE
     elif data == "hide":
-        # Show all undiscussed books (including already hidden ones to allow unhiding)
-        books = db_get_books(discussed=False, include_hidden=True)
+        books = [
+            b
+            for b in db_get_books(discussed=False, include_hidden=True)
+            if not b["hidden"]
+        ]
         if not books:
             await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
             return ConversationHandler.END
 
-        # Custom keyboard to show current hidden status
-        keyboard_btns = []
-        for b in books:
-            label = ("👁 " if b["hidden"] else "") + b["title"]
-            keyboard_btns.append(
-                [
-                    InlineKeyboardButton(
-                        label, callback_data=f"admin_hide_pick:{b['id']}"
-                    )
-                ]
-            )
-        keyboard_btns.append(
-            [
-                InlineKeyboardButton(
-                    tr(ctx, "cancel_btn"), callback_data="admin_hide_pick:cancel"
-                )
-            ]
-        )
-
         await query.edit_message_text(
             tr(ctx, "choose_hide"),
-            reply_markup=InlineKeyboardMarkup(keyboard_btns),
+            reply_markup=books_keyboard(
+                books, "admin_hide_pick", tr(ctx, "cancel_btn")
+            ),
         )
         return ADMIN_HIDE_CHOOSE
+    elif data == "unhide":
+        books = _admin_hidden_books()
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_hidden"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_unhide"),
+            reply_markup=books_keyboard(
+                books, "admin_unhide_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_UNHIDE_CHOOSE
     elif data == "notify":
         return await admin_notify_top_cb(update, ctx)
     elif data == "notify_pick":
@@ -2517,12 +2536,44 @@ async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
 
     book_id = int(book_id)
-    db_toggle_hidden(book_id)
+    db_set_hidden(book_id, True)
     book = db_get_book(book_id)
 
-    msg_key = "book_hidden" if book["hidden"] else "book_unhidden"
     await query.edit_message_text(
-        tr(ctx, msg_key, title=h(book["title"])),
+        tr(ctx, "book_hidden", title=h(book["title"])),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+def _admin_hidden_books() -> list[sqlite3.Row]:
+    hidden: list[sqlite3.Row] = []
+    for discussed in (False, True):
+        hidden.extend(
+            b
+            for b in db_get_books(discussed=discussed, include_hidden=True)
+            if b["hidden"]
+        )
+    return hidden
+
+
+async def admin_unhide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    db_set_hidden(book_id, False)
+    book = db_get_book(book_id)
+
+    await query.edit_message_text(
+        tr(ctx, "book_unhidden", title=h(book["title"])),
         parse_mode=PM,
     )
     return ConversationHandler.END
@@ -3049,6 +3100,11 @@ def register_handlers(app: Application) -> None:
                 ADMIN_HIDE_CHOOSE: [
                     CallbackQueryHandler(
                         admin_hide_pick_cb, pattern=r"^admin_hide_pick:"
+                    )
+                ],
+                ADMIN_UNHIDE_CHOOSE: [
+                    CallbackQueryHandler(
+                        admin_unhide_pick_cb, pattern=r"^admin_unhide_pick:"
                     )
                 ],
                 ADMIN_NOTIFY_PICK: [

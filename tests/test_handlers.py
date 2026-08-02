@@ -893,7 +893,7 @@ class TestAdminConsole(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         self.assertIn("Choose a book to hide", q.edit_message_text.call_args[0][0])
 
-    async def test_admin_hide_pick_toggles_and_ends(self):
+    async def test_admin_hide_pick_hides_book(self):
         bid = self._add_book("Ghost")
         q = self._callback_query(f"admin_hide_pick:{bid}")
         state = await bot.admin_hide_pick_cb(self.update, self.ctx)
@@ -901,6 +901,24 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(bot.db_get_book(bid)["hidden"], 1)
         q.edit_message_text.assert_called_once()
         self.assertIn("is now hidden", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_menu_cb_unhide_shows_hidden_books(self):
+        bid = self._add_book("Hidden One")
+        bot.db_set_hidden(bid, True)
+        q = self._callback_query("admin:unhide")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_UNHIDE_CHOOSE)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("hidden", q.edit_message_text.call_args[0][0].lower())
+
+    async def test_admin_unhide_pick_shows_book(self):
+        bid = self._add_book("Ghost")
+        bot.db_set_hidden(bid, True)
+        q = self._callback_query(f"admin_unhide_pick:{bid}")
+        state = await bot.admin_unhide_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertEqual(bot.db_get_book(bid)["hidden"], 0)
+        self.assertIn("visible", q.edit_message_text.call_args[0][0].lower())
 
     async def test_admin_mark_pick_advances_to_date(self):
         bid = self._add_book("Discuss Me")
