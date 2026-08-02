@@ -297,6 +297,43 @@ class TestDatabase(unittest.TestCase):
         # Verify vote is gone (should happen via ON DELETE CASCADE in bot.py)
         # self.assertIsNone(bot.db_get_user_vote(1, book_id))
 
+    def test_book_export_import_roundtrip(self):
+        book_id = bot.db_add_book(
+            "Dune",
+            "Herbert",
+            412,
+            True,
+            "https://example.com/review",
+            "Sci-fi classic",
+            42,
+            "Alice",
+            username="alice",
+        )
+        bot.db_mark_discussed(book_id, "2025-06-01")
+        bot.db_cast_vote(1, book_id, 1)
+        source = bot.db_get_book(book_id)
+        payload = bot.book_to_export_payload(source)
+        parsed, _entity = bot.parse_book_import(payload)
+        new_id = bot.db_import_book(parsed)
+        imported = bot.db_get_book(new_id)
+        self.assertNotEqual(new_id, book_id)
+        self.assertEqual(imported["title"], "Dune")
+        self.assertEqual(imported["author"], "Herbert")
+        self.assertEqual(imported["pages"], 412)
+        self.assertEqual(imported["fiction"], 1)
+        self.assertEqual(imported["review_link"], "https://example.com/review")
+        self.assertEqual(imported["description"], "Sci-fi classic")
+        self.assertEqual(imported["discussed"], 1)
+        self.assertEqual(imported["discussed_at"], "2025-06-01")
+        self.assertEqual(imported["added_by"], bot.IMPORTED_USER_ID)
+        self.assertEqual(imported["added_by_name"], "Alice")
+        self.assertEqual(imported["added_by_username"], "alice")
+        self.assertEqual(imported["vote_count"], 0)
+
+    def test_parse_book_import_rejects_bad_json(self):
+        with self.assertRaises(ValueError):
+            bot.parse_book_import("not json")
+
     # -- User settings --
 
     def test_db_user_setting_default_minus_one(self):

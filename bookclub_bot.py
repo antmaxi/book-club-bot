@@ -32,6 +32,7 @@ Commands:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import logging.handlers
 import os
@@ -118,8 +119,8 @@ CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
 EDITING_CHOOSE = 6
 EDITING_FIELD = 7  # waiting for new value of current field
 DELETING_CHOOSE = 8
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK = (
-    range(9, 15)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
+    range(9, 17)
 )
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
@@ -377,6 +378,14 @@ T: dict[str, dict[str, TranslationValue]] = {
         "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top books yet. Take a look and cast your vote:\n\n",
         "last_activity_label": "Last non-admin activity",
         "never": "never",
+        "admin_export_btn": "📤 Export book (JSON)",
+        "admin_import_btn": "📥 Import book (JSON)",
+        "choose_export": "📤 Choose a book to export as JSON:",
+        "export_done": "📤 Copy the JSON below and send it to another bot instance (Import in /adminconsole):\n\n<pre>{payload}</pre>",
+        "import_prompt": "📥 Paste the book <b>JSON</b> from an export (one message). Votes are not included.\n\nSend /cancel to abort.",
+        "import_done": "✅ Imported <b>{title}</b> (new id: {book_id}).",
+        "import_invalid": "⚠️ Invalid import data. Expected JSON from 📤 Export book. Error: {error}",
+        "import_entity_mismatch": "\n\n<i>Note: export was for “{exported}”, this bot uses “{local}”.</i>",
         "bot_name": "Book Club Bot",
         "card_icon": "📖",
         "subtitle_icon": "✍️",
@@ -517,6 +526,14 @@ T: dict[str, dict[str, TranslationValue]] = {
         "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы еще не проголосовали за некоторые популярные книги. Посмотрите и оставьте свой голос:\n\n",
         "last_activity_label": "Последняя активность (не админ)",
         "never": "никогда",
+        "admin_export_btn": "📤 Экспорт книги (JSON)",
+        "admin_import_btn": "📥 Импорт книги (JSON)",
+        "choose_export": "📤 Выберите книгу для экспорта в JSON:",
+        "export_done": "📤 Скопируйте JSON и отправьте на другой инстанс бота (Импорт в /adminconsole):\n\n<pre>{payload}</pre>",
+        "import_prompt": "📥 Вставьте <b>JSON</b> книги из экспорта (одним сообщением). Голоса не переносятся.\n\n/cancel — отмена.",
+        "import_done": "✅ Импортировано: <b>{title}</b> (новый id: {book_id}).",
+        "import_invalid": "⚠️ Неверные данные. Нужен JSON из 📤 Экспорт книги. Ошибка: {error}",
+        "import_entity_mismatch": "\n\n<i>Экспорт для «{exported}», этот бот — «{local}».</i>",
         "bot_name": "Книжный клуб-бот",
         "card_icon": "📖",
         "subtitle_icon": "✍️",
@@ -600,6 +617,9 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "new_book_delay_note": "\n\n<i>(Notifications for this film will be sent to others in 10 minutes)</i>",
             "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top films yet. Take a look and cast your vote:\n\n",
             "admin_notify_chat_confirm": "💬 Voting reminder posted to the group chat ({count} film(s)).",
+            "admin_export_btn": "📤 Export film (JSON)",
+            "admin_import_btn": "📥 Import film (JSON)",
+            "choose_export": "📤 Choose a film to export as JSON:",
         },
         "ru": {
             "welcome": (
@@ -669,6 +689,9 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "new_book_delay_note": "\n\n<i>(Уведомления об этом фильме будут разосланы остальным через 10 минут)</i>",
             "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы ещё не проголосовали за некоторые популярные фильмы. Посмотрите и оставьте свой голос:\n\n",
             "admin_notify_chat_confirm": "💬 Напоминание о голосовании отправлено в общий чат ({count} фильм(ов)).",
+            "admin_export_btn": "📤 Экспорт фильма (JSON)",
+            "admin_import_btn": "📥 Импорт фильма (JSON)",
+            "choose_export": "📤 Выберите фильм для экспорта в JSON:",
         },
     },
 }
@@ -966,6 +989,142 @@ def db_delete_book(book_id: int) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
+
+
+BOOK_EXPORT_FORMAT = "bookclub-bot-book"
+BOOK_EXPORT_VERSION = 1
+
+
+def book_to_export_payload(book: BookLike) -> str:
+    """Serialize a book row to JSON for transfer to another bot instance."""
+    payload = {
+        "format": BOOK_EXPORT_FORMAT,
+        "version": BOOK_EXPORT_VERSION,
+        "entity": CLUB_ENTITY,
+        "book": {
+            "title": book["title"],
+            "author": book["author"],
+            "pages": int(book["pages"]),
+            "fiction": bool(book["fiction"]),
+            "review_link": book["review_link"] or "",
+            "description": book["description"] or "",
+            "hidden": bool(book["hidden"]),
+            "discussed": bool(book["discussed"]),
+            "discussed_at": book["discussed_at"],
+            "added_by_name": book["added_by_name"],
+            "added_by_username": book["added_by_username"],
+            "added_at": book["added_at"],
+        },
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
+    title = str(raw.get("title", "")).strip()
+    author = str(raw.get("author", "")).strip()
+    if not title or not author:
+        raise ValueError("missing title or author")
+    try:
+        pages = int(raw.get("pages", 0))
+    except (TypeError, ValueError) as e:
+        raise ValueError("invalid pages") from e
+    if pages < 0:
+        raise ValueError("invalid pages")
+    fiction_raw = raw.get("fiction", True)
+    if isinstance(fiction_raw, bool):
+        fiction = int(fiction_raw)
+    else:
+        fiction = 1 if int(fiction_raw) else 0
+    review_link = str(raw.get("review_link", "") or "")
+    description = str(raw.get("description", "") or "")
+    hidden = 1 if raw.get("hidden") else 0
+    discussed = 1 if raw.get("discussed") else 0
+    discussed_at = raw.get("discussed_at")
+    if discussed_at is not None:
+        discussed_at = str(discussed_at).strip() or None
+    added_by_name = str(raw.get("added_by_name", "imported") or "imported").strip()
+    username = raw.get("added_by_username")
+    if username is not None:
+        username = str(username).lstrip("@").strip() or None
+    added_at = str(raw.get("added_at", "") or "").strip()
+    if not added_at:
+        added_at = datetime.now().strftime("%Y-%m-%d")
+    return {
+        "title": title,
+        "author": author,
+        "pages": pages,
+        "fiction": fiction,
+        "review_link": review_link,
+        "description": description,
+        "hidden": hidden,
+        "discussed": discussed,
+        "discussed_at": discussed_at,
+        "added_by_name": added_by_name,
+        "added_by_username": username,
+        "added_at": added_at,
+    }
+
+
+def parse_book_import(text: str) -> tuple[dict[str, Any], str | None]:
+    """Parse export JSON. Returns (normalized book fields, source entity or None)."""
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("empty payload")
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        raise ValueError("invalid JSON") from e
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object")
+    source_entity: str | None = None
+    if isinstance(data.get("book"), dict):
+        raw = data["book"]
+        ent = data.get("entity")
+        if isinstance(ent, str):
+            source_entity = ent
+        fmt = data.get("format")
+        if fmt is not None and fmt != BOOK_EXPORT_FORMAT:
+            raise ValueError(f"unknown format {fmt!r}")
+        version = data.get("version")
+        if version is not None and version != BOOK_EXPORT_VERSION:
+            raise ValueError(f"unsupported version {version!r}")
+    elif "title" in data and "author" in data:
+        raw = data
+    else:
+        raise ValueError("missing book object")
+    return _normalize_exported_book(raw), source_entity
+
+
+def db_import_book(book_data: Mapping[str, Any]) -> int:
+    """Insert a book from export data. Votes are not imported."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.execute(
+            """INSERT INTO books
+               (title, author, pages, fiction, review_link, description,
+                hidden, discussed, discussed_at,
+                added_by, added_by_name, added_by_username, added_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                book_data["title"],
+                book_data["author"],
+                book_data["pages"],
+                book_data["fiction"],
+                book_data["review_link"],
+                book_data["description"],
+                book_data["hidden"],
+                book_data["discussed"],
+                book_data["discussed_at"],
+                IMPORTED_USER_ID,
+                book_data["added_by_name"],
+                book_data["added_by_username"],
+                book_data["added_at"],
+            ),
+        )
+        conn.commit()
+        if cur.lastrowid is None:
+            raise RuntimeError("import insert did not return id")
+        return int(cur.lastrowid)
 
 
 def db_cast_vote(user_id: int, book_id: int, score: int) -> None:
@@ -1986,6 +2145,16 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
                     callback_data="admin:toggle_chat",
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_export_btn"), callback_data="admin:export"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_import_btn"), callback_data="admin:import"
+                )
+            ],
         ]
     )
     if update.callback_query:
@@ -2079,6 +2248,23 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         current = db_get_admin_setting("post_new_books_to_chat", 0)
         db_set_admin_setting("post_new_books_to_chat", 1 - current)
         return await cmd_admin_console(update, ctx)
+    elif data == "export":
+        all_books = db_get_books(discussed=False, include_hidden=True) + list(
+            db_get_books(discussed=True, include_hidden=True)
+        )
+        if not all_books:
+            await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_export"),
+            reply_markup=books_keyboard(
+                all_books, "admin_export_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_EXPORT_CHOOSE
+    elif data == "import":
+        await query.edit_message_text(tr(ctx, "import_prompt"), parse_mode=PM)
+        return ADMIN_IMPORT_WAIT
     return ConversationHandler.END
 
 
@@ -2327,6 +2513,59 @@ async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         tr(ctx, msg_key, title=h(book["title"])),
         parse_mode=PM,
     )
+    return ConversationHandler.END
+
+
+async def admin_export_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book = db_get_book(int(book_id))
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    payload = h(book_to_export_payload(book))
+    await query.edit_message_text(
+        tr(ctx, "export_done", payload=payload),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def admin_import_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    text = update.message.text or ""
+    try:
+        book_data, source_entity = parse_book_import(text)
+        book_id = db_import_book(book_data)
+    except ValueError as e:
+        await update.message.reply_text(
+            tr(ctx, "import_invalid", error=h(str(e))),
+            parse_mode=PM,
+        )
+        return ADMIN_IMPORT_WAIT
+
+    msg = tr(ctx, "import_done", title=h(book_data["title"]), book_id=book_id)
+    if source_entity and source_entity != CLUB_ENTITY:
+        msg += tr(
+            ctx,
+            "import_entity_mismatch",
+            exported=h(source_entity),
+            local=h(CLUB_ENTITY),
+        )
+    await update.message.reply_text(msg, parse_mode=PM)
     return ConversationHandler.END
 
 
@@ -2805,6 +3044,16 @@ def register_handlers(app: Application) -> None:
                 ADMIN_NOTIFY_CHAT_PICK: [
                     CallbackQueryHandler(
                         admin_notify_chat_pick_cb, pattern=r"^admin_notify_chat_pick:"
+                    )
+                ],
+                ADMIN_EXPORT_CHOOSE: [
+                    CallbackQueryHandler(
+                        admin_export_pick_cb, pattern=r"^admin_export_pick:"
+                    )
+                ],
+                ADMIN_IMPORT_WAIT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, admin_import_handler
                     )
                 ],
             },

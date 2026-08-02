@@ -1024,6 +1024,42 @@ class TestAdminConsole(BotHandlerTestCase):
         self.ctx.bot.send_message.assert_not_called()
         self.assertIn("ALLOWED_CHAT_ID", q.edit_message_text.call_args[0][0])
 
+    async def test_admin_menu_cb_export_shows_books(self):
+        self._add_book("Export Me")
+        q = self._callback_query("admin:export")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_EXPORT_CHOOSE)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("export", q.edit_message_text.call_args[0][0].lower())
+
+    async def test_admin_export_pick_sends_json(self):
+        bid = self._add_book("Export Me", author="Auth")
+        q = self._callback_query(f"admin_export_pick:{bid}")
+        state = await bot.admin_export_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        q.edit_message_text.assert_called_once()
+        body = q.edit_message_text.call_args[0][0]
+        self.assertIn("Export Me", body)
+        self.assertIn("bookclub-bot-book", body)
+
+    async def test_admin_menu_cb_import_prompts(self):
+        q = self._callback_query("admin:import")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_IMPORT_WAIT)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("JSON", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_import_handler_inserts_book(self):
+        payload = bot.book_to_export_payload(
+            bot.db_get_book(self._add_book("Imported", author="Writer"))
+        )
+        self.update.message.text = payload
+        state = await bot.admin_import_handler(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        books = bot.db_get_books(discussed=False, include_hidden=True)
+        titles = [b["title"] for b in books]
+        self.assertEqual(titles.count("Imported"), 2)
+
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
         self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)

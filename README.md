@@ -42,6 +42,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
   - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
   - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 10-minute delay).
+  - **Export / import (JSON):** Copy a single book to another bot instance — pick a book under **Export book (JSON)**, copy the message text, then on the target instance use **Import book (JSON)** and paste it in one message. Votes are not transferred; attribution (`added_by_name` / `@username`) is preserved so the original submitter can still edit on the new instance. Works for discussed or hidden books too.
 
 ## 🖼 Screenshots
 ![Top](screenshots/2026-04-04_screenshot_top.png)
@@ -89,6 +90,8 @@ The database schema is shared. For films, fields are reused as follows:
 | `fiction` | Fiction / non-fiction | Feature film / documentary |
 
 You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub_bot.py`.
+
+To move one entry between instances (e.g. after spinning up a new bot or merging clubs), use **Export book (JSON)** / **Import book (JSON)** in `/adminconsole` on each side — see Admin Commands above. The payload is a small JSON document (`format`: `bookclub-bot-book`); `entity` in the file is informational if book vs film labels differ.
 
 3. **Run the bot using Docker:**
    ```bash
