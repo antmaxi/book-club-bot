@@ -1401,9 +1401,9 @@ COMMANDS = {
         BotCommand("edit", "✏️ Edit a book entry"),
         BotCommand("delete", "🗑 Delete a book"),
         BotCommand("adminconsole", "🛠 Admin console"),
-        BotCommand("info", "ℹ️ About the bot"),
-        BotCommand("help", "❓ Show help"),
         BotCommand("cancel", "❌ Cancel current action"),
+        BotCommand("help", "❓ Show help"),
+        BotCommand("info", "ℹ️ About the bot"),
     ],
     "ru": [
         BotCommand("add", "➕ Добавить книгу"),
@@ -1414,9 +1414,9 @@ COMMANDS = {
         BotCommand("edit", "✏️ Редактировать запись"),
         BotCommand("delete", "🗑 Удалить книгу"),
         BotCommand("adminconsole", "🛠 Админ-панель"),
-        BotCommand("info", "ℹ️ О боте"),
-        BotCommand("help", "❓ Показать помощь"),
         BotCommand("cancel", "❌ Отменить действие"),
+        BotCommand("help", "❓ Показать помощь"),
+        BotCommand("info", "ℹ️ О боте"),
     ],
 }
 

@@ -283,6 +283,11 @@ class TestCommandsMenu(BotHandlerTestCase):
         desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "info")
         self.assertEqual(desc, "ℹ️ О боте")
 
+    async def test_info_after_help_in_menu(self):
+        for lang in ("en", "ru"):
+            cmds = [c.command for c in bot.COMMANDS[lang]]
+            self.assertEqual(cmds[-2:], ["help", "info"])
+
 
 # ── /list ──────────────────────────────────────────────────────────────────────
 
