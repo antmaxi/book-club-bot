@@ -24,31 +24,13 @@
 
 set -uo pipefail
 
-# --- Configuration ---------------------------------------------------------
-# One subfolder per running instance. Each must be a git clone of this repo
-# containing its own docker-compose.yml, .env, and data/ directory.
-#
-# This array is deliberately overridden from a *local, untracked* file
-# instead of edited in place: this script lives inside a repo that gets
-# `git pull`-ed by itself, and a server-specific path list would either get
-# clobbered by the pull or turn into a permanent merge conflict. Create
-# deploy_bots.local.sh next to this script (gitignored) and set REPOS there.
-REPOS=(
-    "/root/book-club-bot"
-    "/root/philo-club-bot"
-    "/root/test-club-bot"
-)
-
 IDLE_THRESHOLD_MINUTES=10
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IDLE_CHECKER="${SCRIPT_DIR}/check_bot_idle.py"
 LOG_FILE="${SCRIPT_DIR}/deploy_bots.log"
 
-LOCAL_CONFIG="${SCRIPT_DIR}/deploy_bots.local.sh"
-if [ -f "$LOCAL_CONFIG" ]; then
-    # shellcheck source=/dev/null
-    source "$LOCAL_CONFIG"
-fi
+# shellcheck source=load_deploy_repos.sh
+source "${SCRIPT_DIR}/load_deploy_repos.sh"
 
 # --- Flags -------------------------------------------------------------
 AUTO_YES=0        # --yes: don't prompt for IDLE repos

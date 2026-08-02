@@ -19,5 +19,4 @@ __pycache__/
 *_dbs/
 backups/
 *.env
-scripts/deploy_bots.local.sh
 scripts/deploy_bots.log

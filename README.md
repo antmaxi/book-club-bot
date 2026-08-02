@@ -73,6 +73,8 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
+   # Optional (server only): colon-separated paths for deploy_bots.sh / logs.sh
+   DEPLOY_REPOS="/root/book-club-bot:/root/philo-club-bot"
    ```
    `CHAT_LANG` applies only to shared group posts (automatic new-book announcements, admin-posted voting reminders in the group, and the vote cards attached to them). Messages sent to individuals always follow that
    person's own `/settings` language.
@@ -137,14 +139,13 @@ persistence file (`data/bot_persistence`) — the same timestamp
 `membership_gate()` stamps on every non-admin update. Admin activity never
 counts as "in use", so testing the deploy yourself doesn't block the next run.
 
-1. Create `scripts/deploy_bots.local.sh` (gitignored, sourced by `deploy_bots.sh`
-   if present) with the list of instance subfolders on this server:
-   ```bash
-   REPOS=(
-       "/root/book-club-bot"
-       # "/root/another-club-bot"
-   )
+1. In the **same clone** you run deploy from, add `DEPLOY_REPOS` to `.env` — colon-separated
+   absolute paths to each bot instance on this server (each folder needs its own
+   `docker-compose.yml`, `.env`, and `data/`):
+   ```env
+   DEPLOY_REPOS="/root/book-club-bot:/root/philo-club-bot"
    ```
+   `scripts/deploy_bots.sh` and `scripts/logs.sh` read this via `scripts/load_deploy_repos.sh`.
 2. Run it: `./scripts/deploy_bots.sh`
    - `--check-only` — report activity status for every instance and exit; changes nothing.
    - `--yes` — auto-confirm instances with no recent activity; instances that look active are still prompted.
@@ -164,8 +165,8 @@ compose` stack on one small VPS, updated by this script, is simpler to
 operate and debug for this shape of workload. If instance count grows large
 enough that per-server `REPOS` lists become unwieldy, a lighter next step
 than Kubernetes would be a `systemd` timer calling this script instead of
-cron (structured logs via `journalctl`), or moving `REPOS` into a small
-inventory file read by the script.
+cron (structured logs via `journalctl`), or a dedicated inventory file if the
+instance list outgrows a single `.env` line.
 
 ## 🔎 Logs & error alerts
 
@@ -189,8 +190,8 @@ every few seconds) so an error storm can't turn into a notification storm.
 
 `scripts/logs.sh` searches and tails the logs of **every** instance on the
 server from one place, prefixing each line with the instance it came from so
-you don't have to `grep` three separate files by hand. It reuses the same
-`REPOS` list as `deploy_bots.sh` (from `scripts/deploy_bots.local.sh`).
+you don't have to `grep` three separate files by hand. It uses the same
+`DEPLOY_REPOS` list as `deploy_bots.sh` (from the project root `.env`).
 
 ```bash
 ./scripts/logs.sh                # last 50 ERROR/WARNING lines across all bots

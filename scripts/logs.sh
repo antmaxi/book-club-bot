@@ -8,9 +8,8 @@
 # backups) and prefixes every line with the instance name, so you can tell which
 # bot a message came from. Colours ERROR/CRITICAL red and WARNING yellow.
 #
-# Instance list: reuses the same REPOS array as deploy_bots.sh. Put your
-# server-specific paths in scripts/deploy_bots.local.sh (gitignored):
-#     REPOS=("/root/book-club-bot" "/root/philo-club-bot" "/root/test-club-bot")
+# Instance list: same DEPLOY_REPOS in the project root .env as deploy_bots.sh
+# (see scripts/load_deploy_repos.sh).
 #
 # Usage:
 #   ./logs.sh                      Last 50 ERROR/WARNING lines across all bots
@@ -30,17 +29,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- Instance list (shared with deploy_bots.sh) ----------------------------
-REPOS=(
-    "/root/book-club-bot"
-    "/root/philo-club-bot"
-    "/root/test-club-bot"
-)
-LOCAL_CONFIG="${SCRIPT_DIR}/deploy_bots.local.sh"
-if [ -f "$LOCAL_CONFIG" ]; then
-    # shellcheck source=/dev/null
-    source "$LOCAL_CONFIG"
-fi
+# shellcheck source=load_deploy_repos.sh
+source "${SCRIPT_DIR}/load_deploy_repos.sh"
 
 LOG_RELPATH="logs/bookclub_bot.log"
 
