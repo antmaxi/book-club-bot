@@ -8,7 +8,7 @@ No Telegram API calls are made here.
 import os
 import sqlite3
 import unittest
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import bookclub_bot as bot
@@ -333,6 +333,27 @@ class TestDatabase(unittest.TestCase):
     def test_parse_book_import_rejects_bad_json(self):
         with self.assertRaises(ValueError):
             bot.parse_book_import("not json")
+
+    def test_db_begin_new_book_notify_is_idempotent(self):
+        bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_set_new_book_notify_pending(
+            bid, 42, datetime.now() + timedelta(minutes=5)
+        )
+        self.assertEqual(bot.db_begin_new_book_notify(bid), 42)
+        self.assertIsNone(bot.db_begin_new_book_notify(bid))
+
+    def test_recover_pending_new_book_notifications(self):
+        bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_set_new_book_notify_pending(
+            bid, 1, datetime.now() + timedelta(seconds=120)
+        )
+        jq = MagicMock()
+        bot.recover_pending_new_book_notifications(jq)
+        jq.run_once.assert_called_once()
+        self.assertEqual(jq.run_once.call_args[1]["data"], {"book_id": bid})
+        delay = jq.run_once.call_args[1]["when"]
+        self.assertGreater(delay, 0)
+        self.assertLessEqual(delay, 120)
 
     # -- User settings --
 

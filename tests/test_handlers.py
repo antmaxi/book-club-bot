@@ -8,7 +8,7 @@ No real Telegram API calls are made.
 import os
 import sqlite3
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from telegram import Bot, Chat, Message, MessageEntity, Update, User
@@ -533,11 +533,14 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
         confirm = self.message.reply_text.call_args[0][0]
         self.assertIn("Book added", confirm)
-        self.assertIn("10 minutes", confirm)
+        self.assertIn("5 minutes", confirm)
         self.ctx.job_queue.run_once.assert_called_once()
         job_kwargs = self.ctx.job_queue.run_once.call_args[1]
-        self.assertEqual(job_kwargs["when"], 600)
-        self.assertEqual(job_kwargs["data"]["adder_id"], self.update.effective_user.id)
+        self.assertEqual(job_kwargs["when"], bot.NEW_BOOK_NOTIFY_DELAY_SECONDS)
+        book_id = job_kwargs["data"]["book_id"]
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["notify_adder_id"], self.update.effective_user.id)
+        self.assertEqual(book["notify_sent"], 0)
 
     async def test_add_description_no_job_queue(self):
         self.ctx.user_data["new_book"] = {
@@ -1096,12 +1099,13 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(state, ConversationHandler.END)
         self.ctx.job_queue.run_once.assert_called_once()
         job_kwargs = self.ctx.job_queue.run_once.call_args[1]
-        self.assertEqual(job_kwargs["when"], 600)
-        self.assertEqual(
-            job_kwargs["data"]["adder_id"], self.update.effective_user.id
-        )
+        self.assertEqual(job_kwargs["when"], bot.NEW_BOOK_NOTIFY_DELAY_SECONDS)
         imported_id = job_kwargs["data"]["book_id"]
         self.assertNotEqual(imported_id, source["id"])
+        imported = bot.db_get_book(imported_id)
+        self.assertEqual(
+            imported["notify_adder_id"], self.update.effective_user.id
+        )
 
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
@@ -1121,11 +1125,14 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Chatty Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
+        bot.db_set_new_book_notify_pending(
+            bid, 999, datetime.now() + timedelta(minutes=5)
+        )
 
         # Setup job mock. The adder's language is deliberately English to show
         # the shared group post does NOT follow it — group messages use CHAT_LANG.
         self.ctx.job = MagicMock()
-        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.job.data = {"book_id": bid}
         self.ctx.application.user_data = {999: {"lang": "en"}}
 
         with patch.object(bot, "CHAT_LANG", "en"):
@@ -1144,8 +1151,12 @@ class TestAdminConsole(BotHandlerTestCase):
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
 
         self.ctx.job = MagicMock()
-        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.job.data = {"book_id": bid}
         self.ctx.application.user_data = {999: {"lang": "en"}}  # adder prefers English
+
+        bot.db_set_new_book_notify_pending(
+            bid, 999, datetime.now() + timedelta(minutes=5)
+        )
 
         with patch.object(bot, "CHAT_LANG", "ru"):
             await bot.notify_new_book_job(self.ctx)
@@ -1158,10 +1169,13 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Hidden Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
-        bot.db_toggle_hidden(bid)  # admin hid it inside the 10-minute window
+        bot.db_toggle_hidden(bid)  # admin hid it inside the notify delay window
+        bot.db_set_new_book_notify_pending(
+            bid, 999, datetime.now() + timedelta(minutes=5)
+        )
 
         self.ctx.job = MagicMock()
-        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.job.data = {"book_id": bid}
         self.ctx.application.user_data = {}
 
         await bot.notify_new_book_job(self.ctx)
@@ -1172,9 +1186,12 @@ class TestAdminConsole(BotHandlerTestCase):
         bid = self._add_book("Quiet Book")
         bot.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 0)
+        bot.db_set_new_book_notify_pending(
+            bid, 999, datetime.now() + timedelta(minutes=5)
+        )
 
         self.ctx.job = MagicMock()
-        self.ctx.job.data = {"book_id": bid, "adder_id": 999}
+        self.ctx.job.data = {"book_id": bid}
         self.ctx.application.user_data = {}
 
         await bot.notify_new_book_job(self.ctx)

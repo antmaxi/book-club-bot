@@ -12,7 +12,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - ❌ **Don't want to read** (-1 point)
 - **Top Rated Books:** View a list of undiscussed books ranked by their votes score.
 - **Smart Notifications:** 
-  - Get notified when a new book is added (with a 10-minute delay).
+  - Get notified when a new book is added (with a 5-minute delay).
   - Notifications include a voting card to vote directly from the message.
   - Opt-in or out via `/settings`.
   - **Admin Notifications:** The main admin (first ID in `ADMIN_IDS`) receives notifications when the bot starts up or shuts down.
@@ -41,7 +41,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - **Hide books:** Temporarily hide books from the `/list` and `/top` without deleting them.
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
   - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
-  - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 10-minute delay).
+  - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 5-minute delay).
   - **Export / import (JSON):** Copy a single book to another bot instance — pick a book under **Export book (JSON)**, copy the message text, then on the target instance use **Import book (JSON)** and paste it in one message. Votes are not transferred; attribution (`added_by_name` / `@username`) is preserved so the original submitter can still edit on the new instance. Works for discussed or hidden books too.
 
 ## 🖼 Screenshots

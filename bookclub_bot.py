@@ -12,12 +12,12 @@ Features:
   - Add and manage books for the club.
   - Vote on books: "Want", "Don't care", "Don't want".
   - Ranking system (Top books) based on average score and vote count.
-  - New book notifications: receive a voting card for new books after 10 minutes.
+  - New book notifications: receive a voting card for new books after 5 minutes.
   - User settings to opt-in or out of notifications.
 
 Commands:
   /start / /help   - Welcome message and command overview
-  /add             - Add a new book (with 10-minute delayed notification to others)
+  /add             - Add a new book (with 5-minute delayed notification to others)
   /list            - List all undiscussed books (all or only unvoted)
   /top             - View top-rated undiscussed books
   /settings        - Manage notification and language preferences
@@ -39,7 +39,7 @@ import os
 import sqlite3
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
 from telegram import (
@@ -106,6 +106,11 @@ ALLOWED_CHAT_NAME = (
 # Language for messages the bot posts into the group chat. Group messages are
 # shared, so they can't follow any single user's language preference.
 CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
+
+# Delay before broadcasting a new-book card to opted-in users (and optional group chat).
+NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
+    os.environ.get("NEW_BOOK_NOTIFY_DELAY_SECONDS", "300")
+)
 
 # Conversation states
 (
@@ -362,16 +367,16 @@ T: dict[str, dict[str, TranslationValue]] = {
         "score_calc_info": "✅ Want: +1 point\n😐 Don't care: +0.5 points\n❌ Don't want: -1 point\nTotal score = sum of all votes (not average).Sorted by this score, then by date added.",
         "settings_title": "⚙️ <b>Settings</b>",
         "settings_notify_label": "Notifications for new books:",
-        "settings_notify_on": "🔔 Enabled (10 min delay)",
+        "settings_notify_on": "🔔 Enabled (5 min delay)",
         "settings_notify_off": "🔕 Disabled",
         "settings_notify_btn": "Toggle Notifications",
         "settings_lang_btn": "🌐 Switch to Russian",
-        "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new books?",
+        "notify_optin_prompt": "Would you like to receive notifications (with a 5-minute delay) when others add new books?",
         "notify_optin_yes": "🔔 Yes, notify me",
         "notify_optin_no": "🔕 No, thanks",
         "notify_optin_success": "✅ Settings saved!",
-        "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
-        "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 10 minutes)</i>",
+        "new_book_notification": "🆕 <b>New book added!</b>\n(Note: you receive this 5 minutes after it was added)\n\n",
+        "new_book_delay_note": "\n\n<i>(Notifications for this book will be sent to others in 5 minutes)</i>",
         "not_member": "⛔ This bot is only for members of the <b>{chat}</b> chat. Please join first.",
         "bot_started": "🚀 <b>Bot is up!</b>",
         "bot_stopped": "🛑 <b>Bot is down.</b>",
@@ -514,11 +519,11 @@ T: dict[str, dict[str, TranslationValue]] = {
         "score_calc_info": "✅ Хочу: +1 балл\n😐 Всё равно: +0.5 баллов\n❌ Не хочу: -1 балл\n\nСортировка по суммарному баллу, затем по дате добавления.",
         "settings_title": "⚙️ <b>Настройки</b>",
         "settings_notify_label": "Уведомления о новых книгах:",
-        "settings_notify_on": "🔔 Включены (задержка 10 мин)",
+        "settings_notify_on": "🔔 Включены (задержка 5 мин)",
         "settings_notify_off": "🔕 Выключены",
         "settings_notify_btn": "Переключить уведомления",
         "settings_lang_btn": "🌐 Switch to English",
-        "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые книги?",
+        "notify_optin_prompt": "Хотите получать уведомления (с задержкой 5 минут), когда другие добавляют новые книги?",
         "notify_optin_yes": "🔔 Да, уведомлять",
         "notify_optin_no": "🔕 Нет, спасибо",
         "notify_optin_success": "✅ Настройки сохранены!",
@@ -621,9 +626,9 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "list_all_btn": "🎬 All films",
             "all_voted": "You've voted on all films!",
             "settings_notify_label": "Notifications for new films:",
-            "notify_optin_prompt": "Would you like to receive notifications (with a 10-minute delay) when others add new films?",
-            "new_book_notification": "🆕 <b>New film added!</b>\n(Note: you receive this 10 minutes after it was added)\n\n",
-            "new_book_delay_note": "\n\n<i>(Notifications for this film will be sent to others in 10 minutes)</i>",
+            "notify_optin_prompt": "Would you like to receive notifications (with a 5-minute delay) when others add new films?",
+            "new_book_notification": "🆕 <b>New film added!</b>\n(Note: you receive this 5 minutes after it was added)\n\n",
+            "new_book_delay_note": "\n\n<i>(Notifications for this film will be sent to others in 5 minutes)</i>",
             "vote_reminder_msg": "👋 <b>Friendly reminder!</b>\nYou haven't voted for some of our top films yet. Take a look and cast your vote:\n\n",
             "admin_notify_chat_confirm": "💬 Voting reminder posted to the group chat ({count} film(s)).",
             "admin_export_btn": "📤 Export film (JSON)",
@@ -694,7 +699,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "list_all_btn": "🎬 Все фильмы",
             "all_voted": "Вы проголосовали за все фильмы!",
             "settings_notify_label": "Уведомления о новых фильмах:",
-            "notify_optin_prompt": "Хотите получать уведомления (с задержкой 10 минут), когда другие добавляют новые фильмы?",
+            "notify_optin_prompt": "Хотите получать уведомления (с задержкой 5 минут), когда другие добавляют новые фильмы?",
             "new_book_notification": "🆕 <b>Добавлен новый фильм!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
             "new_book_delay_note": "\n\n<i>(Уведомления об этом фильме будут разосланы остальным через 10 минут)</i>",
             "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы ещё не проголосовали за некоторые популярные фильмы. Посмотрите и оставьте свой голос:\n\n",
@@ -825,6 +830,9 @@ def init_db() -> None:
             ("discussed", "INTEGER NOT NULL DEFAULT 0"),
             ("discussed_at", "TEXT DEFAULT NULL"),
             ("added_by_username", "TEXT DEFAULT NULL"),
+            ("notify_sent", "INTEGER NOT NULL DEFAULT 1"),
+            ("notify_after", "TEXT DEFAULT NULL"),
+            ("notify_adder_id", "INTEGER DEFAULT NULL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
@@ -992,6 +1000,59 @@ def db_set_hidden(book_id: int, hidden: bool) -> None:
             (int(hidden), book_id),
         )
         conn.commit()
+
+
+def db_set_new_book_notify_pending(
+    book_id: int, adder_id: int, notify_after: datetime
+) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """UPDATE books SET notify_sent=0, notify_adder_id=?, notify_after=?
+               WHERE id=?""",
+            (adder_id, notify_after.isoformat(timespec="seconds"), book_id),
+        )
+        conn.commit()
+
+
+def db_mark_new_book_notify_done(book_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "UPDATE books SET notify_sent=1 WHERE id=?",
+            (book_id,),
+        )
+        conn.commit()
+
+
+def db_begin_new_book_notify(book_id: int) -> int | None:
+    """Mark notify as sent; return adder to exclude from blast, or None if already done."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        row = conn.execute(
+            "SELECT notify_adder_id FROM books WHERE id=? AND notify_sent=0",
+            (book_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        cur = conn.execute(
+            "UPDATE books SET notify_sent=1 WHERE id=? AND notify_sent=0",
+            (book_id,),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return int(row[0]) if row[0] is not None else 0
+
+
+def db_get_books_pending_notify() -> list[sqlite3.Row]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            """SELECT b.* FROM books b
+               WHERE b.notify_sent=0 AND b.notify_after IS NOT NULL"""
+        ).fetchall()
 
 
 def db_toggle_hidden(book_id: int) -> None:
@@ -1894,7 +1955,7 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     if book is None:
         raise RuntimeError(f"book {book_id} missing immediately after insert")
 
-    # Mention the 10-minute delay in the confirmation message
+    # Mention the delay in the confirmation message
     confirm_text = f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}{tr(ctx, 'new_book_delay_note')}"
 
     await update.message.reply_text(confirm_text, parse_mode=PM)
@@ -1905,31 +1966,74 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 
+def enqueue_new_book_notify_job(
+    job_queue: Any, book_id: int, delay_seconds: float
+) -> None:
+    job_queue.run_once(
+        notify_new_book_job,
+        when=delay_seconds,
+        data={"book_id": book_id},
+        name=f"notify_book_{book_id}",
+    )
+
+
 def schedule_new_book_notifications(
     job_queue: Any,
     book_id: int,
     adder_id: int,
+    delay_seconds: float | None = None,
 ) -> None:
-    """Schedule the standard 10-minute delayed new-book notifications."""
+    """Schedule delayed new-book notifications (survives restart via DB + recovery)."""
+    delay = (
+        float(NEW_BOOK_NOTIFY_DELAY_SECONDS)
+        if delay_seconds is None
+        else delay_seconds
+    )
+    notify_after = datetime.now() + timedelta(seconds=delay)
+    db_set_new_book_notify_pending(book_id, adder_id, notify_after)
     if job_queue:
-        job_queue.run_once(
-            notify_new_book_job,
-            when=600,  # 10 minutes
-            data={"book_id": book_id, "adder_id": adder_id},
-            name=f"notify_book_{book_id}",
-        )
+        enqueue_new_book_notify_job(job_queue, book_id, delay)
     else:
         logger.error(
-            "JobQueue is None — notifications will not be sent.\n"
+            "JobQueue is None — in-memory job not scheduled; "
+            "notify will run after restart if notify_after is still in the DB.\n"
             'Fix: pip install "python-telegram-bot[job-queue]"\n'
             "Then restart the bot."
         )
 
 
+def recover_pending_new_book_notifications(job_queue: Any) -> None:
+    """Re-queue new-book notify jobs lost when the process restarted."""
+    if not job_queue:
+        logger.warning(
+            "recover_pending_new_book_notifications: no JobQueue, skipping recovery"
+        )
+        return
+    now = datetime.now()
+    for book in db_get_books_pending_notify():
+        raw = book["notify_after"]
+        if not raw:
+            continue
+        try:
+            notify_after = datetime.fromisoformat(str(raw))
+        except ValueError:
+            logger.warning(
+                "recover_pending_new_book_notifications: bad notify_after "
+                f"for book {book['id']}: {raw!r}"
+            )
+            continue
+        delay = max(0.0, (notify_after - now).total_seconds())
+        enqueue_new_book_notify_job(job_queue, int(book["id"]), delay)
+        logger.info(
+            "Recovered new-book notify job for book %s (fires in %.0fs)",
+            book["id"],
+            delay,
+        )
+
+
 async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fired 10 minutes after a book is added. Sends a card to all opted-in users."""
-    book_id = ctx.job.data["book_id"]
-    adder_id = ctx.job.data["adder_id"]
+    """Fired after the new-book delay. Sends a card to all opted-in users."""
+    book_id = int(ctx.job.data["book_id"])
 
     book = db_get_book(book_id)
     if not book:
@@ -1937,9 +2041,18 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if book["discussed"]:
         logger.info(f"notify_new_book_job: book {book_id} already discussed, skipping.")
+        db_mark_new_book_notify_done(book_id)
         return
     if book["hidden"]:
         logger.info(f"notify_new_book_job: book {book_id} was hidden, skipping.")
+        db_mark_new_book_notify_done(book_id)
+        return
+
+    adder_id = db_begin_new_book_notify(book_id)
+    if adder_id is None:
+        logger.info(
+            f"notify_new_book_job: book {book_id} already notified, skipping."
+        )
         return
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
@@ -2883,6 +2996,7 @@ async def bot_notify_startup(app: Application) -> None:
     # flushed on the first tick.
     if ERROR_ALERTS:
         app.create_task(_drain_alert_queue(app))
+    recover_pending_new_book_notifications(app.job_queue)
     admin_id = ADMIN_IDS[0]
     try:
         # We don't have user_data here, default to English for system notifications.
