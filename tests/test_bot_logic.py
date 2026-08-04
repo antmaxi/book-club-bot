@@ -36,6 +36,7 @@ def make_book(**kwargs):
         "discussed": 0,
         "discussed_at": None,
         "original_language": None,
+        "creation_year": None,
     }
     defaults.update(kwargs)
     return defaults
@@ -345,6 +346,17 @@ class TestDatabase(unittest.TestCase):
         book = make_book(original_language=None)
         text = bot.book_card(book, "en")
         self.assertNotIn("Original language", text)
+
+    def test_book_card_shows_creation_year_when_set(self):
+        book = make_book(creation_year=1984)
+        text = bot.book_card(book, "en")
+        self.assertIn("Year", text)
+        self.assertIn("1984", text)
+
+    def test_book_card_hides_creation_year_when_empty(self):
+        book = make_book(creation_year=None)
+        text = bot.book_card(book, "en")
+        self.assertNotIn("📅", text)
 
     def test_seed_film_script_inserts_once(self):
         inserted = 0

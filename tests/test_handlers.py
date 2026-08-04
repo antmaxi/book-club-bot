@@ -515,7 +515,27 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.text = "/skip"
         state = await bot.add_original_language(self.update, self.ctx)
         self.assertEqual(self.ctx.user_data["new_book"]["original_language"], "")
+        self.assertEqual(state, bot.ADDING_CREATION_YEAR)
+
+    async def test_add_creation_year_valid(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "1984"
+        state = await bot.add_creation_year(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["creation_year"], 1984)
         self.assertEqual(state, bot.ADDING_DESCRIPTION)
+
+    async def test_add_creation_year_skip(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "/skip"
+        state = await bot.add_creation_year(self.update, self.ctx)
+        self.assertIsNone(self.ctx.user_data["new_book"]["creation_year"])
+        self.assertEqual(state, bot.ADDING_DESCRIPTION)
+
+    async def test_add_creation_year_invalid(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "84"
+        state = await bot.add_creation_year(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_CREATION_YEAR)
 
     async def test_add_review_invalid_url(self):
         self.ctx.user_data["new_book"] = {}

@@ -120,13 +120,14 @@ NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
     ADDING_FICTION,
     ADDING_REVIEW,
     ADDING_ORIGINAL_LANGUAGE,
+    ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
-) = range(7)
-EDITING_CHOOSE = 7
-EDITING_FIELD = 8  # waiting for new value of current field
-DELETING_CHOOSE = 9
+) = range(8)
+EDITING_CHOOSE = 8
+EDITING_FIELD = 9  # waiting for new value of current field
+DELETING_CHOOSE = 10
 ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
-    range(10, 19)
+    range(11, 20)
 )
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
@@ -283,6 +284,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
         "ask_original_language": "🌐 <b>Original language</b> of the book (or /skip if unsure):",
+        "ask_creation_year": "📅 <b>Year of creation</b> (publication year; 4 digits, or /skip if unknown):",
+        "invalid_creation_year": "⚠️ Please enter a valid 4-digit year (e.g. 1984), or /skip:",
         "ask_desc": "📝 Add a <b>description</b> (or /skip to leave empty):",
         "book_added": "✅ Book added!",
         "no_books": "📭 No books yet. Use /add to add one!",
@@ -304,6 +307,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "added_on": "Added on",
         "pages_label": "Pages",
         "original_language_label": "Original language",
+        "creation_year_label": "Year",
         "review_label": "Review",
         "cancel_btn": "❌ Cancel",
         "edit_field_prompt": "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
@@ -313,6 +317,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "edit_done": "✅ Book updated!",
         "edit_invalid_pages": "⚠️ Must be a positive number. Send again:",
         "edit_invalid_url": "⚠️ Must start with http:// or https://. Send again:",
+        "edit_invalid_creation_year": "⚠️ Must be a 4-digit year (e.g. 1984). Send again:",
         "field_title": "Title",
         "field_author": "Author",
         "field_pages": "Pages",
@@ -320,6 +325,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_review": "Review link",
         "field_description": "Description",
         "field_original_language": "Original language",
+        "field_creation_year": "Year of creation",
         "deleted": "🗑 <b>{title}</b> has been deleted.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -434,6 +440,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
         "ask_original_language": "🌐 <b>Язык оригинала</b> книги (или /skip, если не знаете):",
+        "ask_creation_year": "📅 <b>Год создания</b> (год издания; 4 цифры, или /skip, если не знаете):",
+        "invalid_creation_year": "⚠️ Введите корректный год из 4 цифр (например, 1984) или /skip:",
         "ask_desc": "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
         "book_added": "✅ Книга добавлена!",
         "no_books": "📭 Книг пока нет. Используйте /add, чтобы добавить!",
@@ -455,6 +463,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "added_on": "Добавлено",
         "pages_label": "Страниц",
         "original_language_label": "Язык оригинала",
+        "creation_year_label": "Год",
         "review_label": "Рецензия",
         "cancel_btn": "❌ Отмена",
         "edit_field_prompt": "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
@@ -464,6 +473,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "edit_done": "✅ Книга обновлена!",
         "edit_invalid_pages": "⚠️ Должно быть положительным числом. Отправьте снова:",
         "edit_invalid_url": "⚠️ Должна начинаться с http:// или https://. Отправьте снова:",
+        "edit_invalid_creation_year": "⚠️ Должен быть год из 4 цифр (например, 1984). Отправьте снова:",
         "field_title": "Название",
         "field_author": "Автор",
         "field_pages": "Страниц",
@@ -471,6 +481,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_review": "Ссылка на рецензию",
         "field_description": "Описание",
         "field_original_language": "Язык оригинала",
+        "field_creation_year": "Год создания",
         "deleted": "🗑 <b>{title}</b> удалена.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -592,6 +603,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "invalid_pages": "⚠️ Please enter a valid runtime in minutes (e.g. 120):",
             "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
             "ask_original_language": "🌐 <b>Original language</b> of the film (or /skip if unsure):",
+            "ask_creation_year": "📅 <b>Release year</b> (4 digits, or /skip if unknown):",
             "fiction_btn": "🎬 Feature",
             "nonfiction_btn": "📽 Documentary",
             "book_added": "✅ Film added!",
@@ -611,6 +623,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "field_author": "Director",
             "field_pages": "Runtime (min)",
             "field_fiction": "Feature / Documentary",
+            "field_creation_year": "Release year",
             "fiction_label": "Feature",
             "nonfiction_label": "Documentary",
             "want_label": "✅ want to watch",
@@ -666,6 +679,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "invalid_pages": "⚠️ Введите корректную длительность в минутах (например, 120):",
             "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
             "ask_original_language": "🌐 <b>Язык оригинала</b> фильма (или /skip, если не знаете):",
+            "ask_creation_year": "📅 <b>Год выхода</b> (4 цифры, или /skip, если не знаете):",
             "fiction_btn": "🎬 Худ. фильм",
             "nonfiction_btn": "📽 Документальный",
             "book_added": "✅ Фильм добавлен!",
@@ -684,6 +698,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "edit_invalid_pages": "⚠️ Должно быть положительное число минут. Отправьте снова:",
             "field_author": "Режиссёр",
             "field_pages": "Длительность (мин)",
+            "field_creation_year": "Год выхода",
             "field_fiction": "Худ. / документальный",
             "fiction_label": "Худ. фильм",
             "nonfiction_label": "Документальный",
@@ -843,6 +858,7 @@ def init_db() -> None:
             ("notify_after", "TEXT DEFAULT NULL"),
             ("notify_adder_id", "INTEGER DEFAULT NULL"),
             ("original_language", "TEXT DEFAULT NULL"),
+            ("creation_year", "INTEGER DEFAULT NULL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
@@ -886,6 +902,7 @@ def db_add_book(
     user_name: str,
     username: str | None = None,
     original_language: str | None = None,
+    creation_year: int | None = None,
 ) -> int | None:
     lang = (original_language or "").strip() or None
     with sqlite3.connect(DB_PATH) as conn:
@@ -893,9 +910,9 @@ def db_add_book(
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language,
+                original_language, creation_year,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title,
                 author,
@@ -904,6 +921,7 @@ def db_add_book(
                 review_link,
                 description,
                 lang,
+                creation_year,
                 user_id,
                 user_name,
                 username,
@@ -1048,6 +1066,7 @@ def db_update_book_field(book_id: int, field: str, value: Any) -> None:
         "review_link",
         "description",
         "original_language",
+        "creation_year",
     }
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
@@ -1165,6 +1184,7 @@ def book_to_export_payload(book: BookLike) -> str:
             "review_link": book["review_link"] or "",
             "description": book["description"] or "",
             "original_language": book["original_language"] or "",
+            "creation_year": book["creation_year"],
             "hidden": bool(book["hidden"]),
             "discussed": bool(book["discussed"]),
             "discussed_at": book["discussed_at"],
@@ -1195,6 +1215,17 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
     review_link = str(raw.get("review_link", "") or "")
     description = str(raw.get("description", "") or "")
     original_language = str(raw.get("original_language", "") or "").strip() or None
+    creation_year_raw = raw.get("creation_year")
+    creation_year: int | None
+    if creation_year_raw is None or creation_year_raw == "":
+        creation_year = None
+    else:
+        try:
+            creation_year = int(creation_year_raw)
+        except (TypeError, ValueError) as e:
+            raise ValueError("invalid creation_year") from e
+        if creation_year < _CREATION_YEAR_MIN or creation_year > _CREATION_YEAR_MAX:
+            raise ValueError("invalid creation_year")
     hidden = 1 if raw.get("hidden") else 0
     discussed = 1 if raw.get("discussed") else 0
     discussed_at = raw.get("discussed_at")
@@ -1215,6 +1246,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
         "review_link": review_link,
         "description": description,
         "original_language": original_language,
+        "creation_year": creation_year,
         "hidden": hidden,
         "discussed": discussed,
         "discussed_at": discussed_at,
@@ -1261,10 +1293,10 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language,
+                original_language, creation_year,
                 hidden, discussed, discussed_at,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 book_data["title"],
                 book_data["author"],
@@ -1273,6 +1305,7 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
                 book_data["review_link"],
                 book_data["description"],
                 book_data.get("original_language"),
+                book_data.get("creation_year"),
                 book_data["hidden"],
                 book_data["discussed"],
                 book_data["discussed_at"],
@@ -1418,6 +1451,12 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
             3,
             f"🌐 {h(s(lang, 'original_language_label'))}: {h(str(orig_lang))}",
         )
+    creation_year = book["creation_year"]
+    if creation_year is not None:
+        lines.insert(
+            3,
+            f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
+        )
     if user_vote is not None:
         vote_label = vote_label_text(lang, user_vote)
         lines[-1] += f"  <i>({h(s(lang, 'your_vote'))}: {h(vote_label)})</i>"
@@ -1542,6 +1581,23 @@ def is_valid_url(text: str) -> bool:
         return False
     # Require something after the scheme.
     return bool(text.split("://", 1)[1])
+
+
+_CREATION_YEAR_MIN = 1000
+_CREATION_YEAR_MAX = 2100
+
+
+def parse_optional_creation_year(text: str) -> int | None:
+    """Return year, or None for /skip. Raises ValueError if invalid."""
+    stripped = text.strip()
+    if stripped == "/skip":
+        return None
+    if len(stripped) != 4 or not stripped.isdigit():
+        raise ValueError("invalid year")
+    year = int(stripped)
+    if year < _CREATION_YEAR_MIN or year > _CREATION_YEAR_MAX:
+        raise ValueError("year out of range")
+    return year
 
 
 def parse_date(text: str) -> str | None:
@@ -2014,6 +2070,18 @@ async def add_original_language(
 ) -> int:
     text = update.message.text.strip() if update.message and update.message.text else ""
     ctx.user_data["new_book"]["original_language"] = "" if text == "/skip" else text
+    await update.message.reply_text(tr(ctx, "ask_creation_year"), parse_mode=PM)
+    return ADDING_CREATION_YEAR
+
+
+async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    try:
+        year = parse_optional_creation_year(text)
+    except ValueError:
+        await update.message.reply_text(tr(ctx, "invalid_creation_year"), parse_mode=PM)
+        return ADDING_CREATION_YEAR
+    ctx.user_data["new_book"]["creation_year"] = year
     await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode=PM)
     return ADDING_DESCRIPTION
 
@@ -2044,6 +2112,7 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         user.full_name,
         user.username,
         original_language=nb.get("original_language") or None,
+        creation_year=nb.get("creation_year"),
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")
@@ -2853,6 +2922,7 @@ EDIT_FIELDS = [
     "fiction",
     "review_link",
     "original_language",
+    "creation_year",
     "description",
 ]
 
@@ -2873,6 +2943,9 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
         return book["description"] or ("—" if lang == "en" else "—")
     if field == "original_language":
         return book["original_language"] or ("—" if lang == "en" else "—")
+    if field == "creation_year":
+        cy = book["creation_year"]
+        return str(cy) if cy is not None else ("—" if lang == "en" else "—")
     return str(book[field])
 
 
@@ -3041,6 +3114,19 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(tr(ctx, "edit_invalid_url"), parse_mode=PM)
             return EDITING_FIELD
         value = text
+    elif field == "creation_year":
+        try:
+            value = parse_optional_creation_year(text)
+        except ValueError:
+            await update.message.reply_text(
+                tr(ctx, "edit_invalid_creation_year"), parse_mode=PM
+            )
+            return EDITING_FIELD
+        if value is None:
+            await update.message.reply_text(
+                tr(ctx, "edit_invalid_creation_year"), parse_mode=PM
+            )
+            return EDITING_FIELD
     else:
         value = text
 
@@ -3288,6 +3374,12 @@ def register_handlers(app: Application) -> None:
                     CommandHandler("skip", add_original_language),
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, add_original_language
+                    ),
+                ],
+                ADDING_CREATION_YEAR: [
+                    CommandHandler("skip", add_creation_year),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, add_creation_year
                     ),
                 ],
                 # /skip needs its own handler: a bare filters.TEXT here would also
