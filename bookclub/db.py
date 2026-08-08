@@ -347,6 +347,19 @@ def db_mark_discussed(book_id: int, date_str: str) -> None:
             "UPDATE books SET discussed=1, discussed_at=? WHERE id=?",
             (date_str, book_id),
         )
+        conn.commit()
+
+
+def db_set_discussed_at(book_id: int, date_str: str) -> bool:
+    """Update discussion date for an already-discussed book. Returns False if not found."""
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.execute(
+            "UPDATE books SET discussed_at=? WHERE id=? AND discussed=1",
+            (date_str, book_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def db_set_hidden(book_id: int, hidden: bool) -> None:

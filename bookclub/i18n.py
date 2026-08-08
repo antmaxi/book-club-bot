@@ -118,6 +118,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "book_hidden": "✅ <b>{title}</b> is now hidden.",
         "book_unhidden": "✅ <b>{title}</b> is now visible.",
         "choose_mark": "📌 Choose a book to mark as discussed:",
+        "admin_mark_menu": "📌 <b>Mark as discussed</b>\nWhat would you like to do?",
+        "admin_mark_new_btn": "➕ Mark undiscussed as discussed",
+        "admin_mark_edit_date_btn": "📅 Edit discussion date",
+        "choose_edit_discuss_date": "📅 Choose a discussed book to change its discussion date:",
+        "no_discussed_to_edit_date": "📭 No discussed books to edit.",
+        "current_discussed_date": "Current date: <b>{date}</b>",
+        "discussed_date_updated": "✅ Discussion date for <b>{title}</b> updated to {date}.",
         "no_unmark": "📭 No undiscussed books to mark.",
         "ask_discuss_date": "📅 Enter the <b>discussion date</b> (YYYY-MM-DD), or /today to use today:",
         "invalid_date": "⚠️ Invalid date. Use YYYY-MM-DD format (e.g. 2026-03-17):",
@@ -166,9 +173,9 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_meetings_view_btn": "👥 View meeting attendance",
         "choose_meeting_book": "📅 Choose the <b>discussed</b> book/film for this meeting:",
         "no_discussed_for_meeting": "📭 No discussed entries yet — mark one as discussed first.",
-        "ask_meeting_date": "📅 Enter the <b>meeting date</b> (YYYY-MM-DD), or /today:",
+        "meeting_no_discussed_date": "⚠️ This entry has no discussion date — mark it as discussed with a date first.",
         "meeting_attendees_prompt": (
-            "👥 <b>Who attended?</b>\n"
+            "👥 <b>Who attended?</b> (discussion date: <b>{date}</b>)\n"
             "Tap names to toggle. Suggestions include voters and people who used the bot.\n"
             "Selected: <b>{count}</b>"
         ),
@@ -309,6 +316,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "book_hidden": "✅ Книга <b>{title}</b> скрыта.",
         "book_unhidden": "✅ Книга <b>{title}</b> снова видна.",
         "choose_mark": "📌 Выберите книгу для отметки как обсуждённой:",
+        "admin_mark_menu": "📌 <b>Отметить как обсуждённую</b>\nЧто сделать?",
+        "admin_mark_new_btn": "➕ Отметить необсуждённую",
+        "admin_mark_edit_date_btn": "📅 Изменить дату обсуждения",
+        "choose_edit_discuss_date": "📅 Выберите обсуждённую книгу для изменения даты:",
+        "no_discussed_to_edit_date": "📭 Нет обсуждённых книг для редактирования даты.",
+        "current_discussed_date": "Текущая дата: <b>{date}</b>",
+        "discussed_date_updated": "✅ Дата обсуждения для <b>{title}</b> изменена на {date}.",
         "no_unmark": "📭 Нет необсуждённых книг для отметки.",
         "ask_discuss_date": "📅 Введите <b>дату обсуждения</b> (ГГГГ-ММ-ДД) или /today для сегодняшней даты:",
         "invalid_date": "⚠️ Неверный формат даты. Используйте ГГГГ-ММ-ДД (например, 2026-03-17):",
@@ -357,9 +371,9 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_meetings_view_btn": "👥 Кто был на встречах",
         "choose_meeting_book": "📅 Выберите <b>обсуждённую</b> книгу/фильм для этой встречи:",
         "no_discussed_for_meeting": "📭 Пока нет обсуждённых записей — сначала отметьте обсуждение.",
-        "ask_meeting_date": "📅 Введите <b>дату встречи</b> (ГГГГ-ММ-ДД) или /today:",
+        "meeting_no_discussed_date": "⚠️ У записи нет даты обсуждения — сначала отметьте обсуждение с датой.",
         "meeting_attendees_prompt": (
-            "👥 <b>Кто присутствовал?</b>\n"
+            "👥 <b>Кто присутствовал?</b> (дата обсуждения: <b>{date}</b>)\n"
             "Нажимайте на имена, чтобы отметить. В списке — голосовавшие и пользовавшиеся ботом.\n"
             "Выбрано: <b>{count}</b>"
         ),
@@ -454,6 +468,13 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_unhide": "👁 Choose a hidden film to show again in the list:",
             "choose_notify": "🔔 Choose a film to send a reminder for:",
             "choose_mark": "📌 Choose a film to mark as discussed:",
+            "admin_mark_menu": "📌 <b>Mark as discussed</b>\nWhat would you like to do?",
+            "admin_mark_new_btn": "➕ Mark undiscussed as discussed",
+            "admin_mark_edit_date_btn": "📅 Edit discussion date",
+            "choose_edit_discuss_date": "📅 Choose a discussed film to change its discussion date:",
+            "no_discussed_to_edit_date": "📭 No discussed films to edit.",
+            "current_discussed_date": "Current date: <b>{date}</b>",
+            "discussed_date_updated": "✅ Discussion date for <b>{title}</b> updated to {date}.",
             "no_unmark": "📭 No undiscussed films to mark.",
             "marked_discussed": "✅ <b>{title}</b> marked as discussed on {date}.",
             "discussed_title": "✅ <b>Discussed Films</b>\n\n",
@@ -535,6 +556,13 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_unhide": "👁 Выберите скрытый фильм, чтобы снова показать его в списке:",
             "choose_notify": "🔔 Выберите фильм для напоминания:",
             "choose_mark": "📌 Выберите фильм для отметки как обсуждённого:",
+            "admin_mark_menu": "📌 <b>Отметить как обсуждённый</b>\nЧто сделать?",
+            "admin_mark_new_btn": "➕ Отметить необсуждённый",
+            "admin_mark_edit_date_btn": "📅 Изменить дату обсуждения",
+            "choose_edit_discuss_date": "📅 Выберите обсуждённый фильм для изменения даты:",
+            "no_discussed_to_edit_date": "📭 Нет обсуждённых фильмов для редактирования даты.",
+            "current_discussed_date": "Текущая дата: <b>{date}</b>",
+            "discussed_date_updated": "✅ Дата обсуждения для <b>{title}</b> изменена на {date}.",
             "no_unmark": "📭 Нет необсуждённых фильмов для отметки.",
             "marked_discussed": "✅ <b>{title}</b> отмечен как обсуждённый {date}.",
             "discussed_title": "✅ <b>Обсуждённые фильмы</b>\n\n",

@@ -33,7 +33,6 @@ from bookclub.config import (
     ADMIN_MEETING_ADD_ID,
     ADMIN_MEETING_ATTENDEES,
     ADMIN_MEETING_BOOK,
-    ADMIN_MEETING_DATE,
     ADMIN_MEETINGS_VIEW,
     ADMIN_MENU,
     ADMIN_NOTIFY_CHAT_PICK,
@@ -64,11 +63,11 @@ from bookclub.handlers.admin import (
     admin_import_handler,
     admin_import_similar_cb,
     admin_mark_date_handler,
+    admin_mark_edit_pick_cb,
     admin_mark_pick_cb,
     admin_meeting_add_id_handler,
     admin_meeting_att_cb,
     admin_meeting_book_cb,
-    admin_meeting_date_handler,
     admin_meeting_view_cb,
     admin_menu_cb,
     admin_notify_chat_pick_cb,
@@ -172,7 +171,10 @@ def register_handlers(app: Application) -> None:
                 ADMIN_MARK_CHOOSE: [
                     CallbackQueryHandler(
                         admin_mark_pick_cb, pattern=r"^admin_mark_pick:"
-                    )
+                    ),
+                    CallbackQueryHandler(
+                        admin_mark_edit_pick_cb, pattern=r"^admin_mark_edit_pick:"
+                    ),
                 ],
                 # /today needs its own handler — see the ADDING_DESCRIPTION note above.
                 ADMIN_MARK_DATE: [
@@ -220,12 +222,6 @@ def register_handlers(app: Application) -> None:
                     CallbackQueryHandler(
                         admin_meeting_book_cb, pattern=r"^admin_meeting_book:"
                     )
-                ],
-                ADMIN_MEETING_DATE: [
-                    CommandHandler("today", admin_meeting_date_handler),
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_meeting_date_handler
-                    ),
                 ],
                 ADMIN_MEETING_ATTENDEES: [
                     CallbackQueryHandler(

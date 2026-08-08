@@ -9,7 +9,7 @@ from bookclub.config import DELETING_CHOOSE, EDITING_CHOOSE, EDITING_FIELD
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, T, get_lang, s, tr
-from bookclub.ui import books_keyboard, h
+from bookclub.ui import book_card, books_keyboard, h
 
 # ── /edit — sequential field-by-field editor ──────────────────────────────────
 # Fields edited in order: title, author, pages, fiction, review_link, description

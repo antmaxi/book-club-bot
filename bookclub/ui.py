@@ -354,7 +354,13 @@ async def _show_meeting_attendee_picker(
     await _refresh_chat_admin_suggestions(ctx.bot)
     suggestions = db_meeting_user_suggestions(book_id)
     selected = _meeting_attendee_ids(ctx)
-    text = tr(ctx, "meeting_attendees_prompt", count=len(selected))
+    meeting_date = ctx.user_data.get("meeting_date", "")
+    text = tr(
+        ctx,
+        "meeting_attendees_prompt",
+        count=len(selected),
+        date=h(str(meeting_date)),
+    )
     markup = meeting_attendees_keyboard(lang, suggestions, selected, page)
     if is_callback:
         await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode=PM)

@@ -913,6 +913,36 @@ class TestStartupShutdown(BotHandlerTestCase):
             cfg.ADMIN_IDS = old
 
 
+# ── /edit ─────────────────────────────────────────────────────────────────────
+
+
+class TestEdit(BotHandlerTestCase):
+
+    async def test_edit_skip_all_fields_shows_book_card(self):
+        """Regression: finishing /edit must render book_card (import from bookclub.ui)."""
+        bid = self._add_book(
+            "Card Title",
+            author="A. Writer",
+            pages=200,
+            user_id=self.update.effective_user.id,
+            username="testuser",
+        )
+        q = self._callback_query(f"edit_pick:{bid}")
+        state = await bot.edit_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.EDITING_FIELD)
+
+        for _ in bot.EDIT_FIELDS:
+            q = self._callback_query("edit_yn:no")
+            state = await bot.edit_yn_cb(self.update, self.ctx)
+
+        self.assertEqual(state, ConversationHandler.END)
+        q.edit_message_text.assert_called()
+        body = q.edit_message_text.call_args[0][0]
+        self.assertIn("Book updated", body)
+        self.assertIn("Card Title", body)
+        self.assertIn("A. Writer", body)
+
+
 # ── /cancel ────────────────────────────────────────────────────────────────────
 
 
@@ -958,9 +988,16 @@ class TestAdminConsole(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
         self.assertIn("Admin Console", self.message.reply_text.call_args[0][0])
 
-    async def test_admin_menu_cb_mark_shows_books(self):
-        self._add_book("Mark Me")
+    async def test_admin_menu_cb_mark_shows_submenu(self):
         q = self._callback_query("admin:mark")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MENU)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Mark as discussed", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_menu_cb_mark_new_shows_books(self):
+        self._add_book("Mark Me")
+        q = self._callback_query("admin:mark_new")
         state = await bot.admin_menu_cb(self.update, self.ctx)
         self.assertEqual(state, bot.ADMIN_MARK_CHOOSE)
         q.edit_message_text.assert_called_once()
@@ -1019,6 +1056,21 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(book["discussed_at"], "2026-03-17")
         self.message.reply_text.assert_called_once()
         self.assertIn("marked as discussed", self.message.reply_text.call_args[0][0])
+
+    async def test_admin_mark_edit_date_updates_discussed_at(self):
+        bid = self._add_book("Already Discussed")
+        bot.db_mark_discussed(bid, "2026-01-01")
+        q = self._callback_query(f"admin_mark_edit_pick:{bid}")
+        state = await bot.admin_mark_edit_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MARK_DATE)
+        self.assertTrue(self.ctx.user_data.get("mark_edit_date"))
+        self.message.text = "2026-06-15"
+        state = await bot.admin_mark_date_handler(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        book = bot.db_get_book(bid)
+        self.assertEqual(book["discussed"], 1)
+        self.assertEqual(book["discussed_at"], "2026-06-15")
+        self.assertIn("updated to", self.message.reply_text.call_args[0][0])
 
     async def test_admin_notify_top_sends_reminders(self):
         # 1. Setup books
@@ -1297,14 +1349,7 @@ class TestAdminConsole(BotHandlerTestCase):
 
         q = self._callback_query(f"admin_meeting_book:{bid}")
         state = await bot.admin_meeting_book_cb(self.update, self.ctx)
-        self.assertEqual(state, bot.ADMIN_MEETING_DATE)
-        self.assertEqual(self.ctx.user_data["meeting_book_id"], bid)
-
-        self.message.text = "2026-03-17"
-        state = await bot.admin_meeting_date_handler(self.update, self.ctx)
         self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
-        self.message.reply_text.assert_called()
-        self.assertIn("Who attended", self.message.reply_text.call_args[0][0])
 
         q = self._callback_query(f"admin_meeting_att:toggle:{voter_id}:0")
         state = await bot.admin_meeting_att_cb(self.update, self.ctx)

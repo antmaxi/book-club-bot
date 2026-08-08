@@ -16,7 +16,6 @@ from bookclub.config import (
     ADMIN_MEETING_ADD_ID,
     ADMIN_MEETING_ATTENDEES,
     ADMIN_MEETING_BOOK,
-    ADMIN_MEETING_DATE,
     ADMIN_MEETINGS_VIEW,
     ADMIN_MENU,
     ADMIN_NOTIFY_CHAT_PICK,
@@ -38,6 +37,7 @@ from bookclub.db import (
     db_import_book,
     db_list_meetings,
     db_mark_discussed,
+    db_set_discussed_at,
     db_set_admin_setting,
     db_set_hidden,
     db_upsert_club_user,
@@ -179,6 +179,33 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     data = query.data.split(":")[1]
 
     if data == "mark":
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "admin_mark_new_btn"), callback_data="admin:mark_new"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "admin_mark_edit_date_btn"),
+                        callback_data="admin:mark_edit",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        tr(ctx, "cancel_btn"), callback_data="admin:mark_back"
+                    )
+                ],
+            ]
+        )
+        await query.edit_message_text(
+            tr(ctx, "admin_mark_menu"), reply_markup=keyboard, parse_mode=PM
+        )
+        return ADMIN_MENU
+    elif data == "mark_back":
+        return await cmd_admin_console(update, ctx)
+    elif data == "mark_new":
         books = db_get_books(discussed=False, include_hidden=True)
         if not books:
             await query.edit_message_text(tr(ctx, "no_unmark"), parse_mode=PM)
@@ -187,6 +214,20 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             tr(ctx, "choose_mark"),
             reply_markup=books_keyboard(
                 books, "admin_mark_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_MARK_CHOOSE
+    elif data == "mark_edit":
+        books = db_get_books(discussed=True, include_hidden=True)
+        if not books:
+            await query.edit_message_text(
+                tr(ctx, "no_discussed_to_edit_date"), parse_mode=PM
+            )
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_edit_discuss_date"),
+            reply_markup=books_keyboard(
+                books, "admin_mark_edit_pick", tr(ctx, "cancel_btn")
             ),
         )
         return ADMIN_MARK_CHOOSE
@@ -489,8 +530,34 @@ async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
+    ctx.user_data.pop("mark_edit_date", None)
     ctx.user_data["mark_book_id"] = int(book_id)
     await query.edit_message_text(tr(ctx, "ask_discuss_date"), parse_mode=PM)
+    return ADMIN_MARK_DATE
+
+
+async def admin_mark_edit_pick_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    book = require_book(int(book_id))
+    current = book["discussed_at"] or "—"
+    ctx.user_data["mark_edit_date"] = True
+    ctx.user_data["mark_book_id"] = int(book_id)
+    prompt = (
+        tr(ctx, "ask_discuss_date")
+        + "\n\n"
+        + tr(ctx, "current_discussed_date", date=h(current))
+    )
+    await query.edit_message_text(prompt, parse_mode=PM)
     return ADMIN_MARK_DATE
 
 
@@ -511,16 +578,33 @@ async def admin_mark_date_handler(
             return ADMIN_MARK_DATE
         date_str = parsed
     book_id = ctx.user_data.pop("mark_book_id", None)
+    edit_date = ctx.user_data.pop("mark_edit_date", False)
     if book_id is None:
         # State was lost (e.g. bot restarted mid-conversation).
         await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
-    db_mark_discussed(book_id, date_str)
     book = require_book(book_id)
-    await update.message.reply_text(
-        T[lang]["marked_discussed"].format(title=h(book["title"]), date=h(date_str)),
-        parse_mode=PM,
-    )
+    if edit_date:
+        if not db_set_discussed_at(book_id, date_str):
+            await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+            return ConversationHandler.END
+        await update.message.reply_text(
+            tr(
+                ctx,
+                "discussed_date_updated",
+                title=h(book["title"]),
+                date=h(date_str),
+            ),
+            parse_mode=PM,
+        )
+    else:
+        db_mark_discussed(book_id, date_str)
+        await update.message.reply_text(
+            T[lang]["marked_discussed"].format(
+                title=h(book["title"]), date=h(date_str)
+            ),
+            parse_mode=PM,
+        )
     return ConversationHandler.END
 
 
@@ -541,37 +625,16 @@ async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         return ConversationHandler.END
     ctx.user_data["meeting_book_id"] = book_id
     ctx.user_data["meeting_attendee_ids"] = set()
-    default_hint = ""
-    if book["discussed_at"]:
-        default_hint = f"\n\n<i>{h(book['discussed_at'])}</i>"
-    await query.edit_message_text(
-        tr(ctx, "ask_meeting_date") + default_hint,
-        parse_mode=PM,
+    discussed_at = (book["discussed_at"] or "").strip()
+    if not discussed_at:
+        await query.edit_message_text(
+            tr(ctx, "meeting_no_discussed_date"), parse_mode=PM
+        )
+        return ConversationHandler.END
+    ctx.user_data["meeting_date"] = discussed_at
+    return await _show_meeting_attendee_picker(
+        query, ctx, page=0, is_callback=True
     )
-    return ADMIN_MEETING_DATE
-
-
-async def admin_meeting_date_handler(
-    update: Update, ctx: ContextTypes.DEFAULT_TYPE
-) -> int:
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
-        return ConversationHandler.END
-    lang = get_lang(ctx)
-    text = update.message.text.strip()
-    if text == "/today":
-        date_str = datetime.now().strftime("%Y-%m-%d")
-    else:
-        parsed = parse_date(text)
-        if parsed is None:
-            await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
-            return ADMIN_MEETING_DATE
-        date_str = parsed
-    if ctx.user_data.get("meeting_book_id") is None:
-        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
-        return ConversationHandler.END
-    ctx.user_data["meeting_date"] = date_str
-    return await _show_meeting_attendee_picker(update, ctx, page=0, is_callback=False)
 
 
 async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
