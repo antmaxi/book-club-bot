@@ -303,9 +303,18 @@ class TestList(BotHandlerTestCase):
         self.assertIn("Show all books", text)
         self.assertIn("reply_markup", self.message.reply_text.call_args[1])
 
-    async def test_list_choice_all_sends_book(self):
-        self._add_book("Book 1")
+    async def test_list_choice_all_shows_format_prompt(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
         q = self._callback_query("list:all")
+        await bot.list_choice_cb(self.update, self.ctx)
+        q.edit_message_text.assert_called_once()
+        self.assertIn("How would you like", q.edit_message_text.call_args[0][0])
+        q.delete_message.assert_not_called()
+
+    async def test_list_choice_all_sends_book(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        self._add_book("Book 1")
+        q = self._callback_query("list:all:full")
         await bot.list_choice_cb(self.update, self.ctx)
         q.answer.assert_called_once()
         q.delete_message.assert_called_once()
@@ -313,25 +322,44 @@ class TestList(BotHandlerTestCase):
         self.assertIn("Book 1", self.ctx.bot.send_message.call_args[1]["text"])
 
     async def test_list_choice_unvoted_excludes_voted_book(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
         book_id = self._add_book("Book 1")
         bot.db_cast_vote(self.update.effective_user.id, book_id, 1)
-        q = self._callback_query("list:unvoted")
+        q = self._callback_query("list:unvoted:full")
         await bot.list_choice_cb(self.update, self.ctx)
         self.ctx.bot.send_message.assert_not_called()
         q.edit_message_text.assert_called_once()
         self.assertIn("voted on all", q.edit_message_text.call_args[0][0])
 
     async def test_list_choice_all_no_books(self):
-        q = self._callback_query("list:all")
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        q = self._callback_query("list:all:compact")
         await bot.list_choice_cb(self.update, self.ctx)
         self.ctx.bot.send_message.assert_not_called()
 
     async def test_list_choice_multiple_books(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
         self._add_book("Alpha")
         self._add_book("Beta")
-        q = self._callback_query("list:all")
+        q = self._callback_query("list:all:full")
         await bot.list_choice_cb(self.update, self.ctx)
         self.assertEqual(self.ctx.bot.send_message.call_count, 2)
+
+    async def test_list_choice_compact_single_message(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        bot.db_add_book(
+            "Alpha", "Author A", 100, True, "", "", 1, "u", creation_year=2001
+        )
+        bot.db_add_book("Beta", "Author B", 100, True, "", "", 1, "u")
+        q = self._callback_query("list:all:compact")
+        await bot.list_choice_cb(self.update, self.ctx)
+        self.ctx.bot.send_message.assert_called_once()
+        text = self.ctx.bot.send_message.call_args[1]["text"]
+        self.assertIn("Alpha", text)
+        self.assertIn("Author A", text)
+        self.assertIn("(2001)", text)
+        self.assertIn("Beta", text)
+        self.assertIn("Author B", text)
 
     async def test_list_triggers_optin_when_setting_missing(self):
         """First-time users without a notify setting see the opt-in prompt."""
@@ -354,9 +382,9 @@ class TestList(BotHandlerTestCase):
         self._add_book("B")
         q = self._callback_query("list:all")
         await bot.list_choice_cb(self.update, self.ctx)
-        # edit_message_text should NOT be called for opt-in prompt
-        q.edit_message_text.assert_not_called()
-        self.ctx.bot.send_message.assert_called_once()
+        q.edit_message_text.assert_called_once()
+        self.assertIn("How would you like", q.edit_message_text.call_args[0][0])
+        self.ctx.bot.send_message.assert_not_called()
 
 
 # ── /top ──────────────────────────────────────────────────────────────────────
@@ -687,8 +715,9 @@ class TestSettings(BotHandlerTestCase):
             1,
         )
         q.answer.assert_called_once_with("✅ Settings saved!")
-        self.ctx.bot.send_message.assert_called_once()
-        self.assertIn("Book 1", self.ctx.bot.send_message.call_args[1]["text"])
+        q.edit_message_text.assert_called_once()
+        self.assertIn("How would you like", q.edit_message_text.call_args[0][0])
+        self.ctx.bot.send_message.assert_not_called()
 
     async def test_optin_no_sets_zero(self):
         with sqlite3.connect(bot.DB_PATH) as conn:

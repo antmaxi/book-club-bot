@@ -40,7 +40,7 @@ import sqlite3
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal, Sequence, cast
 
 from telegram import (
     Bot,
@@ -302,7 +302,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "none_vote": "—",
         "rate_book": "📊 Vote on <b>{title}</b>",
         "desc_updated": "✅ Description updated!",
-        "top_title": "🏆 <b>Top Books</b>\nSorted by total score.\n\n",
+        "top_title": "🏆 <b>Top Books</b>\nSorted by total score.\n",
         "added_by": "Added by",
         "added_on": "Added on",
         "pages_label": "Pages",
@@ -373,6 +373,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "list_prompt": "📋 <b>List of Books</b>\nShow all books or only those you haven't voted for yet?",
         "list_all_btn": "📚 All books",
         "list_unvoted_btn": "🗳 Unvoted only",
+        "list_format_prompt": "📋 How would you like to view the list?",
+        "list_compact_btn": "📄 Compact list",
+        "list_full_btn": "📖 Full cards (vote inline)",
+        "list_compact_title": "📋 <b>Books</b> ({count})\n",
         "score_calc_btn": "📊 How a score is calculated",
         "score_calc_info": "✅ Want: +1 point\n😐 Don't care: +0.5 points\n❌ Don't want: -1 point\nTotal score = sum of all votes (not average).Sorted by this score, then by date added.",
         "settings_title": "⚙️ <b>Settings</b>",
@@ -458,7 +462,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "none_vote": "—",
         "rate_book": "📊 Голосование: <b>{title}</b>",
         "desc_updated": "✅ Описание обновлено!",
-        "top_title": "🏆 <b>Топ книг</b>\nСортировка по общему баллу.\n\n",
+        "top_title": "🏆 <b>Топ книг</b>\nСортировка по общему баллу.\n",
         "added_by": "Добавил",
         "added_on": "Добавлено",
         "pages_label": "Страниц",
@@ -533,6 +537,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "list_prompt": "📋 <b>Список книг</b>\nПоказать все книги или только те, за которые вы ещё не голосовали?",
         "list_all_btn": "📚 Все книги",
         "list_unvoted_btn": "🗳 Только без моего голоса",
+        "list_format_prompt": "📋 Как показать список?",
+        "list_compact_btn": "📄 Краткий список",
+        "list_full_btn": "📖 Полные карточки (голосование)",
+        "list_compact_title": "📋 <b>Книги</b> ({count})\n",
         "score_calc_btn": "📊 Как рассчитывается балл",
         "score_calc_info": "✅ Хочу: +1 балл\n😐 Всё равно: +0.5 баллов\n❌ Не хочу: -1 балл\n\nСортировка по суммарному баллу, затем по дате добавления.",
         "settings_title": "⚙️ <b>Настройки</b>",
@@ -616,7 +624,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_edit": "✏️ Choose a film to edit:",
             "choose_delete": "🗑 Choose a film to delete:",
             "rate_book": "📊 Vote on <b>{title}</b>",
-            "top_title": "🏆 <b>Top Films</b>\nSorted by total score.\n\n",
+            "top_title": "🏆 <b>Top Films</b>\nSorted by total score.\n",
             "pages_label": "min",
             "edit_done": "✅ Film updated!",
             "edit_invalid_pages": "⚠️ Must be a positive number of minutes. Send again:",
@@ -645,6 +653,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "no_discussed": "📭 No films have been discussed yet.",
             "list_prompt": "📋 <b>List of Films</b>\nShow all films or only those you haven't voted for yet?",
             "list_all_btn": "🎬 All films",
+            "list_compact_title": "📋 <b>Films</b> ({count})\n",
             "all_voted": "You've voted on all films!",
             "settings_notify_label": "Notifications for new films:",
             "notify_optin_prompt": "Would you like to receive notifications (with a 5-minute delay) when others add new films?",
@@ -692,7 +701,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "choose_edit": "✏️ Выберите фильм для редактирования:",
             "choose_delete": "🗑 Выберите фильм для удаления:",
             "rate_book": "📊 Голосование: <b>{title}</b>",
-            "top_title": "🏆 <b>Топ фильмов</b>\nСортировка по общему баллу.\n\n",
+            "top_title": "🏆 <b>Топ фильмов</b>\nСортировка по общему баллу.\n",
             "pages_label": "мин",
             "edit_done": "✅ Фильм обновлён!",
             "edit_invalid_pages": "⚠️ Должно быть положительное число минут. Отправьте снова:",
@@ -721,6 +730,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "no_discussed": "📭 Пока ни один фильм не был обсуждён.",
             "list_prompt": "📋 <b>Список фильмов</b>\nПоказать все фильмы или только те, за которые вы ещё не голосовали?",
             "list_all_btn": "🎬 Все фильмы",
+            "list_compact_title": "📋 <b>Фильмы</b> ({count})\n",
             "all_voted": "Вы проголосовали за все фильмы!",
             "settings_notify_label": "Уведомления о новых фильмах:",
             "notify_optin_prompt": "Хотите получать уведомления (с задержкой 5 минут), когда другие добавляют новые фильмы?",
@@ -1477,6 +1487,78 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
     return "\n".join(lines)
 
 
+def book_compact_line(index: int, book: BookLike) -> str:
+    year = book["creation_year"]
+    year_suffix = f" ({year})" if year is not None else ""
+    return f"{index}. <b>{h(book['title'])}</b> — {h(book['author'])}{year_suffix}"
+
+
+TELEGRAM_MESSAGE_MAX = 4000
+
+
+async def send_chunked_html_messages(
+    bot,
+    chat_id: int,
+    lines: Sequence[str],
+    *,
+    joiner: str = "\n",
+) -> None:
+    """Send lines in as few Telegram messages as possible (HTML parse mode)."""
+    if not lines:
+        return
+    chunk = ""
+    for line in lines:
+        candidate = joiner.join(filter(None, [chunk, line])) if chunk else line
+        if len(candidate) > TELEGRAM_MESSAGE_MAX:
+            if chunk:
+                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+            chunk = line
+            if len(chunk) > TELEGRAM_MESSAGE_MAX:
+                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+                chunk = ""
+        else:
+            chunk = candidate
+    if chunk:
+        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+
+
+def _parse_list_callback(data: str) -> tuple[str, str | None]:
+    """Return (filter: all|unvoted, format: compact|full|None)."""
+    parts = data.split(":")
+    if parts[0] != "list" or len(parts) not in (2, 3):
+        raise ValueError(f"unexpected list callback: {data!r}")
+    filter_choice = parts[1]
+    format_choice = parts[2] if len(parts) == 3 else None
+    if filter_choice not in ("all", "unvoted"):
+        raise ValueError(f"unexpected list filter: {filter_choice!r}")
+    if format_choice is not None and format_choice not in ("compact", "full"):
+        raise ValueError(f"unexpected list format: {format_choice!r}")
+    return filter_choice, format_choice
+
+
+async def _show_list_format_prompt(
+    query, ctx: ContextTypes.DEFAULT_TYPE, filter_choice: str
+) -> None:
+    ctx.user_data["pending_list_choice"] = filter_choice
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "list_compact_btn"),
+                    callback_data=f"list:{filter_choice}:compact",
+                ),
+                InlineKeyboardButton(
+                    tr(ctx, "list_full_btn"),
+                    callback_data=f"list:{filter_choice}:full",
+                ),
+            ]
+        ]
+    )
+    await query.edit_message_text(
+        tr(ctx, "list_format_prompt"), reply_markup=keyboard, parse_mode=PM
+    )
+
+
 def books_keyboard(
     books: Sequence[BookLike], prefix: str, cancel_label: str
 ) -> InlineKeyboardMarkup:
@@ -1853,17 +1935,18 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         # We need to recover the original list choice if we want to be seamless.
         # But for simplicity, let's just show 'all' if they just opted in,
         # or we could have stored it in user_data.
-        choice = ctx.user_data.get("pending_list_choice", "all")
+        filter_choice = ctx.user_data.get("pending_list_choice", "all")
+        format_choice = None
         user_id = query.from_user.id
         # We don't call query.answer() here because it was already answered in settings_choice_cb
     else:
         await query.answer()
         user_id = query.from_user.id
-        _, choice = query.data.split(":")
+        filter_choice, format_choice = _parse_list_callback(query.data)
 
     # Check for notification opt-in
     if db_get_user_setting(user_id, "notify_new_books") == -1:
-        ctx.user_data["pending_list_choice"] = choice
+        ctx.user_data["pending_list_choice"] = filter_choice
         keyboard = InlineKeyboardMarkup(
             [
                 [
@@ -1883,7 +1966,12 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
+    if format_choice is None:
+        await _show_list_format_prompt(query, ctx, filter_choice)
+        return
+
     lang = get_lang(ctx)
+    choice = filter_choice
 
     user_id_unvoted = user_id if choice == "unvoted" else None
     books = db_get_books(discussed=False, user_id_unvoted=user_id_unvoted)
@@ -1919,11 +2007,23 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         else:
             raise
 
+    chat_id = update.effective_chat.id
+
+    if format_choice == "compact":
+        header = tr(ctx, "list_compact_title", count=len(books))
+        lines = [header] + [
+            book_compact_line(i, book) for i, book in enumerate(books, 1)
+        ]
+        await send_chunked_html_messages(
+            ctx.bot, chat_id, lines, joiner="\n"
+        )
+        return
+
     for book in books:
         uv = db_get_user_vote(user_id, book["id"])
         try:
             await ctx.bot.send_message(
-                chat_id=update.effective_chat.id,
+                chat_id=chat_id,
                 text=book_card(book, lang, user_vote=uv),
                 parse_mode=PM,
                 reply_markup=score_keyboard(book["id"], lang, uv),
