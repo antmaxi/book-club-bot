@@ -1118,24 +1118,27 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertIn("No users to notify", q.edit_message_text.call_args[0][0])
 
     async def test_admin_notify_pick_sends_reminders(self):
-        # 1. Setup book
         bid = self._add_book("Target Book")
-
-        # 2. Setup user with notifications ON
         user_id = 12345
         bot.db_set_user_setting(user_id, "notify_new_books", 1)
 
-        # 3. Select book for notification
-        q = self._callback_query(f"admin_notify_pick:{bid}")
+        self.ctx.user_data["notify_book_ids"] = {bid}
+        q = self._callback_query("admin_notify_pick:done")
         state = await bot.admin_notify_pick_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
-        # Check if bot.send_message was called for the user
         self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
-
-        # Verify confirm message to admin
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
+
+    async def test_admin_notify_pick_toggle_updates_selection(self):
+        bid = self._add_book("Toggle Book")
+        q = self._callback_query(f"admin_notify_pick:toggle:{bid}:0")
+        state = await bot.admin_notify_pick_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_NOTIFY_PICK)
+        self.assertEqual(self.ctx.user_data["notify_book_ids"], {bid})
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Selected", q.edit_message_text.call_args[0][0])
 
     async def test_admin_notify_chat_top_posts_to_group(self):
         bid1 = self._add_book("Chat Top 1")
@@ -1159,8 +1162,9 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_admin_notify_chat_pick_posts_to_group(self):
         bid = self._add_book("Chat Pick Book")
         cfg.ALLOWED_CHAT_ID = -100123
+        self.ctx.user_data["notify_book_ids"] = {bid}
 
-        q = self._callback_query(f"admin_notify_chat_pick:{bid}")
+        q = self._callback_query("admin_notify_chat_pick:done")
         with patch.object(cfg, "CHAT_LANG", "en"):
             state = await bot.admin_notify_chat_pick_cb(self.update, self.ctx)
 
@@ -1525,7 +1529,7 @@ class TestAdminCallbackGuards(BotHandlerTestCase):
         )
 
     async def test_admin_notify_pick_cb_rejects_non_admin(self):
-        self._callback_query("admin_notify_pick:1")
+        self._callback_query("admin_notify_pick:cancel")
         result = await bot.admin_notify_pick_cb(self.update, self.ctx)
         self.assertEqual(result, ConversationHandler.END)
         self.ctx.bot.send_message.assert_not_called()

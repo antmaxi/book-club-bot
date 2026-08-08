@@ -61,6 +61,7 @@ from bookclub.ui import (
     parse_date,
     post_book_voting_to_group_chat,
     score_keyboard,
+    show_notify_books_picker,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
 )
@@ -263,31 +264,39 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "notify":
         return await admin_notify_top_cb(update, ctx)
     elif data == "notify_pick":
-        books = db_get_books(discussed=False)
+        books = _admin_all_books()
         if not books:
-            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
             return ConversationHandler.END
-        await query.edit_message_text(
-            tr(ctx, "choose_notify"),
-            reply_markup=books_keyboard(
-                books, "admin_notify_pick", tr(ctx, "cancel_btn")
-            ),
+        ctx.user_data["notify_book_ids"] = set()
+        return await show_notify_books_picker(
+            query,
+            ctx,
+            books,
+            page=0,
+            is_callback=True,
+            prefix="admin_notify_pick",
+            prompt_key="choose_notify_books",
+            done_label_key="notify_books_send_btn",
         )
-        return ADMIN_NOTIFY_PICK
     elif data == "notify_chat":
         return await admin_notify_chat_top_cb(update, ctx)
     elif data == "notify_chat_pick":
-        books = db_get_books(discussed=False)
+        books = _admin_all_books()
         if not books:
-            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
             return ConversationHandler.END
-        await query.edit_message_text(
-            tr(ctx, "choose_notify_chat"),
-            reply_markup=books_keyboard(
-                books, "admin_notify_chat_pick", tr(ctx, "cancel_btn")
-            ),
+        ctx.user_data["notify_book_ids"] = set()
+        return await show_notify_books_picker(
+            query,
+            ctx,
+            books,
+            page=0,
+            is_callback=True,
+            prefix="admin_notify_chat_pick",
+            prompt_key="choose_notify_chat_books",
+            done_label_key="notify_books_post_chat_btn",
         )
-        return ADMIN_NOTIFY_CHAT_PICK
     elif data == "toggle_chat":
         current = db_get_admin_setting("post_new_books_to_chat", 0)
         db_set_admin_setting("post_new_books_to_chat", 1 - current)
@@ -396,58 +405,156 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    return await _admin_notify_books_pick_cb(update, ctx, to_chat=False)
+
+
+async def admin_notify_chat_pick_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    return await _admin_notify_books_pick_cb(update, ctx, to_chat=True)
+
+
+async def _admin_notify_books_pick_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, *, to_chat: bool
+) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
+    prefix = "admin_notify_chat_pick" if to_chat else "admin_notify_pick"
+    books = _admin_all_books()
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
 
-    if book_id == "cancel":
+    def _clear_notify_pick_state() -> None:
+        ctx.user_data.pop("notify_book_ids", None)
+        ctx.user_data.pop("notify_books_page", None)
+
+    if action == "cancel":
+        _clear_notify_pick_state()
         await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
 
-    book_id = int(book_id)
-    book = db_get_book(book_id)
-    if not book:
-        await query.edit_message_text("Error: book not found.")
+    if action == "page" and len(parts) > 2:
+        page = int(parts[2])
+        return await show_notify_books_picker(
+            query,
+            ctx,
+            books,
+            page=page,
+            is_callback=True,
+            prefix=prefix,
+            prompt_key=(
+                "choose_notify_chat_books" if to_chat else "choose_notify_books"
+            ),
+            done_label_key=(
+                "notify_books_post_chat_btn" if to_chat else "notify_books_send_btn"
+            ),
+        )
+
+    if action == "toggle" and len(parts) > 2:
+        book_id = int(parts[2])
+        page = int(parts[3]) if len(parts) > 3 else 0
+        selected = ctx.user_data.get("notify_book_ids")
+        if selected is None:
+            selected = set()
+            ctx.user_data["notify_book_ids"] = selected
+        if book_id in selected:
+            selected.remove(book_id)
+        else:
+            selected.add(book_id)
+        return await show_notify_books_picker(
+            query,
+            ctx,
+            books,
+            page=page,
+            is_callback=True,
+            prefix=prefix,
+            prompt_key=(
+                "choose_notify_chat_books" if to_chat else "choose_notify_books"
+            ),
+            done_label_key=(
+                "notify_books_post_chat_btn" if to_chat else "notify_books_send_btn"
+            ),
+        )
+
+    if action == "done":
+        selected_ids = list(ctx.user_data.pop("notify_book_ids", set()))
+        ctx.user_data.pop("notify_books_page", None)
+        if not selected_ids:
+            await query.edit_message_text(
+                tr(ctx, "notify_no_books_selected"), parse_mode=PM
+            )
+            return ConversationHandler.END
+
+        if to_chat:
+            if not config.ALLOWED_CHAT_ID:
+                await query.edit_message_text(
+                    tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM
+                )
+                return ConversationHandler.END
+            posted = 0
+            for book_id in selected_ids:
+                book = db_get_book(book_id)
+                if not book:
+                    continue
+                if await post_book_voting_to_group_chat(
+                    ctx.bot, book, intro_key="vote_reminder_chat"
+                ):
+                    posted += 1
+            if posted > 0:
+                await query.edit_message_text(
+                    tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
+                )
+            else:
+                await query.edit_message_text(
+                    tr(ctx, "admin_notify_chat_failed"), parse_mode=PM
+                )
+            return ConversationHandler.END
+
+        user_ids = db_get_users_with_setting("notify_new_books", 1)
+        notified_count = 0
+        for user_id in user_ids:
+            unvoted = []
+            for book_id in selected_ids:
+                if db_get_user_vote(user_id, book_id) is None:
+                    book = db_get_book(book_id)
+                    if book:
+                        unvoted.append(book)
+            if not unvoted:
+                continue
+            user_data = ctx.application.user_data.get(user_id, {})
+            user_lang = (
+                user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
+            )
+            try:
+                text = tr(user_lang, "vote_reminder_msg")
+                await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
+                for book in unvoted:
+                    await ctx.bot.send_message(
+                        chat_id=user_id,
+                        text=book_card(book, user_lang),
+                        parse_mode=PM,
+                        reply_markup=score_keyboard(book["id"], user_lang),
+                    )
+                notified_count += 1
+            except Exception as e:
+                logger.warning(
+                    "_admin_notify_books_pick_cb: failed to notify user %s: %s",
+                    user_id,
+                    e,
+                )
+
+        if notified_count > 0:
+            await query.edit_message_text(
+                tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+            )
+        else:
+            await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
         return ConversationHandler.END
 
-    user_ids = db_get_users_with_setting("notify_new_books", 1)
-    notified_count = 0
-
-    for user_id in user_ids:
-        # Check if user has NOT voted for this book
-        if db_get_user_vote(user_id, book_id) is not None:
-            continue
-
-        user_data = ctx.application.user_data.get(user_id, {})
-        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
-
-        try:
-            # Send reminder to this user
-            text = tr(user_lang, "vote_reminder_msg")
-            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
-            await ctx.bot.send_message(
-                chat_id=user_id,
-                text=book_card(book, user_lang),
-                parse_mode=PM,
-                reply_markup=score_keyboard(book_id, user_lang),
-            )
-            notified_count += 1
-        except Exception as e:
-            logger.warning(
-                f"admin_notify_pick_cb: failed to notify user {user_id}: {e}"
-            )
-
-    if notified_count > 0:
-        await query.edit_message_text(
-            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
-        )
-    else:
-        await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
-
-    return ConversationHandler.END
+    return ADMIN_NOTIFY_PICK if not to_chat else ADMIN_NOTIFY_CHAT_PICK
 
 
 async def admin_notify_chat_top_cb(
@@ -477,42 +584,6 @@ async def admin_notify_chat_top_cb(
     if posted > 0:
         await query.edit_message_text(
             tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
-        )
-    else:
-        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
-
-    return ConversationHandler.END
-
-
-async def admin_notify_chat_pick_cb(
-    update: Update, ctx: ContextTypes.DEFAULT_TYPE
-) -> int:
-    if await _deny_non_admin_cb(update, ctx):
-        return ConversationHandler.END
-    query = update.callback_query
-    await query.answer()
-    lang = get_lang(ctx)
-    _, book_id = query.data.split(":", 1)
-
-    if book_id == "cancel":
-        await query.edit_message_text(s(lang, "cancelled"))
-        return ConversationHandler.END
-
-    if not config.ALLOWED_CHAT_ID:
-        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
-        return ConversationHandler.END
-
-    book_id = int(book_id)
-    book = db_get_book(book_id)
-    if not book:
-        await query.edit_message_text("Error: book not found.")
-        return ConversationHandler.END
-
-    if await post_book_voting_to_group_chat(
-        ctx.bot, book, intro_key="vote_reminder_chat"
-    ):
-        await query.edit_message_text(
-            tr(ctx, "admin_notify_chat_confirm", count=1), parse_mode=PM
         )
     else:
         await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
@@ -811,6 +882,12 @@ def _admin_hidden_books() -> list[sqlite3.Row]:
             if b["hidden"]
         )
     return hidden
+
+
+def _admin_all_books():
+    return list(db_get_books(discussed=False, include_hidden=True)) + list(
+        db_get_books(discussed=True, include_hidden=True)
+    )
 
 
 async def admin_unhide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:

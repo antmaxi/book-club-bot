@@ -18,7 +18,13 @@ from bookclub.i18n import PM, T, get_lang, s, tr, vote_label_text
 from bookclub.logging_setup import logger
 from bookclub.types import BookLike
 
-from bookclub.config import ADMIN_MEETING_ATTENDEES, MEETING_ATTENDEES_PAGE_SIZE
+from bookclub.config import (
+    ADMIN_MEETING_ATTENDEES,
+    ADMIN_NOTIFY_CHAT_PICK,
+    ADMIN_NOTIFY_PICK,
+    MEETING_ATTENDEES_PAGE_SIZE,
+    NOTIFY_BOOKS_PAGE_SIZE,
+)
 
 def format_user(book: BookLike) -> str:
     """Return @username if available, otherwise fall back to display name."""
@@ -230,6 +236,96 @@ def books_keyboard(
         [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
     )
     return InlineKeyboardMarkup(buttons)
+
+
+def _notify_book_ids(ctx: ContextTypes.DEFAULT_TYPE) -> set[int]:
+    raw = ctx.user_data.get("notify_book_ids")
+    if raw is None:
+        raw = set()
+        ctx.user_data["notify_book_ids"] = raw
+    return raw
+
+
+def notify_books_keyboard(
+    lang: str,
+    books: Sequence[BookLike],
+    selected: set[int],
+    page: int,
+    prefix: str,
+    *,
+    done_label_key: str,
+) -> InlineKeyboardMarkup:
+    total = len(books)
+    page_size = NOTIFY_BOOKS_PAGE_SIZE
+    start = page * page_size
+    chunk = books[start : start + page_size]
+    buttons: list[list[InlineKeyboardButton]] = []
+    for b in chunk:
+        bid = int(b["id"])
+        mark = "✅" if bid in selected else "⬜"
+        label = f"{b['title']} — {b['author']}"
+        if b["discussed"]:
+            label = f"📌 {label}"
+        if len(label) > 42:
+            label = label[:39] + "…"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark} {label}",
+                    callback_data=f"{prefix}:toggle:{bid}:{page}",
+                )
+            ]
+        )
+    nav: list[InlineKeyboardButton] = []
+    if start > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}")
+        )
+    if start + page_size < total:
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}")
+        )
+    if nav:
+        buttons.append(nav)
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                s(lang, done_label_key),
+                callback_data=f"{prefix}:done",
+            )
+        ]
+    )
+    buttons.append(
+        [InlineKeyboardButton(s(lang, "cancel_btn"), callback_data=f"{prefix}:cancel")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+async def show_notify_books_picker(
+    update_or_query: Any,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    books: Sequence[BookLike],
+    *,
+    page: int = 0,
+    is_callback: bool = False,
+    prefix: str,
+    prompt_key: str,
+    done_label_key: str,
+) -> int:
+    lang = get_lang(ctx)
+    selected = _notify_book_ids(ctx)
+    text = tr(ctx, prompt_key, count=len(selected))
+    markup = notify_books_keyboard(
+        lang, books, selected, page, prefix, done_label_key=done_label_key
+    )
+    if is_callback:
+        await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+    else:
+        await update_or_query.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+    ctx.user_data["notify_books_page"] = page
+    if prefix == "admin_notify_chat_pick":
+        return ADMIN_NOTIFY_CHAT_PICK
+    return ADMIN_NOTIFY_PICK
 
 
 def meetings_keyboard(
