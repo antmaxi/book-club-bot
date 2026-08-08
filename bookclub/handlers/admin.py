@@ -1,0 +1,887 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes, ConversationHandler
+
+import bookclub.config as config
+from bookclub.config import (
+    ADMIN_EXPORT_CHOOSE,
+    ADMIN_HIDE_CHOOSE,
+    ADMIN_IMPORT_CONFIRM,
+    ADMIN_IMPORT_WAIT,
+    ADMIN_MARK_CHOOSE,
+    ADMIN_MARK_DATE,
+    ADMIN_MEETING_ADD_ID,
+    ADMIN_MEETING_ATTENDEES,
+    ADMIN_MEETING_BOOK,
+    ADMIN_MEETING_DATE,
+    ADMIN_MEETINGS_VIEW,
+    ADMIN_MENU,
+    ADMIN_NOTIFY_CHAT_PICK,
+    ADMIN_NOTIFY_PICK,
+    ADMIN_UNHIDE_CHOOSE,
+    CHAT_LANG,
+)
+from bookclub.db import (
+    book_to_export_payload,
+    db_create_meeting,
+    db_get_admin_setting,
+    db_get_book,
+    db_get_books,
+    db_get_meeting,
+    db_get_meeting_attendee_rows,
+    db_get_user_setting,
+    db_get_user_vote,
+    db_get_users_with_setting,
+    db_import_book,
+    db_list_meetings,
+    db_mark_discussed,
+    db_set_admin_setting,
+    db_set_hidden,
+    db_upsert_club_user,
+    format_club_user_display,
+    parse_book_import,
+    find_similar_book_titles,
+)
+from bookclub.domain import is_admin, require_book
+from bookclub.i18n import PM, T, get_lang, s, tr
+from bookclub.logging_setup import logger
+from bookclub.notifications import schedule_new_book_notifications
+from bookclub.ui import (
+    _meeting_attendee_ids,
+    _show_meeting_attendee_picker,
+    book_card,
+    books_keyboard,
+    books_top_n,
+    fmt_dt_utc,
+    h,
+    meetings_keyboard,
+    parse_date,
+    post_book_voting_to_group_chat,
+    score_keyboard,
+    similar_title_confirm_keyboard,
+    similar_title_warning_matches_text,
+)
+
+async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Answer and reject a callback from a non-admin. Returns True if denied.
+
+    Conversation state already keeps non-admins out, but these buttons are
+    visible to everyone when /adminconsole is run in a group, so the handlers
+    verify the caller themselves rather than relying on routing alone.
+    """
+    if is_admin(update.effective_user.id):
+        return False
+    await update.callback_query.answer(tr(ctx, "admin_only"), show_alert=True)
+    return True
+
+
+async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+
+    last_act = ctx.bot_data.get("last_non_admin_activity")
+    last_act_str = fmt_dt_utc(last_act) if last_act else tr(ctx, "never")
+
+    text = (
+        tr(ctx, "admin_console_title")
+        + f"\n\n{tr(ctx, 'last_activity_label')}: <code>{last_act_str}</code>"
+    )
+
+    post_chat = db_get_admin_setting("post_new_books_to_chat", 0)
+    chat_state = "✅" if post_chat else "❌"
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_mark_btn"), callback_data="admin:mark"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_hide_btn"), callback_data="admin:hide"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_unhide_btn"), callback_data="admin:unhide"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_btn"), callback_data="admin:notify"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_one_btn"), callback_data="admin:notify_pick"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_chat_btn"), callback_data="admin:notify_chat"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_notify_chat_one_btn"),
+                    callback_data="admin:notify_chat_pick",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_toggle_chat_btn", state=chat_state),
+                    callback_data="admin:toggle_chat",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_meeting_create_btn"),
+                    callback_data="admin:meeting_create",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_meetings_view_btn"),
+                    callback_data="admin:meetings_view",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_export_btn"), callback_data="admin:export"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_import_btn"), callback_data="admin:import"
+                )
+            ],
+        ]
+    )
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text, reply_markup=keyboard, parse_mode=PM
+        )
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
+    return ADMIN_MENU
+
+
+async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")[1]
+
+    if data == "mark":
+        books = db_get_books(discussed=False, include_hidden=True)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_unmark"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_mark"),
+            reply_markup=books_keyboard(
+                books, "admin_mark_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_MARK_CHOOSE
+    elif data == "hide":
+        books = [
+            b
+            for b in db_get_books(discussed=False, include_hidden=True)
+            if not b["hidden"]
+        ]
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+
+        await query.edit_message_text(
+            tr(ctx, "choose_hide"),
+            reply_markup=books_keyboard(
+                books, "admin_hide_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_HIDE_CHOOSE
+    elif data == "unhide":
+        books = _admin_hidden_books()
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_hidden"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_unhide"),
+            reply_markup=books_keyboard(
+                books, "admin_unhide_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_UNHIDE_CHOOSE
+    elif data == "notify":
+        return await admin_notify_top_cb(update, ctx)
+    elif data == "notify_pick":
+        books = db_get_books(discussed=False)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_notify"),
+            reply_markup=books_keyboard(
+                books, "admin_notify_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_NOTIFY_PICK
+    elif data == "notify_chat":
+        return await admin_notify_chat_top_cb(update, ctx)
+    elif data == "notify_chat_pick":
+        books = db_get_books(discussed=False)
+        if not books:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_notify_chat"),
+            reply_markup=books_keyboard(
+                books, "admin_notify_chat_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_NOTIFY_CHAT_PICK
+    elif data == "toggle_chat":
+        current = db_get_admin_setting("post_new_books_to_chat", 0)
+        db_set_admin_setting("post_new_books_to_chat", 1 - current)
+        return await cmd_admin_console(update, ctx)
+    elif data == "export":
+        all_books = db_get_books(discussed=False, include_hidden=True) + list(
+            db_get_books(discussed=True, include_hidden=True)
+        )
+        if not all_books:
+            await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_export"),
+            reply_markup=books_keyboard(
+                all_books, "admin_export_pick", tr(ctx, "cancel_btn")
+            ),
+        )
+        return ADMIN_EXPORT_CHOOSE
+    elif data == "import":
+        await query.edit_message_text(tr(ctx, "import_prompt"), parse_mode=PM)
+        return ADMIN_IMPORT_WAIT
+    elif data == "meeting_create":
+        books = db_get_books(discussed=True, include_hidden=True)
+        if not books:
+            await query.edit_message_text(
+                tr(ctx, "no_discussed_for_meeting"), parse_mode=PM
+            )
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_meeting_book"),
+            reply_markup=books_keyboard(
+                books, "admin_meeting_book", tr(ctx, "cancel_btn")
+            ),
+            parse_mode=PM,
+        )
+        return ADMIN_MEETING_BOOK
+    elif data == "meetings_view":
+        meetings = db_list_meetings()
+        if not meetings:
+            await query.edit_message_text(tr(ctx, "no_meetings"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_meeting_view"),
+            reply_markup=meetings_keyboard(
+                meetings, "admin_meeting_view", tr(ctx, "cancel_btn")
+            ),
+            parse_mode=PM,
+        )
+        return ADMIN_MEETINGS_VIEW
+    return ConversationHandler.END
+
+
+async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+
+    books = db_get_books(discussed=False)
+    if not books:
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return ConversationHandler.END
+
+    # Top 5 selection (same logic as /top)
+    top_books = books_top_n(books)
+
+    user_ids = db_get_users_with_setting("notify_new_books", 1)
+    notified_count = 0
+
+    for user_id in user_ids:
+        # For each user, find which of the top books they HAVEN'T voted for
+        unvoted_tops = []
+        for b in top_books:
+            if db_get_user_vote(user_id, b["id"]) is None:
+                unvoted_tops.append(b)
+
+        if not unvoted_tops:
+            continue
+
+        # Send reminder to this user
+        user_data = ctx.application.user_data.get(user_id, {})
+        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
+        text = tr(user_lang, "vote_reminder_msg")
+
+        # We'll send the reminder text and then the book cards
+        try:
+            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
+            for b in unvoted_tops:
+                await ctx.bot.send_message(
+                    chat_id=user_id,
+                    text=book_card(b, user_lang),
+                    parse_mode=PM,
+                    reply_markup=score_keyboard(b["id"], user_lang),
+                )
+            notified_count += 1
+        except Exception as e:
+            logger.warning(f"admin_notify_top_cb: failed to notify user {user_id}: {e}")
+
+    if notified_count > 0:
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_notify_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    user_ids = db_get_users_with_setting("notify_new_books", 1)
+    notified_count = 0
+
+    for user_id in user_ids:
+        # Check if user has NOT voted for this book
+        if db_get_user_vote(user_id, book_id) is not None:
+            continue
+
+        user_data = ctx.application.user_data.get(user_id, {})
+        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
+
+        try:
+            # Send reminder to this user
+            text = tr(user_lang, "vote_reminder_msg")
+            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
+            await ctx.bot.send_message(
+                chat_id=user_id,
+                text=book_card(book, user_lang),
+                parse_mode=PM,
+                reply_markup=score_keyboard(book_id, user_lang),
+            )
+            notified_count += 1
+        except Exception as e:
+            logger.warning(
+                f"admin_notify_pick_cb: failed to notify user {user_id}: {e}"
+            )
+
+    if notified_count > 0:
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_notify_chat_top_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+
+    if not config.ALLOWED_CHAT_ID:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
+        return ConversationHandler.END
+
+    books = db_get_books(discussed=False)
+    if not books:
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return ConversationHandler.END
+
+    top_books = books_top_n(books)
+    posted = 0
+    for b in top_books:
+        if await post_book_voting_to_group_chat(
+            ctx.bot, b, intro_key="vote_reminder_chat"
+        ):
+            posted += 1
+
+    if posted > 0:
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_notify_chat_pick_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    if not config.ALLOWED_CHAT_ID:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    if await post_book_voting_to_group_chat(
+        ctx.bot, book, intro_key="vote_reminder_chat"
+    ):
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_confirm", count=1), parse_mode=PM
+        )
+    else:
+        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
+
+    return ConversationHandler.END
+
+
+async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    ctx.user_data["mark_book_id"] = int(book_id)
+    await query.edit_message_text(tr(ctx, "ask_discuss_date"), parse_mode=PM)
+    return ADMIN_MARK_DATE
+
+
+async def admin_mark_date_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    lang = get_lang(ctx)
+    text = update.message.text.strip()
+    if text == "/today":
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    else:
+        parsed = parse_date(text)
+        if parsed is None:
+            await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
+            return ADMIN_MARK_DATE
+        date_str = parsed
+    book_id = ctx.user_data.pop("mark_book_id", None)
+    if book_id is None:
+        # State was lost (e.g. bot restarted mid-conversation).
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    db_mark_discussed(book_id, date_str)
+    book = require_book(book_id)
+    await update.message.reply_text(
+        T[lang]["marked_discussed"].format(title=h(book["title"]), date=h(date_str)),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book or not book["discussed"]:
+        await query.edit_message_text(tr(ctx, "no_discussed_for_meeting"), parse_mode=PM)
+        return ConversationHandler.END
+    ctx.user_data["meeting_book_id"] = book_id
+    ctx.user_data["meeting_attendee_ids"] = set()
+    default_hint = ""
+    if book["discussed_at"]:
+        default_hint = f"\n\n<i>{h(book['discussed_at'])}</i>"
+    await query.edit_message_text(
+        tr(ctx, "ask_meeting_date") + default_hint,
+        parse_mode=PM,
+    )
+    return ADMIN_MEETING_DATE
+
+
+async def admin_meeting_date_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    lang = get_lang(ctx)
+    text = update.message.text.strip()
+    if text == "/today":
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    else:
+        parsed = parse_date(text)
+        if parsed is None:
+            await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
+            return ADMIN_MEETING_DATE
+        date_str = parsed
+    if ctx.user_data.get("meeting_book_id") is None:
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    ctx.user_data["meeting_date"] = date_str
+    return await _show_meeting_attendee_picker(update, ctx, page=0, is_callback=False)
+
+
+async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
+        ctx.user_data.pop("meeting_book_id", None)
+        ctx.user_data.pop("meeting_date", None)
+        ctx.user_data.pop("meeting_attendee_ids", None)
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    if action == "addid":
+        await query.edit_message_text(
+            tr(ctx, "meeting_attendee_add_id_prompt"), parse_mode=PM
+        )
+        return ADMIN_MEETING_ADD_ID
+
+    if action == "page" and len(parts) > 2:
+        page = int(parts[2])
+        return await _show_meeting_attendee_picker(
+            query, ctx, page=page, is_callback=True
+        )
+
+    if action == "toggle" and len(parts) > 2:
+        uid = int(parts[2])
+        page = int(parts[3]) if len(parts) > 3 else 0
+        selected = _meeting_attendee_ids(ctx)
+        if uid in selected:
+            selected.remove(uid)
+        else:
+            selected.add(uid)
+        return await _show_meeting_attendee_picker(
+            query, ctx, page=page, is_callback=True
+        )
+
+    if action == "done":
+        book_id = ctx.user_data.pop("meeting_book_id", None)
+        date_str = ctx.user_data.pop("meeting_date", None)
+        attendee_ids = list(ctx.user_data.pop("meeting_attendee_ids", set()))
+        if book_id is None or date_str is None:
+            await query.edit_message_text(s(lang, "cancelled"))
+            return ConversationHandler.END
+        db_create_meeting(
+            book_id,
+            date_str,
+            query.from_user.id,
+            attendee_ids,
+        )
+        book = require_book(book_id)
+        await query.edit_message_text(
+            tr(
+                ctx,
+                "meeting_saved",
+                title=h(book["title"]),
+                date=h(date_str),
+                count=len(attendee_ids),
+            ),
+            parse_mode=PM,
+        )
+        return ConversationHandler.END
+
+    return ADMIN_MEETING_ATTENDEES
+
+
+async def admin_meeting_add_id_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    text = (update.message.text or "").strip()
+    try:
+        user_id = int(text)
+        if user_id <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            tr(ctx, "meeting_attendee_invalid_id"), parse_mode=PM
+        )
+        return ADMIN_MEETING_ADD_ID
+
+    full_name = ""
+    username: str | None = None
+    if config.ALLOWED_CHAT_ID:
+        try:
+            member = await update.get_bot().get_chat_member(config.ALLOWED_CHAT_ID, user_id)
+            u = member.user
+            full_name = u.full_name or ""
+            username = u.username
+        except Exception as e:
+            logger.warning(
+                "admin_meeting_add_id: get_chat_member failed for %s: %s", user_id, e
+            )
+    db_upsert_club_user(user_id, full_name, username)
+    _meeting_attendee_ids(ctx).add(user_id)
+    await update.message.reply_text(
+        tr(ctx, "meeting_attendee_added_id", user_id=user_id), parse_mode=PM
+    )
+    page = int(ctx.user_data.get("meeting_attendee_page", 0))
+    return await _show_meeting_attendee_picker(update, ctx, page=page, is_callback=False)
+
+
+async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, meeting_id = query.data.split(":", 1)
+    if meeting_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    meeting = db_get_meeting(int(meeting_id))
+    if not meeting:
+        await query.edit_message_text("Error: meeting not found.")
+        return ConversationHandler.END
+    rows = db_get_meeting_attendee_rows(meeting["id"])
+    lines = []
+    for row in rows:
+        name = format_club_user_display(
+            int(row["user_id"]), row["full_name"], row["username"]
+        )
+        lines.append(tr(ctx, "meeting_attendee_line", name=h(name)))
+    body = "\n".join(lines) if lines else tr(ctx, "meeting_view_empty")
+    await query.edit_message_text(
+        tr(
+            ctx,
+            "meeting_view_title",
+            title=h(meeting["title"]),
+            date=h(meeting["meeting_date"]),
+            count=len(rows),
+        )
+        + body,
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    db_set_hidden(book_id, True)
+    book = db_get_book(book_id)
+
+    await query.edit_message_text(
+        tr(ctx, "book_hidden", title=h(book["title"])),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+def _admin_hidden_books() -> list[sqlite3.Row]:
+    hidden: list[sqlite3.Row] = []
+    for discussed in (False, True):
+        hidden.extend(
+            b
+            for b in db_get_books(discussed=discussed, include_hidden=True)
+            if b["hidden"]
+        )
+    return hidden
+
+
+async def admin_unhide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book_id = int(book_id)
+    db_set_hidden(book_id, False)
+    book = db_get_book(book_id)
+
+    await query.edit_message_text(
+        tr(ctx, "book_unhidden", title=h(book["title"])),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def admin_export_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    book = db_get_book(int(book_id))
+    if not book:
+        await query.edit_message_text("Error: book not found.")
+        return ConversationHandler.END
+
+    payload = h(book_to_export_payload(book))
+    await query.edit_message_text(
+        tr(ctx, "export_done", payload=payload),
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
+async def _finish_admin_import(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    book_data: Mapping[str, Any],
+    source_entity: str | None,
+    *,
+    reply: Callable[..., Any],
+) -> int:
+    book_id = db_import_book(book_data)
+    msg = tr(ctx, "import_done", title=h(book_data["title"]), book_id=book_id)
+    if source_entity and source_entity != config.CLUB_ENTITY:
+        msg += tr(
+            ctx,
+            "import_entity_mismatch",
+            exported=h(source_entity),
+            local=h(config.CLUB_ENTITY),
+        )
+    await reply(msg)
+    schedule_new_book_notifications(
+        ctx.job_queue, book_id, update.effective_user.id
+    )
+    return ConversationHandler.END
+
+
+async def admin_import_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    text = update.message.text or ""
+    try:
+        book_data, source_entity = parse_book_import(text)
+    except ValueError as e:
+        await update.message.reply_text(
+            tr(ctx, "import_invalid", error=h(str(e))),
+            parse_mode=PM,
+        )
+        return ADMIN_IMPORT_WAIT
+
+    similar = find_similar_book_titles(book_data["title"])
+    if similar:
+        ctx.user_data["pending_import"] = {
+            "book_data": dict(book_data),
+            "source_entity": source_entity,
+        }
+        lang = get_lang(ctx)
+        await update.message.reply_text(
+            tr(
+                ctx,
+                "similar_title_warning",
+                title=h(book_data["title"]),
+                matches=similar_title_warning_matches_text(similar),
+            ),
+            reply_markup=similar_title_confirm_keyboard(lang),
+            parse_mode=PM,
+        )
+        return ADMIN_IMPORT_CONFIRM
+
+    return await _finish_admin_import(
+        update,
+        ctx,
+        book_data,
+        source_entity,
+        reply=lambda msg: update.message.reply_text(msg, parse_mode=PM),
+    )
+
+
+async def admin_import_similar_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    _, action = query.data.split(":", 1)
+    pending = ctx.user_data.pop("pending_import", None)
+    if action == "no" or not pending:
+        await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    return await _finish_admin_import(
+        update,
+        ctx,
+        pending["book_data"],
+        pending.get("source_entity"),
+        reply=lambda msg: query.edit_message_text(msg, parse_mode=PM),
+    )
+
+

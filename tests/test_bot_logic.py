@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import bookclub_bot as bot
+import bookclub.config as cfg
+import bookclub.logging_setup as log_setup
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,7 @@ class TestDatabase(unittest.TestCase):
 
     def setUp(self):
         self.db_file = "test_bookclub_logic.db"
+        cfg.DB_PATH = self.db_file
         bot.DB_PATH = self.db_file
         bot.init_db()
 
@@ -733,14 +736,14 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(bot.can_modify(456, book))
 
     def test_can_modify_admin(self):
-        old = bot.ADMIN_IDS[:]
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = [999]
+            cfg.ADMIN_IDS = [999]
             book = make_book()
             book["added_by"] = 123
             self.assertTrue(bot.can_modify(999, book))
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
     def test_can_modify_imported_book_matching_username(self):
         book = make_book()
@@ -825,8 +828,8 @@ class TestErrorAlertHandler(unittest.TestCase):
     that keeps a failing send from alerting about itself forever."""
 
     def setUp(self):
-        bot._alert_buffer.clear()
-        bot._alert_dropped = 0
+        log_setup._alert_buffer.clear()
+        log_setup._alert_dropped = 0
         self.handler = bot._TelegramAlertHandler(level=bot.logging.ERROR)
         self.handler.setFormatter(bot._log_fmt)
 
@@ -843,28 +846,28 @@ class TestErrorAlertHandler(unittest.TestCase):
 
     def test_error_record_is_buffered(self):
         self.handler.emit(self._record(msg="kaboom"))
-        self.assertEqual(len(bot._alert_buffer), 1)
-        self.assertIn("kaboom", bot._alert_buffer[0])
+        self.assertEqual(len(log_setup._alert_buffer), 1)
+        self.assertIn("kaboom", log_setup._alert_buffer[0])
 
     def test_own_alert_failures_are_ignored(self):
         # The ".alert" child logger reports delivery failures; alerting on those
         # would loop forever, so emit() must drop them.
         self.handler.emit(self._record(name="bookclub_bot.alert"))
-        self.assertEqual(len(bot._alert_buffer), 0)
+        self.assertEqual(len(log_setup._alert_buffer), 0)
 
     def test_networking_stack_is_ignored(self):
         for noisy in ("httpx", "httpcore.connection", "telegram.ext", "apscheduler.x"):
             self.handler.emit(self._record(name=noisy))
-        self.assertEqual(len(bot._alert_buffer), 0)
+        self.assertEqual(len(log_setup._alert_buffer), 0)
 
     def test_buffer_is_bounded_and_counts_drops(self):
         overflow = bot._ALERT_BUFFER_MAX + 5
         for i in range(overflow):
             self.handler.emit(self._record(msg=f"err{i}"))
-        self.assertEqual(len(bot._alert_buffer), bot._ALERT_BUFFER_MAX)
-        self.assertEqual(bot._alert_dropped, 5)
+        self.assertEqual(len(log_setup._alert_buffer), bot._ALERT_BUFFER_MAX)
+        self.assertEqual(log_setup._alert_dropped, 5)
         # Oldest were dropped; newest survive.
-        self.assertIn(f"err{overflow - 1}", bot._alert_buffer[-1])
+        self.assertIn(f"err{overflow - 1}", log_setup._alert_buffer[-1])
 
 
 class TestClubEntity(unittest.TestCase):

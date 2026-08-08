@@ -28,7 +28,7 @@ BLACK="$(venv_bin black)"
 MYPY="$(venv_bin mypy)"
 PYTEST="$(venv_bin pytest)"
 
-TARGETS=(bookclub_bot.py scripts/check_bot_idle.py tests/)
+TARGETS=(bookclub bookclub_bot.py scripts/check_bot_idle.py tests/)
 
 echo "Running ruff..."
 "$RUFF" check "${TARGETS[@]}"

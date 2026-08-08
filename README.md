@@ -91,7 +91,7 @@ The database schema is shared. For films, fields are reused as follows:
 | `pages` | Page count | Runtime (minutes) |
 | `fiction` | Fiction / non-fiction | Feature film / documentary |
 
-You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub_bot.py`.
+You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 
 To move one entry between instances (e.g. after spinning up a new bot or merging clubs), use **Export book (JSON)** / **Import book (JSON)** in `/adminconsole` on each side — see Admin Commands above. The payload is a small JSON document (`format`: `bookclub-bot-book`); `entity` in the file is informational if book vs film labels differ.
 
@@ -226,8 +226,8 @@ Dev dependencies live in `requirements-dev.txt` (runtime deps are in `requiremen
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-ruff check bookclub_bot.py scripts/check_bot_idle.py tests/
-black bookclub_bot.py scripts/check_bot_idle.py tests/
+ruff check bookclub bookclub_bot.py scripts/check_bot_idle.py tests/
+black bookclub bookclub_bot.py scripts/check_bot_idle.py tests/
 mypy
 pytest tests/
 ```
@@ -267,6 +267,7 @@ Or:
 
 ```bash
 docker compose run --rm \
+  -v "$(pwd)/bookclub:/app/bookclub:ro" \
   -v "$(pwd)/bookclub_bot.py:/app/bookclub_bot.py:ro" \
   -v "$(pwd)/tests:/app/tests:ro" \
   bot python -m pytest tests/

@@ -16,6 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code into the container
+COPY bookclub/ ./bookclub/
 COPY bookclub_bot.py .
 
 # Command to run the bot

@@ -22,11 +22,11 @@ ignore = [
 "tests/*" = ["F841"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["bookclub_bot"]
+known-first-party = ["bookclub", "bookclub_bot"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["bookclub_bot.py", "scripts/check_bot_idle.py"]
+files = ["bookclub", "bookclub_bot.py", "scripts/check_bot_idle.py"]
 warn_return_any = true
 warn_unused_ignores = true
 no_implicit_optional = true
@@ -36,7 +36,7 @@ disallow_untyped_defs = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-module = "bookclub_bot"
+module = ["bookclub_bot", "bookclub.*"]
 disable_error_code = ["union-attr", "index"]
 
 [[tool.mypy.overrides]]

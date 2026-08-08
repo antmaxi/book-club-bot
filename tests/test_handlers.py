@@ -16,6 +16,7 @@ from telegram.error import NetworkError
 from telegram.ext import ConversationHandler
 
 import bookclub_bot as bot
+import bookclub.config as cfg
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
 
@@ -26,11 +27,13 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
     DB_FILE = "test_handlers.db"
 
     def setUp(self):
+        cfg.DB_PATH = self.DB_FILE
         bot.DB_PATH = self.DB_FILE
         bot.init_db()
 
         # Disable ALLOWED_CHAT_ID so membership gate never blocks during tests
-        self._orig_chat_id = bot.ALLOWED_CHAT_ID
+        self._orig_chat_id = cfg.ALLOWED_CHAT_ID
+        cfg.ALLOWED_CHAT_ID = None
         bot.ALLOWED_CHAT_ID = None
 
         # The membership cache is module-global; a verdict cached by one test
@@ -57,6 +60,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot.db_set_user_setting(67890, "notify_new_books", 0)
 
     def tearDown(self):
+        cfg.ALLOWED_CHAT_ID = self._orig_chat_id
         bot.ALLOWED_CHAT_ID = self._orig_chat_id
         if os.path.exists(self.DB_FILE):
             os.remove(self.DB_FILE)
@@ -92,7 +96,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
 
 class TestStartHelp(BotHandlerTestCase):
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_start_sends_welcome(self, mock_set):
         await bot.cmd_start(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
@@ -100,12 +104,12 @@ class TestStartHelp(BotHandlerTestCase):
         self.assertIn("Welcome", text)
         self.assertIn("/info", text)
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_start_sets_menu(self, mock_set):
         await bot.cmd_start(self.update, self.ctx)
         mock_set.assert_called_once_with(self.ctx.bot, self.update, "en")
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_start_ru(self, mock_set):
         self.ctx.user_data["lang"] = "ru"
         await bot.cmd_start(self.update, self.ctx)
@@ -113,7 +117,7 @@ class TestStartHelp(BotHandlerTestCase):
         self.assertIn("Добро пожаловать", text)
         self.assertIn("/info", text)
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_help_delegates_to_start(self, mock_set):
         await bot.cmd_help(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
@@ -133,7 +137,7 @@ class TestInfo(BotHandlerTestCase):
     async def test_cmd_info_en(self, mock_git, mock_exists):
         mock_exists.return_value = True
         mock_git.return_value = f"{self.GIT_COMMIT_EPOCH}\n".encode()
-        with patch("bookclub_bot.GITHUB_REPO", "https://test.repo"):
+        with patch.object(cfg, "GITHUB_REPO", "https://test.repo"):
             await bot.cmd_info(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
         text = self.message.reply_text.call_args[0][0]
@@ -209,7 +213,7 @@ class TestInfo(BotHandlerTestCase):
 
 class TestSetUserCommands(BotHandlerTestCase):
 
-    @patch("bookclub_bot.BotCommandScopeChat")
+    @patch("bookclub.handlers.commands.BotCommandScopeChat")
     async def test_private_chat_uses_chat_scope(self, mock_scope_cls):
         mock_scope = MagicMock()
         mock_scope_cls.return_value = mock_scope
@@ -223,7 +227,7 @@ class TestSetUserCommands(BotHandlerTestCase):
             bot.COMMANDS["en"], scope=mock_scope
         )
 
-    @patch("bookclub_bot.BotCommandScopeChatMember")
+    @patch("bookclub.handlers.commands.BotCommandScopeChatMember")
     async def test_group_chat_uses_member_scope(self, mock_scope_cls):
         mock_scope = MagicMock()
         mock_scope_cls.return_value = mock_scope
@@ -700,7 +704,7 @@ class TestSettings(BotHandlerTestCase):
             1,
         )
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_settings_toggle_lang_en_to_ru(self, mock_set):
         self.ctx.user_data["lang"] = "en"
         q = self._callback_query("settings:toggle_lang")
@@ -709,7 +713,7 @@ class TestSettings(BotHandlerTestCase):
         q.answer.assert_called_once_with("🇷🇺 Язык установлен: Русский.")
         mock_set.assert_called_once_with(self.ctx.bot, self.update, "ru")
 
-    @patch("bookclub_bot.set_user_commands", new_callable=AsyncMock)
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_settings_toggle_lang_ru_to_en(self, mock_set):
         self.ctx.user_data["lang"] = "ru"
         q = self._callback_query("settings:toggle_lang")
@@ -757,24 +761,24 @@ class TestSettings(BotHandlerTestCase):
 class TestMembershipGate(BotHandlerTestCase):
 
     async def test_gate_allows_when_no_chat_id_set(self):
-        bot.ALLOWED_CHAT_ID = None
+        cfg.ALLOWED_CHAT_ID = None
         result = await bot._check_membership(self.update, self.ctx)
         self.assertTrue(result)
 
     async def test_gate_allows_admin_without_api_call(self):
-        bot.ALLOWED_CHAT_ID = -1001111111111
-        old = bot.ADMIN_IDS[:]
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = [self.update.effective_user.id]
+            cfg.ADMIN_IDS = [self.update.effective_user.id]
             result = await bot._check_membership(self.update, self.ctx)
             self.assertTrue(result)
             # Bot API should NOT have been called for admin
             self.ctx.bot.get_chat_member.assert_not_called()
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
     async def test_gate_allows_member_status(self):
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         for status in ("member", "administrator", "creator", "restricted"):
             bot._membership_cache.clear()  # else only the first status is tested
             member = MagicMock()
@@ -784,7 +788,7 @@ class TestMembershipGate(BotHandlerTestCase):
             self.assertTrue(result, f"Status '{status}' should be allowed")
 
     async def test_gate_blocks_non_member(self):
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         for status in ("left", "kicked"):
             bot._membership_cache.clear()  # else only the first status is tested
             member = MagicMock()
@@ -795,14 +799,14 @@ class TestMembershipGate(BotHandlerTestCase):
 
     async def test_gate_allows_on_api_exception(self):
         """If get_chat_member fails, we fail open (allow) with a warning."""
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         self.ctx.bot.get_chat_member = AsyncMock(side_effect=Exception("API error"))
         result = await bot._check_membership(self.update, self.ctx)
         self.assertFalse(result)
 
     async def test_gate_caches_result_to_avoid_api_call_per_update(self):
         """The gate runs on every update; it must not hit the API each time."""
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         member = MagicMock()
         member.status = "member"
         self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
@@ -812,7 +816,7 @@ class TestMembershipGate(BotHandlerTestCase):
 
     async def test_gate_does_not_cache_api_failures(self):
         """A transient error must not lock a real member out for the whole TTL."""
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         self.ctx.bot.get_chat_member = AsyncMock(side_effect=Exception("boom"))
         self.assertFalse(await bot._check_membership(self.update, self.ctx))
 
@@ -822,7 +826,7 @@ class TestMembershipGate(BotHandlerTestCase):
         self.assertTrue(await bot._check_membership(self.update, self.ctx))
 
     async def test_leaving_evicts_user_from_membership_cache(self):
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         uid = self.update.effective_user.id
         bot._membership_cache[uid] = (True, datetime.now())
         self.update.message.left_chat_member = MagicMock(spec=User)
@@ -831,7 +835,7 @@ class TestMembershipGate(BotHandlerTestCase):
         self.assertNotIn(uid, bot._membership_cache)
 
     async def test_gate_ignores_new_chat_members_service_message(self):
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         joiner = MagicMock(spec=User)
         joiner.id = 55555
         bot._membership_cache[55555] = (False, datetime.now())
@@ -843,7 +847,7 @@ class TestMembershipGate(BotHandlerTestCase):
 
     async def test_gate_ignores_left_chat_member_service_message(self):
         """A 'user left the chat' service message must not trigger a reply in the group."""
-        bot.ALLOWED_CHAT_ID = -1001111111111
+        cfg.ALLOWED_CHAT_ID = -1001111111111
         self.update.message.left_chat_member = MagicMock(spec=User)
         await bot.membership_gate(self.update, self.ctx)
         self.ctx.bot.get_chat_member.assert_not_called()
@@ -856,9 +860,9 @@ class TestMembershipGate(BotHandlerTestCase):
 class TestStartupShutdown(BotHandlerTestCase):
 
     async def test_bot_notify_startup_sends_to_first_admin(self):
-        old = bot.ADMIN_IDS[:]
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = [111, 222]
+            cfg.ADMIN_IDS = [111, 222]
             app = MagicMock()
             app.bot = AsyncMock()
             # bot_notify_startup schedules the error-alert drain via
@@ -869,12 +873,12 @@ class TestStartupShutdown(BotHandlerTestCase):
             self.assertEqual(app.bot.send_message.call_args[1]["chat_id"], 111)
             self.assertIn("Bot is up", app.bot.send_message.call_args[1]["text"])
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
     async def test_bot_notify_shutdown_sends_to_first_admin(self):
-        old = bot.ADMIN_IDS[:]
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = [333, 444]
+            cfg.ADMIN_IDS = [333, 444]
             app = MagicMock()
             app.bot = AsyncMock()
             await bot.bot_notify_shutdown(app)
@@ -882,23 +886,23 @@ class TestStartupShutdown(BotHandlerTestCase):
             self.assertEqual(app.bot.send_message.call_args[1]["chat_id"], 333)
             self.assertIn("Bot is down", app.bot.send_message.call_args[1]["text"])
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
     async def test_bot_notify_no_admins_does_nothing(self):
-        old = bot.ADMIN_IDS[:]
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = []
+            cfg.ADMIN_IDS = []
             app = MagicMock()
             app.bot = AsyncMock()
             await bot.bot_notify_startup(app)
             app.bot.send_message.assert_not_called()
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
     async def test_bot_notify_startup_api_error_does_not_crash(self):
-        old = bot.ADMIN_IDS[:]
+        old = cfg.ADMIN_IDS[:]
         try:
-            bot.ADMIN_IDS = [123]
+            cfg.ADMIN_IDS = [123]
             app = MagicMock()
             app.bot = AsyncMock()
             app.create_task.side_effect = lambda coro: coro.close()
@@ -906,7 +910,7 @@ class TestStartupShutdown(BotHandlerTestCase):
             # Should not raise
             await bot.bot_notify_startup(app)
         finally:
-            bot.ADMIN_IDS = old
+            cfg.ADMIN_IDS = old
 
 
 # ── /cancel ────────────────────────────────────────────────────────────────────
@@ -934,15 +938,15 @@ class TestAdminConsole(BotHandlerTestCase):
 
     def setUp(self):
         super().setUp()
-        self.old_admins = bot.ADMIN_IDS[:]
-        bot.ADMIN_IDS = [self.update.effective_user.id]
+        self.old_admins = cfg.ADMIN_IDS[:]
+        cfg.ADMIN_IDS = [self.update.effective_user.id]
 
     def tearDown(self):
-        bot.ADMIN_IDS = self.old_admins
+        cfg.ADMIN_IDS = self.old_admins
         super().tearDown()
 
     async def test_cmd_admin_console_as_non_admin_fails(self):
-        bot.ADMIN_IDS = [999]
+        cfg.ADMIN_IDS = [999]
         state = await bot.cmd_admin_console(self.update, self.ctx)
         self.assertEqual(state, ConversationHandler.END)
         self.message.reply_text.assert_called_once()
@@ -1084,10 +1088,10 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_admin_notify_chat_top_posts_to_group(self):
         bid1 = self._add_book("Chat Top 1")
         bid2 = self._add_book("Chat Top 2")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
 
         q = self._callback_query("admin:notify_chat")
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             state = await bot.admin_notify_chat_top_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
@@ -1102,10 +1106,10 @@ class TestAdminConsole(BotHandlerTestCase):
 
     async def test_admin_notify_chat_pick_posts_to_group(self):
         bid = self._add_book("Chat Pick Book")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
 
         q = self._callback_query(f"admin_notify_chat_pick:{bid}")
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             state = await bot.admin_notify_chat_pick_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
@@ -1116,7 +1120,7 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertIsNotNone(kwargs.get("reply_markup"))
 
     async def test_admin_notify_chat_no_allowed_chat_id(self):
-        bot.ALLOWED_CHAT_ID = None
+        cfg.ALLOWED_CHAT_ID = None
         self._add_book("Orphan Book")
 
         q = self._callback_query("admin:notify_chat")
@@ -1203,7 +1207,7 @@ class TestAdminConsole(BotHandlerTestCase):
 
     async def test_notify_new_book_job_posts_to_chat_when_enabled(self):
         bid = self._add_book("Chatty Book")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
         bot.db_set_new_book_notify_pending(
             bid, 999, datetime.now() + timedelta(minutes=5)
@@ -1215,7 +1219,7 @@ class TestAdminConsole(BotHandlerTestCase):
         self.ctx.job.data = {"book_id": bid}
         self.ctx.application.user_data = {999: {"lang": "en"}}
 
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.notify_new_book_job(self.ctx)
 
         # Should be called once for ALLOWED_CHAT_ID (and 0 users opted in by default in this test)
@@ -1227,7 +1231,7 @@ class TestAdminConsole(BotHandlerTestCase):
     async def test_chat_post_uses_chat_lang_not_adder_lang(self):
         """A shared group post must not follow the adder's personal language."""
         bid = self._add_book("Shared Book")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
 
         self.ctx.job = MagicMock()
@@ -1238,7 +1242,7 @@ class TestAdminConsole(BotHandlerTestCase):
             bid, 999, datetime.now() + timedelta(minutes=5)
         )
 
-        with patch.object(bot, "CHAT_LANG", "ru"):
+        with patch.object(cfg, "CHAT_LANG", "ru"):
             await bot.notify_new_book_job(self.ctx)
 
         kwargs = self.ctx.bot.send_message.call_args[1]
@@ -1247,7 +1251,7 @@ class TestAdminConsole(BotHandlerTestCase):
 
     async def test_notify_new_book_job_skips_hidden_book(self):
         bid = self._add_book("Hidden Book")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 1)
         bot.db_toggle_hidden(bid)  # admin hid it inside the notify delay window
         bot.db_set_new_book_notify_pending(
@@ -1264,7 +1268,7 @@ class TestAdminConsole(BotHandlerTestCase):
 
     async def test_notify_new_book_job_does_not_post_to_chat_when_disabled(self):
         bid = self._add_book("Quiet Book")
-        bot.ALLOWED_CHAT_ID = -100123
+        cfg.ALLOWED_CHAT_ID = -100123
         bot.db_set_admin_setting("post_new_books_to_chat", 0)
         bot.db_set_new_book_notify_pending(
             bid, 999, datetime.now() + timedelta(minutes=5)
@@ -1352,7 +1356,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
     async def test_group_card_omits_personal_vote(self):
         bid = self._add_book()
         q = self._vote_in("supergroup", bid)
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
         text = q.edit_message_text.call_args[0][0]
         self.assertNotIn(
@@ -1367,7 +1371,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
 
         # First vote: +1
         q = self._vote_in("supergroup", bid, score=1)
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
 
         text = q.edit_message_text.call_args[0][0]
@@ -1376,7 +1380,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
         # Second user votes: +1 more (simulate by changing mock user ID)
         self.update.effective_user.id = 99999
         q2 = self._callback_query(f"vote_cast:{bid}:1")
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
 
         text2 = q2.edit_message_text.call_args[0][0]
@@ -1389,7 +1393,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
 
         # User votes +1
         q = self._vote_in("supergroup", bid, score=1)
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
         text = q.edit_message_text.call_args[0][0]
         self.assertIn("✅ 1", text)
@@ -1397,7 +1401,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
 
         # Same user changes to -1 (don't want)
         q2 = self._callback_query(f"vote_cast:{bid}:-1")
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
 
         text2 = q2.edit_message_text.call_args[0][0]
@@ -1407,7 +1411,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
     async def test_group_card_acknowledges_voter_via_toast(self):
         bid = self._add_book()
         q = self._vote_in("supergroup", bid)
-        with patch.object(bot, "CHAT_LANG", "en"):
+        with patch.object(cfg, "CHAT_LANG", "en"):
             await bot.vote_cast_cb(self.update, self.ctx)
         q.answer.assert_called_once()
         self.assertIn("Your vote", q.answer.call_args[0][0])
@@ -1416,7 +1420,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
         bid = self._add_book()
         self.ctx.user_data["lang"] = "en"  # clicker prefers English
         q = self._vote_in("supergroup", bid)
-        with patch.object(bot, "CHAT_LANG", "ru"):
+        with patch.object(cfg, "CHAT_LANG", "ru"):
             await bot.vote_cast_cb(self.update, self.ctx)
         text = q.edit_message_text.call_args[0][0]
         # Rendered in CHAT_LANG, not the clicker's "en".
@@ -1441,7 +1445,7 @@ class TestGroupVoteCard(BotHandlerTestCase):
         for chat_type in ("private", "supergroup"):
             bid = self._add_book(f"B-{chat_type}")
             self._vote_in(chat_type, bid)
-            with patch.object(bot, "CHAT_LANG", "en"):
+            with patch.object(cfg, "CHAT_LANG", "en"):
                 await bot.vote_cast_cb(self.update, self.ctx)
             self.assertEqual(
                 bot.db_get_user_vote(self.update.effective_user.id, bid), 1
@@ -1455,11 +1459,11 @@ class TestAdminCallbackGuards(BotHandlerTestCase):
 
     def setUp(self):
         super().setUp()
-        self._orig_admins = bot.ADMIN_IDS[:]
-        bot.ADMIN_IDS = [11111]  # caller (67890) is NOT admin
+        self._orig_admins = cfg.ADMIN_IDS[:]
+        cfg.ADMIN_IDS = [11111]  # caller (67890) is NOT admin
 
     def tearDown(self):
-        bot.ADMIN_IDS = self._orig_admins
+        cfg.ADMIN_IDS = self._orig_admins
         super().tearDown()
 
     async def test_admin_menu_cb_rejects_non_admin(self):
@@ -1502,7 +1506,7 @@ class TestStaleState(BotHandlerTestCase):
 
     async def test_mark_date_without_book_id_ends_gracefully(self):
         """State can be lost if the bot restarts mid-conversation."""
-        bot.ADMIN_IDS = [self.update.effective_user.id]
+        cfg.ADMIN_IDS = [self.update.effective_user.id]
         try:
             self.ctx.user_data.pop("mark_book_id", None)
             self.message.text = "/today"
@@ -1510,7 +1514,7 @@ class TestStaleState(BotHandlerTestCase):
             self.assertEqual(result, ConversationHandler.END)
             self.message.reply_text.assert_called_once()
         finally:
-            bot.ADMIN_IDS = []
+            cfg.ADMIN_IDS = []
 
 
 # ── Conversation wiring ───────────────────────────────────────────────────────
