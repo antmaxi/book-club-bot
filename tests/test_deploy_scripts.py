@@ -25,8 +25,7 @@ SCRIPTS_AVAILABLE = (
 GIT_AVAILABLE = shutil.which("git") is not None
 
 
-def _git_init_commit(path: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+def _git_commit(path: Path, message: str) -> None:
     subprocess.run(
         [
             "git",
@@ -37,12 +36,18 @@ def _git_init_commit(path: Path) -> None:
             "commit",
             "--allow-empty",
             "-m",
-            "init",
+            message,
             "-q",
         ],
         cwd=path,
         check=True,
     )
+
+
+def _git_init_commit(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True)
+    _git_commit(path, "init")
 
 
 def _source_repos(env_file: Path) -> subprocess.CompletedProcess[str]:
@@ -151,6 +156,44 @@ class TestDeployBotsScript(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             self.assertIn("== club-a ==", proc.stdout)
             self.assertIn(str(inst), proc.stdout)
+            self.assertIn("local HEAD:", proc.stdout)
+
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE and GIT_AVAILABLE, "needs deploy scripts and git"
+    )
+    def test_check_only_lists_incoming_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = root / "origin"
+            origin.mkdir()
+            _git_init_commit(origin)
+            inst = root / "club-behind"
+            subprocess.run(
+                ["git", "clone", "-q", str(origin), str(inst)],
+                check=True,
+            )
+            (inst / "docker-compose.yml").write_text("services: {}\n")
+            (inst / "data").mkdir()
+            subprocess.run(["git", "add", "docker-compose.yml"], cwd=inst, check=True)
+            _git_commit(inst, "add compose")
+
+            _git_commit(origin, "remote commit one")
+            _git_commit(origin, "remote commit two")
+            subprocess.run(["git", "fetch", "origin"], cwd=inst, check=True)
+
+            env_file = root / ".env"
+            env_file.write_text(f'DEPLOY_REPOS="{inst}"\n')
+            proc = self._run_check_only(env_file)
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertIn("2 new commits on origin", proc.stdout)
+            self.assertIn("to pull:", proc.stdout)
+            self.assertIn("remote commit one", proc.stdout)
+            self.assertIn("remote commit two", proc.stdout)
+            # Oldest incoming commit should appear before the newer one.
+            self.assertLess(
+                proc.stdout.index("remote commit one"),
+                proc.stdout.index("remote commit two"),
+            )
 
     @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
     def test_check_only_skips_missing_directory(self) -> None:

@@ -69,6 +69,7 @@ TO_DEPLOY=()
 
 # After a successful print_repo_status: up-to-date | behind | check-failed
 REPO_UPSTREAM_STATUS=""
+REPO_UPSTREAM_REF=""
 
 # Fetch origin and compare HEAD to the tracking branch. Sets REPO_UPSTREAM_STATUS and
 # REPO_UPSTREAM_LINE (human-readable). Returns 0 if the repo is a valid git checkout.
@@ -76,6 +77,7 @@ check_upstream_updates() {
     local repo="$1"
     REPO_UPSTREAM_STATUS="check-failed"
     REPO_UPSTREAM_LINE="(could not check — see log)"
+    REPO_UPSTREAM_REF=""
 
     if ! git -C "$repo" fetch origin --quiet 2>>"$LOG_FILE"; then
         log "[$REPO_NAME] WARN — git fetch origin failed"
@@ -94,6 +96,8 @@ check_upstream_updates() {
         REPO_UPSTREAM_LINE="(no upstream branch)"
         return 0
     fi
+
+    REPO_UPSTREAM_REF="$upstream_ref"
 
     local behind
     behind="$(git -C "$repo" rev-list --count HEAD.."$upstream_ref" 2>/dev/null || true)"
@@ -147,7 +151,8 @@ print_repo_status() {
     local running
     running="$(cd "$repo" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
 
-    local head_info
+    local branch head_info
+    branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
     head_info="$(git -C "$repo" log -1 --format='%h  %cd  %s' --date=format:'%Y-%m-%d %H:%M' 2>/dev/null)"
 
     echo ""
@@ -155,9 +160,17 @@ print_repo_status() {
     echo "  path:       $repo"
     echo "  containers: ${running} running"
     echo "  activity:   $status_line"
-    echo "  commit:     ${head_info:-(unknown)}"
+    echo "  branch:     $branch"
+    echo "  local HEAD: ${head_info:-(unknown)}"
     check_upstream_updates "$repo"
     echo "  upstream:   $REPO_UPSTREAM_LINE"
+    if [ "$REPO_UPSTREAM_STATUS" = "behind" ] && [ -n "$REPO_UPSTREAM_REF" ]; then
+        echo "  to pull:"
+        git -C "$repo" log "HEAD..${REPO_UPSTREAM_REF}" \
+            --format='    %h  %cd  %s' \
+            --date=format:'%Y-%m-%d %H:%M' \
+            --reverse 2>/dev/null || echo "    (could not list commits)"
+    fi
     return 0
 }
 
