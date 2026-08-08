@@ -336,6 +336,29 @@ class TestDatabase(unittest.TestCase):
         with self.assertRaises(ValueError):
             bot.parse_book_import("not json")
 
+    def test_title_word_similarity_ratio(self):
+        self.assertEqual(
+            bot.title_word_similarity_ratio(
+                "The Lord of the Rings", "Lord of the Rings"
+            ),
+            1.0,
+        )
+        self.assertEqual(
+            bot.title_word_similarity_ratio("Harry Potter", "Harry Potter Stone"),
+            2 / 3,
+        )
+        self.assertLess(
+            bot.title_word_similarity_ratio("War and Peace", "Crime and Punishment"),
+            bot.TITLE_SIMILARITY_THRESHOLD,
+        )
+
+    def test_find_similar_book_titles(self):
+        bot.db_add_book("Alpha Beta Gamma", "A", 10, True, "", "", 1, "u")
+        bot.db_add_book("Unrelated Title Here", "A", 10, True, "", "", 1, "u")
+        matches = bot.find_similar_book_titles("Alpha Beta")
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0][1], "Alpha Beta Gamma")
+
     def test_book_card_shows_original_language_when_set(self):
         book = make_book(original_language="German")
         text = bot.book_card(book, "en")

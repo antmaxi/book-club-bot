@@ -501,6 +501,23 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(self.ctx.user_data["new_book"]["title"], "My Book")
         self.assertEqual(state, bot.ADDING_AUTHOR)
 
+    async def test_add_title_similar_warns_before_author(self):
+        self._add_book("War and Peace")
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "War and Peace Extended"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_TITLE_CONFIRM)
+        warning = self.message.reply_text.call_args[0][0]
+        self.assertIn("War and Peace", warning)
+
+    async def test_add_title_similar_confirm_advances(self):
+        self._add_book("War and Peace")
+        self.ctx.user_data["new_book"] = {"title": "War and Peace Extended"}
+        q = self._callback_query("title_sim:yes")
+        state = await bot.add_title_similar_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        q.edit_message_text.assert_called_once()
+
     async def test_add_author_stores_and_advances(self):
         self.ctx.user_data["new_book"] = {"title": "T"}
         self.message.text = "Jane Austen"
@@ -1140,6 +1157,9 @@ class TestAdminConsole(BotHandlerTestCase):
         )
         self.update.message.text = payload
         state = await bot.admin_import_handler(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_IMPORT_CONFIRM)
+        q = self._callback_query("title_sim:yes")
+        state = await bot.admin_import_similar_cb(self.update, self.ctx)
         self.assertEqual(state, ConversationHandler.END)
         books = bot.db_get_books(discussed=False, include_hidden=True)
         titles = [b["title"] for b in books]
@@ -1152,6 +1172,9 @@ class TestAdminConsole(BotHandlerTestCase):
         self.ctx.job_queue = MagicMock()
 
         state = await bot.admin_import_handler(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_IMPORT_CONFIRM)
+        q = self._callback_query("title_sim:yes")
+        state = await bot.admin_import_similar_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
         self.ctx.job_queue.run_once.assert_called_once()
@@ -1257,8 +1280,60 @@ class TestAdminConsole(BotHandlerTestCase):
         # (It might be called if there were opted-in users, but there are none)
         self.ctx.bot.send_message.assert_not_called()
 
+    async def test_admin_meeting_create_flow(self):
+        bid = self._add_book("Discussed Book")
+        bot.db_mark_discussed(bid, "2026-03-01")
+        voter_id = 4242
+        bot.db_upsert_club_user(voter_id, "Voter One", "voter1")
+        bot.db_cast_vote(voter_id, bid, 1)
 
-# ── Voting in a shared group message ──────────────────────────────────────────
+        q = self._callback_query("admin:meeting_create")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_BOOK)
+
+        q = self._callback_query(f"admin_meeting_book:{bid}")
+        state = await bot.admin_meeting_book_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_DATE)
+        self.assertEqual(self.ctx.user_data["meeting_book_id"], bid)
+
+        self.message.text = "2026-03-17"
+        state = await bot.admin_meeting_date_handler(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
+        self.message.reply_text.assert_called()
+        self.assertIn("Who attended", self.message.reply_text.call_args[0][0])
+
+        q = self._callback_query(f"admin_meeting_att:toggle:{voter_id}:0")
+        state = await bot.admin_meeting_att_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
+        self.assertIn(voter_id, self.ctx.user_data["meeting_attendee_ids"])
+
+        q = self._callback_query("admin_meeting_att:done")
+        state = await bot.admin_meeting_att_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        meetings = bot.db_list_meetings()
+        self.assertEqual(len(meetings), 1)
+        self.assertEqual(meetings[0]["book_id"], bid)
+        attendees = bot.db_get_meeting_attendee_rows(meetings[0]["id"])
+        self.assertEqual([int(r["user_id"]) for r in attendees], [voter_id])
+
+    async def test_admin_meetings_view_lists_attendees(self):
+        bid = self._add_book("Past Read")
+        bot.db_mark_discussed(bid, "2026-02-01")
+        uid = 7777
+        bot.db_upsert_club_user(uid, "Alice", "alice")
+        mid = bot.db_create_meeting(bid, "2026-02-15", self.update.effective_user.id, [uid])
+
+        q = self._callback_query("admin:meetings_view")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETINGS_VIEW)
+
+        q = self._callback_query(f"admin_meeting_view:{mid}")
+        state = await bot.admin_meeting_view_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        body = q.edit_message_text.call_args[0][0]
+        self.assertIn("Past Read", body)
+        self.assertIn("Alice", body)
+
 
 # ── Voting in a shared group message ──────────────────────────────────────────
 

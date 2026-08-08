@@ -25,7 +25,7 @@ Commands:
   /edit            - Edit a book's details (owner/admin only)
   /delete          - Delete a book (owner/admin only)
   /discussed       - View the archive of discussed books
-  /adminconsole    - Admin console: mark discussed or hide
+  /adminconsole    - Admin console: mark discussed, hide, meetings
   /cancel          - Cancel the current operation
 """
 
@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import logging.handlers
 import os
 import sqlite3
@@ -123,12 +124,16 @@ NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
 ) = range(8)
+ADDING_TITLE_CONFIRM = 25
+ADMIN_IMPORT_CONFIRM = 26
 EDITING_CHOOSE = 8
 EDITING_FIELD = 9  # waiting for new value of current field
 DELETING_CHOOSE = 10
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT = (
-    range(11, 20)
+ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT, ADMIN_MEETING_BOOK, ADMIN_MEETING_DATE, ADMIN_MEETING_ATTENDEES, ADMIN_MEETING_ADD_ID, ADMIN_MEETINGS_VIEW = (
+    range(11, 25)
 )
+
+MEETING_ATTENDEES_PAGE_SIZE = 7
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
 
@@ -288,6 +293,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "invalid_creation_year": "⚠️ Please enter a valid 4-digit year (e.g. 1984), or /skip:",
         "ask_desc": "📝 Add a <b>description</b> (or /skip to leave empty):",
         "book_added": "✅ Book added!",
+        "similar_title_warning": (
+            "⚠️ A book with a <b>similar title</b> is already in the list:\n{matches}\n\n"
+            "Continue adding <b>{title}</b>?"
+        ),
+        "similar_title_confirm_btn": "✅ Yes, continue",
+        "similar_title_cancel_btn": "❌ No, cancel",
         "no_books": "📭 No books yet. Use /add to add one!",
         "no_undiscussed": "📭 No undiscussed books — use /discussed to see past reads.",
         "no_votes": "No votes yet. Use /list to see books and vote inline!",
@@ -407,6 +418,27 @@ T: dict[str, dict[str, TranslationValue]] = {
         "import_done": "✅ Imported <b>{title}</b> (new id: {book_id}).",
         "import_invalid": "⚠️ Invalid import data. Expected JSON from 📤 Export book. Error: {error}",
         "import_entity_mismatch": "\n\n<i>Note: export was for “{exported}”, this bot uses “{local}”.</i>",
+        "admin_meeting_create_btn": "📅 Record meeting attendance",
+        "admin_meetings_view_btn": "👥 View meeting attendance",
+        "choose_meeting_book": "📅 Choose the <b>discussed</b> book/film for this meeting:",
+        "no_discussed_for_meeting": "📭 No discussed entries yet — mark one as discussed first.",
+        "ask_meeting_date": "📅 Enter the <b>meeting date</b> (YYYY-MM-DD), or /today:",
+        "meeting_attendees_prompt": (
+            "👥 <b>Who attended?</b>\n"
+            "Tap names to toggle. Suggestions include voters and people who used the bot.\n"
+            "Selected: <b>{count}</b>"
+        ),
+        "meeting_attendee_done_btn": "✅ Save meeting",
+        "meeting_attendee_add_id_btn": "➕ Add by Telegram ID",
+        "meeting_attendee_add_id_prompt": "Send the attendee's <b>numeric Telegram user ID</b> (or /cancel):",
+        "meeting_attendee_invalid_id": "⚠️ Send a positive numeric Telegram user ID.",
+        "meeting_attendee_added_id": "✅ Added user <code>{user_id}</code>.",
+        "meeting_saved": "✅ Meeting saved for <b>{title}</b> on {date} — <b>{count}</b> attendee(s).",
+        "no_meetings": "📭 No meetings recorded yet.",
+        "choose_meeting_view": "👥 Choose a meeting to see who attended:",
+        "meeting_view_title": "👥 <b>{title}</b>\n📅 Meeting: {date}\n\n<b>Attendees ({count}):</b>\n",
+        "meeting_view_empty": "<i>No attendees recorded.</i>",
+        "meeting_attendee_line": "• {name}",
         "bot_name": "Book Club Bot",
         "card_icon": "📖",
         "subtitle_icon": "✍️",
@@ -448,6 +480,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "invalid_creation_year": "⚠️ Введите корректный год из 4 цифр (например, 1984) или /skip:",
         "ask_desc": "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
         "book_added": "✅ Книга добавлена!",
+        "similar_title_warning": (
+            "⚠️ В списке уже есть книга с <b>похожим названием</b>:\n{matches}\n\n"
+            "Всё равно добавить <b>{title}</b>?"
+        ),
+        "similar_title_confirm_btn": "✅ Да, продолжить",
+        "similar_title_cancel_btn": "❌ Нет, отмена",
         "no_books": "📭 Книг пока нет. Используйте /add, чтобы добавить!",
         "no_undiscussed": "📭 Необсуждённых книг нет — используйте /discussed для просмотра прочитанных.",
         "no_votes": "Голосов пока нет. Используйте /list для голосования!",
@@ -571,6 +609,27 @@ T: dict[str, dict[str, TranslationValue]] = {
         "import_done": "✅ Импортировано: <b>{title}</b> (новый id: {book_id}).",
         "import_invalid": "⚠️ Неверные данные. Нужен JSON из 📤 Экспорт книги. Ошибка: {error}",
         "import_entity_mismatch": "\n\n<i>Экспорт для «{exported}», этот бот — «{local}».</i>",
+        "admin_meeting_create_btn": "📅 Записать посещение встречи",
+        "admin_meetings_view_btn": "👥 Кто был на встречах",
+        "choose_meeting_book": "📅 Выберите <b>обсуждённую</b> книгу/фильм для этой встречи:",
+        "no_discussed_for_meeting": "📭 Пока нет обсуждённых записей — сначала отметьте обсуждение.",
+        "ask_meeting_date": "📅 Введите <b>дату встречи</b> (ГГГГ-ММ-ДД) или /today:",
+        "meeting_attendees_prompt": (
+            "👥 <b>Кто присутствовал?</b>\n"
+            "Нажимайте на имена, чтобы отметить. В списке — голосовавшие и пользовавшиеся ботом.\n"
+            "Выбрано: <b>{count}</b>"
+        ),
+        "meeting_attendee_done_btn": "✅ Сохранить встречу",
+        "meeting_attendee_add_id_btn": "➕ Добавить по Telegram ID",
+        "meeting_attendee_add_id_prompt": "Отправьте <b>числовой Telegram user ID</b> участника (или /cancel):",
+        "meeting_attendee_invalid_id": "⚠️ Нужен положительный числовой Telegram user ID.",
+        "meeting_attendee_added_id": "✅ Добавлен пользователь <code>{user_id}</code>.",
+        "meeting_saved": "✅ Встреча сохранена: <b>{title}</b>, {date} — <b>{count}</b> участник(ов).",
+        "no_meetings": "📭 Встречи ещё не записывались.",
+        "choose_meeting_view": "👥 Выберите встречу, чтобы увидеть участников:",
+        "meeting_view_title": "👥 <b>{title}</b>\n📅 Встреча: {date}\n\n<b>Участники ({count}):</b>\n",
+        "meeting_view_empty": "<i>Участники не указаны.</i>",
+        "meeting_attendee_line": "• {name}",
         "bot_name": "Книжный клуб-бот",
         "card_icon": "📖",
         "subtitle_icon": "✍️",
@@ -615,6 +674,10 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "fiction_btn": "🎬 Feature",
             "nonfiction_btn": "📽 Documentary",
             "book_added": "✅ Film added!",
+            "similar_title_warning": (
+                "⚠️ A film with a <b>similar title</b> is already in the list:\n{matches}\n\n"
+                "Continue adding <b>{title}</b>?"
+            ),
             "no_books": "📭 No films yet. Use /add to add one!",
             "no_undiscussed": "📭 No undiscussed films — use /discussed to see past picks.",
             "no_votes": "No votes yet. Use /list to see films and vote inline!",
@@ -692,6 +755,10 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "fiction_btn": "🎬 Худ. фильм",
             "nonfiction_btn": "📽 Документальный",
             "book_added": "✅ Фильм добавлен!",
+            "similar_title_warning": (
+                "⚠️ В списке уже есть фильм с <b>похожим названием</b>:\n{matches}\n\n"
+                "Всё равно добавить <b>{title}</b>?"
+            ),
             "no_books": "📭 Фильмов пока нет. Используйте /add, чтобы добавить!",
             "no_undiscussed": "📭 Необсуждённых фильмов нет — используйте /discussed для архива.",
             "no_votes": "Голосов пока нет. Используйте /list для голосования!",
@@ -898,6 +965,42 @@ def init_db() -> None:
                 PRIMARY KEY (user_id, setting_key)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS club_users (
+                user_id      INTEGER PRIMARY KEY,
+                full_name    TEXT NOT NULL DEFAULT '',
+                username     TEXT,
+                last_seen_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS meetings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                meeting_date TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                created_by   INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS meeting_attendees (
+                meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+                user_id    INTEGER NOT NULL,
+                PRIMARY KEY (meeting_id, user_id)
+            )
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
+            SELECT DISTINCT user_id, '', NULL, datetime('now') FROM votes
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
+            SELECT DISTINCT user_id, '', NULL, datetime('now') FROM user_settings
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
+            SELECT DISTINCT added_by, added_by_name, added_by_username, added_at FROM books
+        """)
         conn.commit()
 
 
@@ -938,7 +1041,11 @@ def db_add_book(
                 datetime.now().strftime("%Y-%m-%d"),
             ),
         )
-        return cur.lastrowid
+        conn.commit()
+        book_id = cur.lastrowid
+    if book_id is not None:
+        db_upsert_club_user(user_id, user_name, username)
+    return book_id
 
 
 def db_seed_book_exists(title: str, review_link: str) -> bool:
@@ -1066,6 +1173,41 @@ def db_get_book(book_id: int) -> sqlite3.Row | None:
         )
 
 
+TITLE_SIMILARITY_THRESHOLD = 0.5
+
+
+def title_words(title: str) -> set[str]:
+    return {w for w in re.split(r"\W+", title.casefold()) if w}
+
+
+def title_word_similarity_ratio(a: str, b: str) -> float:
+    """Share of words in the longer title that also appear in the other title."""
+    wa, wb = title_words(a), title_words(b)
+    if not wa or not wb:
+        return 0.0
+    overlap = len(wa & wb)
+    return overlap / max(len(wa), len(wb))
+
+
+def find_similar_book_titles(
+    new_title: str,
+    *,
+    min_ratio: float = TITLE_SIMILARITY_THRESHOLD,
+) -> list[tuple[int, str, float]]:
+    """Return existing books whose titles share enough words with new_title."""
+    by_id: dict[int, sqlite3.Row] = {}
+    for discussed in (False, True):
+        for book in db_get_books(discussed=discussed, include_hidden=True):
+            by_id[int(book["id"])] = book
+    matches: list[tuple[int, str, float]] = []
+    for book in by_id.values():
+        ratio = title_word_similarity_ratio(new_title, str(book["title"]))
+        if ratio >= min_ratio:
+            matches.append((int(book["id"]), str(book["title"]), ratio))
+    matches.sort(key=lambda m: (-m[2], m[1].casefold()))
+    return matches
+
+
 def db_update_book_field(book_id: int, field: str, value: Any) -> None:
     """Update a single whitelisted field."""
     allowed = {
@@ -1174,6 +1316,127 @@ def db_delete_book(book_id: int) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("DELETE FROM books WHERE id=?", (book_id,))
         conn.commit()
+
+
+def db_upsert_club_user(
+    user_id: int,
+    full_name: str = "",
+    username: str | None = None,
+) -> None:
+    if user_id <= 0:
+        return
+    name = str(full_name or "").strip()
+    uname = username.strip() if isinstance(username, str) and username.strip() else None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """INSERT INTO club_users (user_id, full_name, username, last_seen_at)
+               VALUES (?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET
+                 full_name = CASE WHEN excluded.full_name != '' THEN excluded.full_name
+                                  ELSE club_users.full_name END,
+                 username = COALESCE(excluded.username, club_users.username),
+                 last_seen_at = excluded.last_seen_at""",
+            (user_id, name, uname, now),
+        )
+        conn.commit()
+
+
+def db_meeting_user_suggestions(book_id: int) -> list[sqlite3.Row]:
+    """Users to suggest as attendees: voters on this book first, then other club users."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            """SELECT cu.user_id, cu.full_name, cu.username,
+                      CASE WHEN v.user_id IS NOT NULL THEN 1 ELSE 0 END AS voted
+               FROM club_users cu
+               LEFT JOIN votes v ON v.user_id = cu.user_id AND v.book_id = ?
+               ORDER BY voted DESC, cu.full_name COLLATE NOCASE, cu.user_id""",
+            (book_id,),
+        ).fetchall()
+
+
+def db_create_meeting(
+    book_id: int,
+    meeting_date: str,
+    created_by: int,
+    attendee_ids: Sequence[int],
+) -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.execute(
+            """INSERT INTO meetings (book_id, meeting_date, created_at, created_by)
+               VALUES (?,?,?,?)""",
+            (book_id, meeting_date, now, created_by),
+        )
+        meeting_id = int(cur.lastrowid)
+        for uid in attendee_ids:
+            if uid > 0:
+                conn.execute(
+                    "INSERT OR IGNORE INTO meeting_attendees (meeting_id, user_id) VALUES (?,?)",
+                    (meeting_id, uid),
+                )
+        conn.commit()
+        return meeting_id
+
+
+def db_list_meetings() -> list[sqlite3.Row]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            """SELECT m.id, m.book_id, m.meeting_date, m.created_at,
+                      b.title, b.author,
+                      (SELECT COUNT(*) FROM meeting_attendees ma WHERE ma.meeting_id = m.id)
+                        AS attendee_count
+               FROM meetings m
+               JOIN books b ON b.id = m.book_id
+               ORDER BY m.meeting_date DESC, m.id DESC"""
+        ).fetchall()
+
+
+def db_get_meeting(meeting_id: int) -> sqlite3.Row | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            """SELECT m.*, b.title, b.author
+               FROM meetings m
+               JOIN books b ON b.id = m.book_id
+               WHERE m.id = ?""",
+            (meeting_id,),
+        ).fetchone()
+
+
+def db_get_meeting_attendee_rows(meeting_id: int) -> list[sqlite3.Row]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            """SELECT ma.user_id, cu.full_name, cu.username
+               FROM meeting_attendees ma
+               LEFT JOIN club_users cu ON cu.user_id = ma.user_id
+               WHERE ma.meeting_id = ?
+               ORDER BY cu.full_name COLLATE NOCASE, ma.user_id""",
+            (meeting_id,),
+        ).fetchall()
+
+
+def format_club_user_display(
+    user_id: int, full_name: str | None, username: str | None
+) -> str:
+    name = (full_name or "").strip()
+    uname = (username or "").strip()
+    if name and uname:
+        return f"{name} (@{uname})"
+    if name:
+        return name
+    if uname:
+        return f"@{uname}"
+    return str(user_id)
 
 
 BOOK_EXPORT_FORMAT = "bookclub-bot-book"
@@ -1412,6 +1675,33 @@ def h(text: str) -> str:
     )
 
 
+def similar_title_warning_matches_text(
+    matches: Sequence[tuple[int, str, float]], *, limit: int = 5
+) -> str:
+    lines: list[str] = []
+    for _book_id, title, ratio in matches[:limit]:
+        pct = int(round(ratio * 100))
+        lines.append(f"• {h(title)} ({pct}%)")
+    return "\n".join(lines)
+
+
+def similar_title_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "similar_title_confirm_btn"),
+                    callback_data="title_sim:yes",
+                ),
+                InlineKeyboardButton(
+                    s(lang, "similar_title_cancel_btn"),
+                    callback_data="title_sim:no",
+                ),
+            ]
+        ]
+    )
+
+
 def fmt_dt_utc(dt: datetime) -> str:
     """Format a datetime as 'YYYY-MM-DD HH:MM:SS UTC±HH:MM'.
 
@@ -1574,6 +1864,138 @@ def books_keyboard(
         [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
     )
     return InlineKeyboardMarkup(buttons)
+
+
+def meetings_keyboard(
+    meetings: Sequence[sqlite3.Row], prefix: str, cancel_label: str
+) -> InlineKeyboardMarkup:
+    buttons = []
+    for m in meetings:
+        label = f"{m['meeting_date']} — {m['title']}"
+        if m["attendee_count"]:
+            label += f" ({m['attendee_count']})"
+        if len(label) > 48:
+            label = label[:45] + "…"
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"{prefix}:{m['id']}")]
+        )
+    buttons.append(
+        [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+def _meeting_attendee_ids(ctx: ContextTypes.DEFAULT_TYPE) -> set[int]:
+    raw = ctx.user_data.get("meeting_attendee_ids")
+    if raw is None:
+        raw = set()
+        ctx.user_data["meeting_attendee_ids"] = raw
+    return raw
+
+
+async def _refresh_chat_admin_suggestions(bot: Bot) -> None:
+    """Best-effort: record chat admins as known users for attendee suggestions."""
+    if not ALLOWED_CHAT_ID:
+        return
+    try:
+        admins = await bot.get_chat_administrators(ALLOWED_CHAT_ID)
+    except Exception as e:
+        logger.warning("Could not fetch chat administrators for meeting suggestions: %s", e)
+        return
+    for member in admins:
+        user = member.user
+        if user.is_bot:
+            continue
+        db_upsert_club_user(user.id, user.full_name or "", user.username)
+
+
+def meeting_attendees_keyboard(
+    lang: str,
+    suggestions: Sequence[sqlite3.Row],
+    selected: set[int],
+    page: int,
+) -> InlineKeyboardMarkup:
+    total = len(suggestions)
+    page_size = MEETING_ATTENDEES_PAGE_SIZE
+    start = page * page_size
+    chunk = suggestions[start : start + page_size]
+    buttons: list[list[InlineKeyboardButton]] = []
+    for row in chunk:
+        uid = int(row["user_id"])
+        mark = "✅" if uid in selected else "⬜"
+        label = format_club_user_display(uid, row["full_name"], row["username"])
+        if row["voted"]:
+            label = f"🗳 {label}"
+        if len(label) > 42:
+            label = label[:39] + "…"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark} {label}",
+                    callback_data=f"admin_meeting_att:toggle:{uid}:{page}",
+                )
+            ]
+        )
+    nav: list[InlineKeyboardButton] = []
+    if start > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"admin_meeting_att:page:{page - 1}")
+        )
+    if start + page_size < total:
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"admin_meeting_att:page:{page + 1}")
+        )
+    if nav:
+        buttons.append(nav)
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                s(lang, "meeting_attendee_add_id_btn"),
+                callback_data="admin_meeting_att:addid",
+            )
+        ]
+    )
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                s(lang, "meeting_attendee_done_btn"),
+                callback_data="admin_meeting_att:done",
+            )
+        ]
+    )
+    buttons.append(
+        [InlineKeyboardButton(s(lang, "cancel_btn"), callback_data="admin_meeting_att:cancel")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+async def _show_meeting_attendee_picker(
+    update_or_query: Any,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    *,
+    page: int = 0,
+    is_callback: bool = False,
+) -> int:
+    lang = get_lang(ctx)
+    book_id = ctx.user_data.get("meeting_book_id")
+    if book_id is None:
+        text = s(lang, "cancelled")
+        if is_callback:
+            await update_or_query.edit_message_text(text, parse_mode=PM)
+        else:
+            await update_or_query.message.reply_text(text, parse_mode=PM)
+        return ConversationHandler.END
+    await _refresh_chat_admin_suggestions(ctx.bot)
+    suggestions = db_meeting_user_suggestions(book_id)
+    selected = _meeting_attendee_ids(ctx)
+    text = tr(ctx, "meeting_attendees_prompt", count=len(selected))
+    markup = meeting_attendees_keyboard(lang, suggestions, selected, page)
+    if is_callback:
+        await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+    else:
+        await update_or_query.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+    ctx.user_data["meeting_attendee_page"] = page
+    return ADMIN_MEETING_ATTENDEES
 
 
 def fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -2121,8 +2543,35 @@ async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["new_book"]["title"] = update.message.text.strip()
+    title = update.message.text.strip()
+    ctx.user_data["new_book"]["title"] = title
+    lang = get_lang(ctx)
+    similar = find_similar_book_titles(title)
+    if similar:
+        await update.message.reply_text(
+            tr(
+                ctx,
+                "similar_title_warning",
+                title=h(title),
+                matches=similar_title_warning_matches_text(similar),
+            ),
+            reply_markup=similar_title_confirm_keyboard(lang),
+            parse_mode=PM,
+        )
+        return ADDING_TITLE_CONFIRM
     await update.message.reply_text(tr(ctx, "ask_author"), parse_mode=PM)
+    return ADDING_AUTHOR
+
+
+async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    _, action = query.data.split(":", 1)
+    if action == "no":
+        ctx.user_data.pop("new_book", None)
+        await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    await query.edit_message_text(tr(ctx, "ask_author"), parse_mode=PM)
     return ADDING_AUTHOR
 
 
@@ -2360,6 +2809,7 @@ async def notify_new_book_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+    ctx.user_data.pop("pending_import", None)
     ctx.user_data.clear()
     return ConversationHandler.END
 
@@ -2394,6 +2844,11 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Save vote to database (will INSERT or UPDATE — commits immediately)
     db_cast_vote(user_id, book_id, score)
+    db_upsert_club_user(
+        query.from_user.id,
+        query.from_user.full_name or "",
+        query.from_user.username,
+    )
 
     book = require_book(book_id)
     uv = db_get_user_vote(user_id, book_id)
@@ -2558,6 +3013,18 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
             ],
             [
                 InlineKeyboardButton(
+                    tr(ctx, "admin_meeting_create_btn"),
+                    callback_data="admin:meeting_create",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_meetings_view_btn"),
+                    callback_data="admin:meetings_view",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     tr(ctx, "admin_export_btn"), callback_data="admin:export"
                 )
             ],
@@ -2674,6 +3141,34 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "import":
         await query.edit_message_text(tr(ctx, "import_prompt"), parse_mode=PM)
         return ADMIN_IMPORT_WAIT
+    elif data == "meeting_create":
+        books = db_get_books(discussed=True, include_hidden=True)
+        if not books:
+            await query.edit_message_text(
+                tr(ctx, "no_discussed_for_meeting"), parse_mode=PM
+            )
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_meeting_book"),
+            reply_markup=books_keyboard(
+                books, "admin_meeting_book", tr(ctx, "cancel_btn")
+            ),
+            parse_mode=PM,
+        )
+        return ADMIN_MEETING_BOOK
+    elif data == "meetings_view":
+        meetings = db_list_meetings()
+        if not meetings:
+            await query.edit_message_text(tr(ctx, "no_meetings"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "choose_meeting_view"),
+            reply_markup=meetings_keyboard(
+                meetings, "admin_meeting_view", tr(ctx, "cancel_btn")
+            ),
+            parse_mode=PM,
+        )
+        return ADMIN_MEETINGS_VIEW
     return ConversationHandler.END
 
 
@@ -2902,6 +3397,199 @@ async def admin_mark_date_handler(
     return ConversationHandler.END
 
 
+async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, book_id = query.data.split(":", 1)
+    if book_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    book_id = int(book_id)
+    book = db_get_book(book_id)
+    if not book or not book["discussed"]:
+        await query.edit_message_text(tr(ctx, "no_discussed_for_meeting"), parse_mode=PM)
+        return ConversationHandler.END
+    ctx.user_data["meeting_book_id"] = book_id
+    ctx.user_data["meeting_attendee_ids"] = set()
+    default_hint = ""
+    if book["discussed_at"]:
+        default_hint = f"\n\n<i>{h(book['discussed_at'])}</i>"
+    await query.edit_message_text(
+        tr(ctx, "ask_meeting_date") + default_hint,
+        parse_mode=PM,
+    )
+    return ADMIN_MEETING_DATE
+
+
+async def admin_meeting_date_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    lang = get_lang(ctx)
+    text = update.message.text.strip()
+    if text == "/today":
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    else:
+        parsed = parse_date(text)
+        if parsed is None:
+            await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
+            return ADMIN_MEETING_DATE
+        date_str = parsed
+    if ctx.user_data.get("meeting_book_id") is None:
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    ctx.user_data["meeting_date"] = date_str
+    return await _show_meeting_attendee_picker(update, ctx, page=0, is_callback=False)
+
+
+async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
+        ctx.user_data.pop("meeting_book_id", None)
+        ctx.user_data.pop("meeting_date", None)
+        ctx.user_data.pop("meeting_attendee_ids", None)
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+
+    if action == "addid":
+        await query.edit_message_text(
+            tr(ctx, "meeting_attendee_add_id_prompt"), parse_mode=PM
+        )
+        return ADMIN_MEETING_ADD_ID
+
+    if action == "page" and len(parts) > 2:
+        page = int(parts[2])
+        return await _show_meeting_attendee_picker(
+            query, ctx, page=page, is_callback=True
+        )
+
+    if action == "toggle" and len(parts) > 2:
+        uid = int(parts[2])
+        page = int(parts[3]) if len(parts) > 3 else 0
+        selected = _meeting_attendee_ids(ctx)
+        if uid in selected:
+            selected.remove(uid)
+        else:
+            selected.add(uid)
+        return await _show_meeting_attendee_picker(
+            query, ctx, page=page, is_callback=True
+        )
+
+    if action == "done":
+        book_id = ctx.user_data.pop("meeting_book_id", None)
+        date_str = ctx.user_data.pop("meeting_date", None)
+        attendee_ids = list(ctx.user_data.pop("meeting_attendee_ids", set()))
+        if book_id is None or date_str is None:
+            await query.edit_message_text(s(lang, "cancelled"))
+            return ConversationHandler.END
+        db_create_meeting(
+            book_id,
+            date_str,
+            query.from_user.id,
+            attendee_ids,
+        )
+        book = require_book(book_id)
+        await query.edit_message_text(
+            tr(
+                ctx,
+                "meeting_saved",
+                title=h(book["title"]),
+                date=h(date_str),
+                count=len(attendee_ids),
+            ),
+            parse_mode=PM,
+        )
+        return ConversationHandler.END
+
+    return ADMIN_MEETING_ATTENDEES
+
+
+async def admin_meeting_add_id_handler(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
+        return ConversationHandler.END
+    text = (update.message.text or "").strip()
+    try:
+        user_id = int(text)
+        if user_id <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            tr(ctx, "meeting_attendee_invalid_id"), parse_mode=PM
+        )
+        return ADMIN_MEETING_ADD_ID
+
+    full_name = ""
+    username: str | None = None
+    if ALLOWED_CHAT_ID:
+        try:
+            member = await update.get_bot().get_chat_member(ALLOWED_CHAT_ID, user_id)
+            u = member.user
+            full_name = u.full_name or ""
+            username = u.username
+        except Exception as e:
+            logger.warning(
+                "admin_meeting_add_id: get_chat_member failed for %s: %s", user_id, e
+            )
+    db_upsert_club_user(user_id, full_name, username)
+    _meeting_attendee_ids(ctx).add(user_id)
+    await update.message.reply_text(
+        tr(ctx, "meeting_attendee_added_id", user_id=user_id), parse_mode=PM
+    )
+    page = int(ctx.user_data.get("meeting_attendee_page", 0))
+    return await _show_meeting_attendee_picker(update, ctx, page=page, is_callback=False)
+
+
+async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(ctx)
+    _, meeting_id = query.data.split(":", 1)
+    if meeting_id == "cancel":
+        await query.edit_message_text(s(lang, "cancelled"))
+        return ConversationHandler.END
+    meeting = db_get_meeting(int(meeting_id))
+    if not meeting:
+        await query.edit_message_text("Error: meeting not found.")
+        return ConversationHandler.END
+    rows = db_get_meeting_attendee_rows(meeting["id"])
+    lines = []
+    for row in rows:
+        name = format_club_user_display(
+            int(row["user_id"]), row["full_name"], row["username"]
+        )
+        lines.append(tr(ctx, "meeting_attendee_line", name=h(name)))
+    body = "\n".join(lines) if lines else tr(ctx, "meeting_view_empty")
+    await query.edit_message_text(
+        tr(
+            ctx,
+            "meeting_view_title",
+            title=h(meeting["title"]),
+            date=h(meeting["meeting_date"]),
+            count=len(rows),
+        )
+        + body,
+        parse_mode=PM,
+    )
+    return ConversationHandler.END
+
+
 async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if await _deny_non_admin_cb(update, ctx):
         return ConversationHandler.END
@@ -2981,6 +3669,30 @@ async def admin_export_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     return ConversationHandler.END
 
 
+async def _finish_admin_import(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    book_data: Mapping[str, Any],
+    source_entity: str | None,
+    *,
+    reply: Callable[..., Any],
+) -> int:
+    book_id = db_import_book(book_data)
+    msg = tr(ctx, "import_done", title=h(book_data["title"]), book_id=book_id)
+    if source_entity and source_entity != CLUB_ENTITY:
+        msg += tr(
+            ctx,
+            "import_entity_mismatch",
+            exported=h(source_entity),
+            local=h(CLUB_ENTITY),
+        )
+    await reply(msg)
+    schedule_new_book_notifications(
+        ctx.job_queue, book_id, update.effective_user.id
+    )
+    return ConversationHandler.END
+
+
 async def admin_import_handler(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -2990,7 +3702,6 @@ async def admin_import_handler(
     text = update.message.text or ""
     try:
         book_data, source_entity = parse_book_import(text)
-        book_id = db_import_book(book_data)
     except ValueError as e:
         await update.message.reply_text(
             tr(ctx, "import_invalid", error=h(str(e))),
@@ -2998,19 +3709,53 @@ async def admin_import_handler(
         )
         return ADMIN_IMPORT_WAIT
 
-    msg = tr(ctx, "import_done", title=h(book_data["title"]), book_id=book_id)
-    if source_entity and source_entity != CLUB_ENTITY:
-        msg += tr(
-            ctx,
-            "import_entity_mismatch",
-            exported=h(source_entity),
-            local=h(CLUB_ENTITY),
+    similar = find_similar_book_titles(book_data["title"])
+    if similar:
+        ctx.user_data["pending_import"] = {
+            "book_data": dict(book_data),
+            "source_entity": source_entity,
+        }
+        lang = get_lang(ctx)
+        await update.message.reply_text(
+            tr(
+                ctx,
+                "similar_title_warning",
+                title=h(book_data["title"]),
+                matches=similar_title_warning_matches_text(similar),
+            ),
+            reply_markup=similar_title_confirm_keyboard(lang),
+            parse_mode=PM,
         )
-    await update.message.reply_text(msg, parse_mode=PM)
-    schedule_new_book_notifications(
-        ctx.job_queue, book_id, update.effective_user.id
+        return ADMIN_IMPORT_CONFIRM
+
+    return await _finish_admin_import(
+        update,
+        ctx,
+        book_data,
+        source_entity,
+        reply=lambda msg: update.message.reply_text(msg, parse_mode=PM),
     )
-    return ConversationHandler.END
+
+
+async def admin_import_similar_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if await _deny_non_admin_cb(update, ctx):
+        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    _, action = query.data.split(":", 1)
+    pending = ctx.user_data.pop("pending_import", None)
+    if action == "no" or not pending:
+        await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
+        return ConversationHandler.END
+    return await _finish_admin_import(
+        update,
+        ctx,
+        pending["book_data"],
+        pending.get("source_entity"),
+        reply=lambda msg: query.edit_message_text(msg, parse_mode=PM),
+    )
 
 
 # ── /edit — sequential field-by-field editor ──────────────────────────────────
@@ -3373,6 +4118,13 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     if user_id and user_id not in ADMIN_IDS:
         ctx.bot_data["last_non_admin_activity"] = datetime.now()
 
+    if user_id and update.effective_user:
+        db_upsert_club_user(
+            user_id,
+            update.effective_user.full_name or "",
+            update.effective_user.username,
+        )
+
     if await _check_membership(update, ctx):
         return
     blocked_uid = update.effective_user.id if update.effective_user else None
@@ -3457,6 +4209,9 @@ def register_handlers(app: Application) -> None:
             states={
                 ADDING_TITLE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_title)
+                ],
+                ADDING_TITLE_CONFIRM: [
+                    CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:")
                 ],
                 ADDING_AUTHOR: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_author)
@@ -3543,6 +4298,37 @@ def register_handlers(app: Application) -> None:
                 ADMIN_IMPORT_WAIT: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, admin_import_handler
+                    )
+                ],
+                ADMIN_IMPORT_CONFIRM: [
+                    CallbackQueryHandler(
+                        admin_import_similar_cb, pattern=r"^title_sim:"
+                    )
+                ],
+                ADMIN_MEETING_BOOK: [
+                    CallbackQueryHandler(
+                        admin_meeting_book_cb, pattern=r"^admin_meeting_book:"
+                    )
+                ],
+                ADMIN_MEETING_DATE: [
+                    CommandHandler("today", admin_meeting_date_handler),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, admin_meeting_date_handler
+                    ),
+                ],
+                ADMIN_MEETING_ATTENDEES: [
+                    CallbackQueryHandler(
+                        admin_meeting_att_cb, pattern=r"^admin_meeting_att:"
+                    )
+                ],
+                ADMIN_MEETING_ADD_ID: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, admin_meeting_add_id_handler
+                    )
+                ],
+                ADMIN_MEETINGS_VIEW: [
+                    CallbackQueryHandler(
+                        admin_meeting_view_cb, pattern=r"^admin_meeting_view:"
                     )
                 ],
             },
