@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from telegram import Update
-from telegram.error import NetworkError
+from telegram.error import BadRequest, Forbidden, NetworkError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 import bookclub.config as config
@@ -18,6 +18,38 @@ _membership_cache: dict[int, tuple[bool, datetime]] = {}
 
 def _membership_cache_evict(user_id: int) -> None:
     _membership_cache.pop(user_id, None)
+
+
+def _membership_fail_open_on_api_error(exc: BaseException) -> bool:
+    """True when the bot cannot verify membership due to chat/bot config, not the user."""
+    msg = str(exc).lower()
+    if isinstance(exc, NetworkError):
+        return True
+    if isinstance(exc, Forbidden):
+        # Bot removed from the allowed group — same class of misconfiguration.
+        return any(
+            needle in msg
+            for needle in ("kicked", "not a member", "chat not found", "forbidden")
+        )
+    if isinstance(exc, BadRequest):
+        return any(
+            needle in msg
+            for needle in (
+                "chat not found",
+                "chat_id_invalid",
+                "peer_id_invalid",
+                "group chat was deactivated",
+                "supergroup chat was deactivated",
+            )
+        )
+    return any(
+        needle in msg
+        for needle in (
+            "chat not found",
+            "chat_id_invalid",
+            "peer_id_invalid",
+        )
+    )
 
 
 async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -47,6 +79,16 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
         # Don't cache failures — a transient API error shouldn't lock a real
         # member out for the whole TTL.
         logger.warning(f"Membership check failed for user {user_id}: {e}")
+        if _membership_fail_open_on_api_error(e):
+            logger.error(
+                "Membership gate bypassed for user %s: bot cannot access "
+                "ALLOWED_CHAT_ID=%s (%s). Re-add the bot to that chat or fix "
+                "ALLOWED_CHAT_ID in .env.",
+                user_id,
+                config.ALLOWED_CHAT_ID,
+                e,
+            )
+            return True
         return False
 
 

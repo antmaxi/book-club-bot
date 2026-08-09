@@ -17,6 +17,22 @@ async def bot_notify_startup(app: Application) -> None:
         await app.bot.set_my_commands(COMMANDS["ru"], scope=BotCommandScopeDefault())
     except Exception as e:
         logger.warning(f"Could not set default commands: {e}")
+    if config.ALLOWED_CHAT_ID:
+        try:
+            chat = await app.bot.get_chat(config.ALLOWED_CHAT_ID)
+            logger.info(
+                "Membership gate: ALLOWED_CHAT_ID=%s is %r",
+                chat.id,
+                chat.title or chat.full_name,
+            )
+        except Exception as e:
+            logger.error(
+                "ALLOWED_CHAT_ID=%s is not reachable (%s). Add this bot to the "
+                "group/supergroup or update the ID. Membership checks will allow "
+                "everyone until the chat is reachable again.",
+                config.ALLOWED_CHAT_ID,
+                e,
+            )
     if not config.ADMIN_IDS:
         return
     if config.ERROR_ALERTS:

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from telegram import Bot, Chat, Message, MessageEntity, Update, User
-from telegram.error import NetworkError
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import ConversationHandler
 
 import bookclub_bot as bot
@@ -797,8 +797,16 @@ class TestMembershipGate(BotHandlerTestCase):
             result = await bot._check_membership(self.update, self.ctx)
             self.assertFalse(result, f"Status '{status}' should be blocked")
 
-    async def test_gate_allows_on_api_exception(self):
-        """If get_chat_member fails, we fail open (allow) with a warning."""
+    async def test_gate_allows_on_chat_not_found(self):
+        """If the bot cannot access ALLOWED_CHAT_ID, do not lock out real members."""
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        self.ctx.bot.get_chat_member = AsyncMock(
+            side_effect=BadRequest("Chat not found")
+        )
+        result = await bot._check_membership(self.update, self.ctx)
+        self.assertTrue(result)
+
+    async def test_gate_blocks_on_unknown_api_exception(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
         self.ctx.bot.get_chat_member = AsyncMock(side_effect=Exception("API error"))
         result = await bot._check_membership(self.update, self.ctx)
