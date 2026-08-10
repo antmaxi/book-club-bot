@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
@@ -95,16 +95,17 @@ def add_back_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 def fmt_dt_utc(dt: datetime) -> str:
-    """Format a datetime as 'YYYY-MM-DD HH:MM:SS UTC±HH:MM'.
+    """Format a datetime in the configured display timezone (default UTC+2).
 
-    Naive datetimes are assumed to be in the server's local timezone. The
-    explicit UTC offset lets admins reading this from any timezone interpret
-    the value without having to know where the server is.
+    Naive datetimes are treated as UTC instants. Aware datetimes are converted
+    to the display zone. The label uses UTC±HH:MM for the display offset.
     """
+    tz = config.display_timezone()
     if dt.tzinfo is None:
-        dt = dt.astimezone()  # attach the server's local tz
-    off = dt.strftime("%z")  # +0200 / -0500 / +0000
-    return dt.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:5]}"
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(tz)
+    off = local.strftime("%z")
+    return local.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:5]}"
 
 
 SCORE_EMOJI = {1: "✅", 0: "😐", -1: "❌", None: "—"}

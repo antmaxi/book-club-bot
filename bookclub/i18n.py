@@ -19,9 +19,9 @@ T: dict[str, dict[str, TranslationValue]] = {
             "✏️ /edit — Edit a book entry\n"
             "🗑 /delete — Delete a book\n"
             "✅ /discussed — Books already discussed\n"
-            "🛠 /adminconsole — Admin console\n"
             "❓ /help — Show this message"
         ),
+        "welcome_admin_suffix": "\n🛠 /adminconsole — Admin console",
         "lang_set": "🇬🇧 Language set to English.",
         "ask_title": "📖 What is the <b>title</b> of the book?",
         "add_back_btn": "⬅️ Back",
@@ -230,9 +230,9 @@ T: dict[str, dict[str, TranslationValue]] = {
             "✏️ /edit — Редактировать запись\n"
             "🗑 /delete — Удалить книгу\n"
             "✅ /discussed — Обсуждённые книги\n"
-            "🛠 /adminconsole — Админ-панель\n"
             "❓ /help — Показать это сообщение"
         ),
+        "welcome_admin_suffix": "\n🛠 /adminconsole — Админ-панель",
         "lang_set": "🇷🇺 Язык установлен: Русский.",
         "ask_title": "📖 Как называется книга (<b>название</b>)?",
         "add_back_btn": "⬅️ Назад",
@@ -450,9 +450,9 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
                 "✏️ /edit — Edit a film entry\n"
                 "🗑 /delete — Delete a film\n"
                 "✅ /discussed — Films already discussed\n"
-                "🛠 /adminconsole — Admin console\n"
                 "❓ /help — Show this message"
             ),
+            "welcome_admin_suffix": "\n🛠 /adminconsole — Admin console",
             "bot_name": "Film Club Bot",
             "card_icon": "🎬",
             "subtitle_icon": "🎬",
@@ -551,9 +551,9 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
                 "✏️ /edit — Редактировать запись\n"
                 "🗑 /delete — Удалить фильм\n"
                 "✅ /discussed — Обсуждённые фильмы\n"
-                "🛠 /adminconsole — Админ-панель\n"
                 "❓ /help — Показать это сообщение"
             ),
+            "welcome_admin_suffix": "\n🛠 /adminconsole — Админ-панель",
             "bot_name": "Киноклуб-бот",
             "card_icon": "🎬",
             "subtitle_icon": "🎬",

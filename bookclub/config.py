@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta, timezone
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -41,6 +42,31 @@ ASK_LANGUAGE_LEVEL = _env_truthy("ASK_LANGUAGE_LEVEL")
 
 def language_level_prompt_enabled() -> bool:
     return ASK_LANGUAGE_LEVEL
+
+
+def _display_utc_offset_hours_from_env() -> int:
+    raw = os.environ.get("DISPLAY_UTC_OFFSET_HOURS", "2").strip()
+    try:
+        hours = int(raw)
+    except ValueError:
+        print(
+            f"Warning: invalid DISPLAY_UTC_OFFSET_HOURS={raw!r}, using 2 (UTC+2)."
+        )
+        return 2
+    if hours < -12 or hours > 14:
+        print(
+            f"Warning: DISPLAY_UTC_OFFSET_HOURS={hours} out of range, using 2 (UTC+2)."
+        )
+        return 2
+    return hours
+
+
+# Wall-clock times in bot messages (e.g. /info, admin console) use this UTC offset.
+DISPLAY_UTC_OFFSET_HOURS = _display_utc_offset_hours_from_env()
+
+
+def display_timezone() -> timezone:
+    return timezone(timedelta(hours=DISPLAY_UTC_OFFSET_HOURS))
 
 
 _ENTITY_DEFAULT_CHAT_NAMES = {"book": "Книжный клуб", "film": "Киноклуб"}

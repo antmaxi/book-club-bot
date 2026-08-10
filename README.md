@@ -72,6 +72,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
    ASK_LANGUAGE_LEVEL="1"     # Optional: Ask CEFR level(s) A1–C2 when adding/editing (books or films)
+   DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    # Optional (server only): colon-separated paths for deploy_bots.sh / logs.sh

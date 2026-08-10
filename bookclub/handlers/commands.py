@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import (
     Bot,
@@ -23,6 +23,7 @@ from bookclub.db import (
     db_get_user_vote,
     db_set_user_setting,
 )
+from bookclub.domain import is_admin
 from bookclub.i18n import PM, T, _COMMAND_DESC_OVERLAYS, get_lang, s, tr
 from bookclub.logging_setup import logger
 from bookclub.ui import (
@@ -80,6 +81,37 @@ def _apply_entity_command_overlays(entity: str) -> None:
 
 _apply_entity_command_overlays(config.CLUB_ENTITY)
 
+_ADMIN_MENU_COMMAND = "adminconsole"
+
+
+def commands_for_user(lang: str, user_id: int) -> list[BotCommand]:
+    """Telegram command menu for a user; admins see /adminconsole, others do not."""
+    cmds = COMMANDS[lang]
+    if user_id in config.ADMIN_IDS:
+        return cmds
+    return [c for c in cmds if c.command != _ADMIN_MENU_COMMAND]
+
+
+async def refresh_admin_command_menus(bot: Bot) -> None:
+    """Push admin command menus to each admin's private chat (if the bot can)."""
+    from telegram import BotCommandScopeChat
+
+    for admin_id in config.ADMIN_IDS:
+        for lang in ("en", "ru"):
+            scope = BotCommandScopeChat(chat_id=admin_id)
+            try:
+                await bot.delete_my_commands(scope=scope)
+                await bot.set_my_commands(
+                    commands_for_user(lang, admin_id), scope=scope
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not set admin commands for user %s (%s): %s",
+                    admin_id,
+                    lang,
+                    e,
+                )
+
 
 async def set_user_commands(bot: Bot, update: Update, lang: str) -> None:
     """Set the command menu for a specific user in their chosen language.
@@ -90,17 +122,18 @@ async def set_user_commands(bot: Bot, update: Update, lang: str) -> None:
         return
     chat_id = chat.id
     user_id = user.id
+    menu = commands_for_user(lang, user_id)
     try:
         if chat.type == "private":
             scope: BotCommandScopeChat | BotCommandScopeChatMember = (
                 BotCommandScopeChat(chat_id=chat_id)
             )
             await bot.delete_my_commands(scope=scope)
-            await bot.set_my_commands(COMMANDS[lang], scope=scope)
+            await bot.set_my_commands(menu, scope=scope)
         else:
             scope = BotCommandScopeChatMember(chat_id=chat_id, user_id=user_id)
             await bot.delete_my_commands(scope=scope)
-            await bot.set_my_commands(COMMANDS[lang], scope=scope)
+            await bot.set_my_commands(menu, scope=scope)
     except Exception as e:
         logger.warning(f"Could not set commands for user {user_id}: {e}")
 
@@ -208,7 +241,10 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await set_user_commands(ctx.bot, update, get_lang(ctx))
-    await update.message.reply_text(tr(ctx, "welcome"), parse_mode=PM)
+    text = tr(ctx, "welcome")
+    if is_admin(update.effective_user.id):
+        text += tr(ctx, "welcome_admin_suffix")
+    await update.message.reply_text(text, parse_mode=PM)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -232,7 +268,9 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 .decode("utf-8")
                 .strip()
             )
-            last_commit = fmt_dt_utc(datetime.fromtimestamp(int(ct)))
+            last_commit = fmt_dt_utc(
+                datetime.fromtimestamp(int(ct), tz=timezone.utc)
+            )
     except Exception as e:
         logger.warning(f"Could not get last commit via git: {e}")
 
@@ -240,7 +278,9 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not last_commit:
         try:
             mtime = os.path.getmtime(__file__)
-            last_commit = fmt_dt_utc(datetime.fromtimestamp(mtime))
+            last_commit = fmt_dt_utc(
+                datetime.fromtimestamp(mtime, tz=timezone.utc)
+            )
         except Exception as e:
             logger.warning(f"Could not get file mtime: {e}")
             last_commit = "unknown"

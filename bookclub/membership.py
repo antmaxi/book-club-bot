@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from telegram import Update
 from telegram.error import BadRequest, Forbidden, NetworkError
@@ -109,7 +109,7 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     user_id = update.effective_user.id if update.effective_user else None
     if user_id and user_id not in config.ADMIN_IDS:
-        ctx.bot_data["last_non_admin_activity"] = datetime.now()
+        ctx.bot_data["last_non_admin_activity"] = datetime.now(UTC)
 
     if user_id and update.effective_user:
         db_upsert_club_user(

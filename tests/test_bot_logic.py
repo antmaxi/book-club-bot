@@ -535,22 +535,20 @@ class TestUtils(unittest.TestCase):
         from datetime import datetime
 
         dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=UTC)
-        self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 12:00:00 UTC+00:00")
+        self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 14:00:00 UTC+02:00")
 
     def test_fmt_dt_utc_negative_offset(self):
         from datetime import datetime, timedelta, timezone
 
         dt = datetime(2026, 4, 4, 12, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
-        self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 12:00:00 UTC-05:00")
+        self.assertEqual(bot.fmt_dt_utc(dt), "2026-04-04 19:00:00 UTC+02:00")
 
-    def test_fmt_dt_utc_naive_gets_offset(self):
-        # A naive datetime is assumed local; whatever the test host's zone is,
-        # the output must still carry an explicit UTC offset.
+    def test_fmt_dt_utc_naive_as_utc(self):
         from datetime import datetime
 
-        self.assertRegex(
+        self.assertEqual(
             bot.fmt_dt_utc(datetime(2026, 4, 4, 12, 0, 0)),
-            r"^2026-04-04 12:00:00 UTC[+-]\d{2}:\d{2}$",
+            "2026-04-04 14:00:00 UTC+02:00",
         )
 
     # -- tr (translation) --

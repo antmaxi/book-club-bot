@@ -103,6 +103,18 @@ class TestStartHelp(BotHandlerTestCase):
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Welcome", text)
         self.assertIn("/info", text)
+        self.assertNotIn("/adminconsole", text)
+
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
+    async def test_cmd_start_admin_includes_adminconsole_in_help(self, mock_set):
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [self.update.effective_user.id]
+            await bot.cmd_start(self.update, self.ctx)
+            text = self.message.reply_text.call_args[0][0]
+            self.assertIn("/adminconsole", text)
+        finally:
+            cfg.ADMIN_IDS = old
 
     @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
     async def test_cmd_start_sets_menu(self, mock_set):
@@ -145,7 +157,9 @@ class TestInfo(BotHandlerTestCase):
         import datetime
 
         expected = bot.fmt_dt_utc(
-            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH)
+            datetime.datetime.fromtimestamp(
+                self.GIT_COMMIT_EPOCH, tz=datetime.timezone.utc
+            )
         )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -164,7 +178,9 @@ class TestInfo(BotHandlerTestCase):
         import datetime
 
         expected = bot.fmt_dt_utc(
-            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH)
+            datetime.datetime.fromtimestamp(
+                self.GIT_COMMIT_EPOCH, tz=datetime.timezone.utc
+            )
         )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -189,7 +205,9 @@ class TestInfo(BotHandlerTestCase):
         # the same way the handler does.
         import datetime
 
-        expected_date = bot.fmt_dt_utc(datetime.datetime.fromtimestamp(1775728800))
+        expected_date = bot.fmt_dt_utc(
+            datetime.datetime.fromtimestamp(1775728800, tz=datetime.timezone.utc)
+        )
         self.assertIn(expected_date, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
 
@@ -224,7 +242,8 @@ class TestSetUserCommands(BotHandlerTestCase):
 
         mock_bot.delete_my_commands.assert_called_once_with(scope=mock_scope)
         mock_bot.set_my_commands.assert_called_once_with(
-            bot.COMMANDS["en"], scope=mock_scope
+            bot.commands_for_user("en", self.update.effective_user.id),
+            scope=mock_scope,
         )
 
     @patch("bookclub.handlers.commands.BotCommandScopeChatMember")
@@ -237,8 +256,20 @@ class TestSetUserCommands(BotHandlerTestCase):
         await bot.set_user_commands(mock_bot, self.update, "ru")
 
         mock_bot.set_my_commands.assert_called_once_with(
-            bot.COMMANDS["ru"], scope=mock_scope
+            bot.commands_for_user("ru", self.update.effective_user.id),
+            scope=mock_scope,
         )
+
+    async def test_commands_for_user_hides_adminconsole_for_members(self):
+        old = cfg.ADMIN_IDS[:]
+        try:
+            cfg.ADMIN_IDS = [999999]
+            member = bot.commands_for_user("en", 12345)
+            self.assertNotIn("adminconsole", [c.command for c in member])
+            admin = bot.commands_for_user("en", 999999)
+            self.assertIn("adminconsole", [c.command for c in admin])
+        finally:
+            cfg.ADMIN_IDS = old
 
     async def test_set_user_commands_exception_does_not_propagate(self):
         mock_bot = AsyncMock()
