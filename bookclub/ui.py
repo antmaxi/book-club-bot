@@ -9,6 +9,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
+from bookclub.cefr import CEFR_LEVELS, language_levels_display
 from bookclub.db import (
     db_meeting_user_suggestions,
     db_upsert_club_user,
@@ -128,6 +129,13 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
         lines.insert(
             3,
             f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
+        )
+    levels_raw = book["language_levels"] if "language_levels" in book.keys() else None
+    levels_text = language_levels_display(levels_raw)
+    if levels_text:
+        lines.insert(
+            3,
+            f"🎓 {h(s(lang, 'language_levels_label'))}: {h(levels_text)}",
         )
     if user_vote is not None:
         vote_label = vote_label_text(lang, user_vote)
@@ -477,6 +485,39 @@ def fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def cefr_levels_keyboard(
+    lang: str,
+    selected: set[str],
+    *,
+    prefix: str,
+    done_label_key: str = "language_level_done_btn",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for level in CEFR_LEVELS:
+        mark = "✅" if level in selected else "⬜"
+        row.append(
+            InlineKeyboardButton(
+                f"{mark} {level}",
+                callback_data=f"{prefix}:toggle:{level}",
+            )
+        )
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                s(lang, done_label_key),
+                callback_data=f"{prefix}:done",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
 
 
 def books_top_n(books: Sequence[BookLike], n: int = 5) -> list[BookLike]:

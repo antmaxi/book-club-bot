@@ -19,6 +19,7 @@ from bookclub.config import (
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
     ADDING_FICTION,
+    ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_PAGES,
     ADDING_REVIEW,
@@ -50,6 +51,7 @@ from bookclub.handlers.add import (
     add_creation_year,
     add_description,
     add_fiction_cb,
+    add_language_level_cb,
     add_original_language,
     add_pages,
     add_review,
@@ -94,6 +96,7 @@ from bookclub.handlers.edit_delete import (
     cmd_edit,
     delete_pick_cb,
     edit_fiction_cb,
+    edit_language_levels_cb,
     edit_pick_cb,
     edit_value_handler,
     edit_yn_cb,
@@ -146,6 +149,9 @@ def register_handlers(app: Application) -> None:
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, add_creation_year
                     ),
+                ],
+                ADDING_LANGUAGE_LEVEL: [
+                    CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:")
                 ],
                 # /skip needs its own handler: a bare filters.TEXT here would also
                 # swallow /cancel (state handlers are matched before fallbacks).
@@ -258,6 +264,9 @@ def register_handlers(app: Application) -> None:
                 EDITING_FIELD: [
                     CallbackQueryHandler(edit_yn_cb, pattern=r"^edit_yn:"),
                     CallbackQueryHandler(edit_fiction_cb, pattern=r"^edit_fiction:"),
+                    CallbackQueryHandler(
+                        edit_language_levels_cb, pattern=r"^edit_cefr:"
+                    ),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
                 ],
             },

@@ -34,6 +34,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
         "ask_original_language": "🌐 <b>Original language</b> of the book (or /skip if unsure):",
         "ask_creation_year": "📅 <b>Year of creation</b> (publication year; 4 digits, or /skip if unknown):",
+        "ask_language_level": (
+            "🎓 Estimated <b>language level</b> to read the book (CEFR A1–C2). "
+            "Tap to toggle. Selected: <b>{count}</b>"
+        ),
+        "language_level_done_btn": "✅ Done",
+        "language_level_none_selected": "Select at least one level (A1–C2).",
         "invalid_creation_year": "⚠️ Please enter a valid 4-digit year (e.g. 1984), or /skip:",
         "ask_desc": "📝 Add a <b>description</b> (or /skip to leave empty):",
         "book_added": "✅ Book added!",
@@ -63,6 +69,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "pages_label": "Pages",
         "original_language_label": "Original language",
         "creation_year_label": "Year",
+        "language_levels_label": "Language level",
         "review_label": "Review",
         "cancel_btn": "❌ Cancel",
         "edit_field_prompt": "✏️ <b>{field}</b>\nCurrent value: <i>{value}</i>\n\nModify this field?",
@@ -81,6 +88,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_description": "Description",
         "field_original_language": "Original language",
         "field_creation_year": "Year of creation",
+        "field_language_levels": "Language level (CEFR)",
         "deleted": "🗑 <b>{title}</b> has been deleted.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -233,6 +241,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
         "ask_original_language": "🌐 <b>Язык оригинала</b> книги (или /skip, если не знаете):",
         "ask_creation_year": "📅 <b>Год создания</b> (год издания; 4 цифры, или /skip, если не знаете):",
+        "ask_language_level": (
+            "🎓 <b>Уровень языка</b> для комфортного чтения (CEFR A1–C2). "
+            "Нажимайте, чтобы отметить. Выбрано: <b>{count}</b>"
+        ),
+        "language_level_done_btn": "✅ Готово",
+        "language_level_none_selected": "Выберите хотя бы один уровень (A1–C2).",
         "invalid_creation_year": "⚠️ Введите корректный год из 4 цифр (например, 1984) или /skip:",
         "ask_desc": "📝 Добавьте <b>описание</b> (или /skip, чтобы пропустить):",
         "book_added": "✅ Книга добавлена!",
@@ -262,6 +276,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "pages_label": "Страниц",
         "original_language_label": "Язык оригинала",
         "creation_year_label": "Год",
+        "language_levels_label": "Уровень языка",
         "review_label": "Рецензия",
         "cancel_btn": "❌ Отмена",
         "edit_field_prompt": "✏️ <b>{field}</b>\nТекущее значение: <i>{value}</i>\n\nИзменить это поле?",
@@ -280,6 +295,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "field_description": "Описание",
         "field_original_language": "Язык оригинала",
         "field_creation_year": "Год создания",
+        "field_language_levels": "Уровень языка (CEFR)",
         "deleted": "🗑 <b>{title}</b> удалена.",
         "fiction_label": "Fiction",
         "nonfiction_label": "Non-fiction",
@@ -439,6 +455,14 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
             "ask_original_language": "🌐 <b>Original language</b> of the film (or /skip if unsure):",
             "ask_creation_year": "📅 <b>Release year</b> (4 digits, or /skip if unknown):",
+            "ask_language_level": (
+                "🎓 Estimated <b>language level</b> to enjoy the film (CEFR A1–C2). "
+                "Tap to toggle. Selected: <b>{count}</b>"
+            ),
+            "language_level_done_btn": "✅ Done",
+            "language_level_none_selected": "Select at least one level (A1–C2).",
+            "language_levels_label": "Language level",
+            "field_language_levels": "Language level (CEFR)",
             "fiction_btn": "🎬 Feature",
             "nonfiction_btn": "📽 Documentary",
             "book_added": "✅ Film added!",
@@ -532,6 +556,14 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
             "ask_original_language": "🌐 <b>Язык оригинала</b> фильма (или /skip, если не знаете):",
             "ask_creation_year": "📅 <b>Год выхода</b> (4 цифры, или /skip, если не знаете):",
+            "ask_language_level": (
+                "🎓 <b>Уровень языка</b> для комфортного просмотра (CEFR A1–C2). "
+                "Нажимайте, чтобы отметить. Выбрано: <b>{count}</b>"
+            ),
+            "language_level_done_btn": "✅ Готово",
+            "language_level_none_selected": "Выберите хотя бы один уровень (A1–C2).",
+            "language_levels_label": "Уровень языка",
+            "field_language_levels": "Уровень языка (CEFR)",
             "fiction_btn": "🎬 Худ. фильм",
             "nonfiction_btn": "📽 Документальный",
             "book_added": "✅ Фильм добавлен!",

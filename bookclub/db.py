@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import bookclub.config as config
+from bookclub.cefr import format_language_levels
 from bookclub.types import BookLike
 
 IMPORTED_USER_ID = config.IMPORTED_USER_ID
@@ -47,6 +48,7 @@ def init_db() -> None:
             ("notify_adder_id", "INTEGER DEFAULT NULL"),
             ("original_language", "TEXT DEFAULT NULL"),
             ("creation_year", "INTEGER DEFAULT NULL"),
+            ("language_levels", "TEXT DEFAULT NULL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE books ADD COLUMN {col} {definition}")
@@ -127,6 +129,7 @@ def db_add_book(
     username: str | None = None,
     original_language: str | None = None,
     creation_year: int | None = None,
+    language_levels: str | None = None,
 ) -> int | None:
     lang = (original_language or "").strip() or None
     with sqlite3.connect(config.DB_PATH) as conn:
@@ -134,9 +137,9 @@ def db_add_book(
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language, creation_year,
+                original_language, creation_year, language_levels,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title,
                 author,
@@ -146,6 +149,7 @@ def db_add_book(
                 description,
                 lang,
                 creation_year,
+                language_levels,
                 user_id,
                 user_name,
                 username,
@@ -330,6 +334,7 @@ def db_update_book_field(book_id: int, field: str, value: Any) -> None:
         "description",
         "original_language",
         "creation_year",
+        "language_levels",
     }
     if field not in allowed:
         raise ValueError(f"Field {field!r} not editable")
@@ -582,6 +587,7 @@ def book_to_export_payload(book: BookLike) -> str:
             "description": book["description"] or "",
             "original_language": book["original_language"] or "",
             "creation_year": book["creation_year"],
+            "language_levels": book["language_levels"] or "",
             "hidden": bool(book["hidden"]),
             "discussed": bool(book["discussed"]),
             "discussed_at": book["discussed_at"],
@@ -623,6 +629,11 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("invalid creation_year") from e
         if creation_year < _CREATION_YEAR_MIN or creation_year > _CREATION_YEAR_MAX:
             raise ValueError("invalid creation_year")
+    language_levels_raw = raw.get("language_levels", "")
+    if language_levels_raw is None or language_levels_raw == "":
+        language_levels = None
+    else:
+        language_levels = format_language_levels(str(language_levels_raw))
     hidden = 1 if raw.get("hidden") else 0
     discussed = 1 if raw.get("discussed") else 0
     discussed_at = raw.get("discussed_at")
@@ -644,6 +655,7 @@ def _normalize_exported_book(raw: Mapping[str, Any]) -> dict[str, Any]:
         "description": description,
         "original_language": original_language,
         "creation_year": creation_year,
+        "language_levels": language_levels,
         "hidden": hidden,
         "discussed": discussed,
         "discussed_at": discussed_at,
@@ -690,10 +702,10 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
         cur = conn.execute(
             """INSERT INTO books
                (title, author, pages, fiction, review_link, description,
-                original_language, creation_year,
+                original_language, creation_year, language_levels,
                 hidden, discussed, discussed_at,
                 added_by, added_by_name, added_by_username, added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 book_data["title"],
                 book_data["author"],
@@ -703,6 +715,7 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
                 book_data["description"],
                 book_data.get("original_language"),
                 book_data.get("creation_year"),
+                book_data.get("language_levels"),
                 book_data["hidden"],
                 book_data["discussed"],
                 book_data["discussed_at"],

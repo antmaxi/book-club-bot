@@ -71,6 +71,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
+   ASK_LANGUAGE_LEVEL="1"     # Optional: Ask CEFR level(s) A1–C2 when adding/editing (books or films)
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    # Optional (server only): colon-separated paths for deploy_bots.sh / logs.sh
@@ -90,6 +91,9 @@ The database schema is shared. For films, fields are reused as follows:
 | `author` | Author | Director |
 | `pages` | Page count | Runtime (minutes) |
 | `fiction` | Fiction / non-fiction | Feature film / documentary |
+| `language_levels` | Comma-separated CEFR levels (A1–C2), if `ASK_LANGUAGE_LEVEL` is enabled | Same |
+
+Set `ASK_LANGUAGE_LEVEL=1` to prompt members to pick one or more CEFR levels (A1 through C2) via inline buttons when adding or editing an entry.
 
 You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 

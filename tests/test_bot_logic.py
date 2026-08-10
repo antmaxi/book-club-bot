@@ -39,6 +39,7 @@ def make_book(**kwargs):
         "discussed_at": None,
         "original_language": None,
         "creation_year": None,
+        "language_levels": None,
     }
     defaults.update(kwargs)
     return defaults
@@ -383,6 +384,12 @@ class TestDatabase(unittest.TestCase):
         book = make_book(creation_year=None)
         text = bot.book_card(book, "en")
         self.assertNotIn("📅", text)
+
+    def test_book_card_shows_language_levels_when_set(self):
+        book = make_book(language_levels="B1,B2")
+        text = bot.book_card(book, "en")
+        self.assertIn("B1", text)
+        self.assertIn("B2", text)
 
     def test_seed_film_script_inserts_once(self):
         inserted = 0

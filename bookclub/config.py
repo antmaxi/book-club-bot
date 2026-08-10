@@ -30,6 +30,19 @@ def _club_entity_from_env() -> str:
 
 
 CLUB_ENTITY = _club_entity_from_env()
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
+# When enabled, /add and /edit ask for estimated CEFR level(s) (A1–C2).
+ASK_LANGUAGE_LEVEL = _env_truthy("ASK_LANGUAGE_LEVEL")
+
+
+def language_level_prompt_enabled() -> bool:
+    return ASK_LANGUAGE_LEVEL
+
+
 _ENTITY_DEFAULT_CHAT_NAMES = {"book": "Книжный клуб", "film": "Киноклуб"}
 ALLOWED_CHAT_NAME = (
     os.environ.get("ALLOWED_CHAT_NAME") or _ENTITY_DEFAULT_CHAT_NAMES[CLUB_ENTITY]
@@ -57,6 +70,7 @@ NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
 ) = range(8)
 ADDING_TITLE_CONFIRM = 25
 ADMIN_IMPORT_CONFIRM = 26
+ADDING_LANGUAGE_LEVEL = 27
 EDITING_CHOOSE = 8
 EDITING_FIELD = 9  # waiting for new value of current field
 DELETING_CHOOSE = 10

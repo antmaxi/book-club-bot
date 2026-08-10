@@ -8,18 +8,22 @@ from bookclub.config import (
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
     ADDING_FICTION,
+    ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_PAGES,
     ADDING_REVIEW,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
+    language_level_prompt_enabled,
 )
+from bookclub.cefr import format_language_levels
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
 from bookclub.ui import (
     book_card,
+    cefr_levels_keyboard,
     fiction_keyboard,
     h,
     is_valid_url,
@@ -115,6 +119,22 @@ async def add_original_language(
     return ADDING_CREATION_YEAR
 
 
+async def _prompt_after_creation_year(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if language_level_prompt_enabled():
+        ctx.user_data["new_book"]["language_levels"] = set()
+        lang = get_lang(ctx)
+        await update.message.reply_text(
+            tr(ctx, "ask_language_level", count=0),
+            reply_markup=cefr_levels_keyboard(lang, set(), prefix="add_cefr"),
+            parse_mode=PM,
+        )
+        return ADDING_LANGUAGE_LEVEL
+    await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode=PM)
+    return ADDING_DESCRIPTION
+
+
 async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip() if update.message and update.message.text else ""
     try:
@@ -123,9 +143,38 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(tr(ctx, "invalid_creation_year"), parse_mode=PM)
         return ADDING_CREATION_YEAR
     ctx.user_data["new_book"]["creation_year"] = year
-    await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode=PM)
-    return ADDING_DESCRIPTION
+    return await _prompt_after_creation_year(update, ctx)
 
+
+async def add_language_level_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    lang = get_lang(ctx)
+    _, action, *rest = query.data.split(":")
+    selected: set[str] = ctx.user_data["new_book"].setdefault("language_levels", set())
+    if action == "toggle":
+        level = rest[0]
+        if level in selected:
+            selected.discard(level)
+        else:
+            selected.add(level)
+        await query.answer()
+        await query.edit_message_text(
+            tr(ctx, "ask_language_level", count=len(selected)),
+            reply_markup=cefr_levels_keyboard(lang, selected, prefix="add_cefr"),
+            parse_mode=PM,
+        )
+        return ADDING_LANGUAGE_LEVEL
+    if action == "done":
+        if not selected:
+            await query.answer(tr(ctx, "language_level_none_selected"), show_alert=True)
+            return ADDING_LANGUAGE_LEVEL
+        await query.answer()
+        await query.edit_message_text(tr(ctx, "ask_desc"), parse_mode=PM)
+        return ADDING_DESCRIPTION
+    await query.answer()
+    return ADDING_LANGUAGE_LEVEL
 
 async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
@@ -142,6 +191,10 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
 
     nb = ctx.user_data["new_book"]
     user = update.effective_user
+    levels_set = nb.get("language_levels")
+    language_levels = (
+        format_language_levels(levels_set) if isinstance(levels_set, set) else None
+    )
     book_id = db_add_book(
         nb["title"],
         nb["author"],
@@ -154,6 +207,7 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         user.username,
         original_language=nb.get("original_language") or None,
         creation_year=nb.get("creation_year"),
+        language_levels=language_levels,
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")

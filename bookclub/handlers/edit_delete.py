@@ -5,15 +5,32 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from bookclub.config import DELETING_CHOOSE, EDITING_CHOOSE, EDITING_FIELD
+from bookclub.config import (
+    DELETING_CHOOSE,
+    EDITING_CHOOSE,
+    EDITING_FIELD,
+    language_level_prompt_enabled,
+)
+from bookclub.cefr import (
+    format_language_levels,
+    language_levels_display,
+    parse_language_levels,
+)
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, T, get_lang, s, tr
-from bookclub.ui import book_card, books_keyboard, h
+from bookclub.types import BookLike
+from bookclub.ui import (
+    book_card,
+    books_keyboard,
+    cefr_levels_keyboard,
+    h,
+    is_valid_url,
+    parse_optional_creation_year,
+)
 
 # ── /edit — sequential field-by-field editor ──────────────────────────────────
-# Fields edited in order: title, author, pages, fiction, review_link, description
-EDIT_FIELDS = [
+_BASE_EDIT_FIELDS = [
     "title",
     "author",
     "pages",
@@ -23,6 +40,15 @@ EDIT_FIELDS = [
     "creation_year",
     "description",
 ]
+EDIT_FIELDS = list(_BASE_EDIT_FIELDS)
+
+
+def get_edit_fields() -> list[str]:
+    fields = list(_BASE_EDIT_FIELDS)
+    if language_level_prompt_enabled():
+        idx = fields.index("creation_year") + 1
+        fields.insert(idx, "language_levels")
+    return fields
 
 
 def edit_field_key(field: str) -> str:
@@ -44,6 +70,10 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
     if field == "creation_year":
         cy = book["creation_year"]
         return str(cy) if cy is not None else ("—" if lang == "en" else "—")
+    if field == "language_levels":
+        raw = book["language_levels"] if "language_levels" in book.keys() else None
+        shown = language_levels_display(raw)
+        return shown or ("—" if lang == "en" else "—")
     return str(book[field])
 
 
@@ -149,7 +179,7 @@ async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(s(lang, "no_permission"), parse_mode=PM)
         return ConversationHandler.END
     ctx.user_data["edit_book_id"] = book_id
-    ctx.user_data["edit_fields"] = list(EDIT_FIELDS)
+    ctx.user_data["edit_fields"] = get_edit_fields()
     ctx.user_data["edit_changes"] = {}
     return await _ask_edit_field(query, ctx, is_callback=True)
 
@@ -175,6 +205,18 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return EDITING_FIELD  # handled by edit_fiction_cb
 
+    if field == "language_levels":
+        book = require_book(ctx.user_data["edit_book_id"])
+        raw = book["language_levels"] if "language_levels" in book.keys() else None
+        selected = parse_language_levels(raw)
+        ctx.user_data["edit_cefr_selected"] = selected
+        await query.edit_message_text(
+            tr(ctx, "ask_language_level", count=len(selected)),
+            reply_markup=cefr_levels_keyboard(lang, selected, prefix="edit_cefr"),
+            parse_mode=PM,
+        )
+        return EDITING_FIELD  # handled by edit_language_levels_cb
+
     field_name = T[lang][f"field_{field}" if field != "review_link" else "field_review"]
     await query.edit_message_text(
         T[lang]["edit_ask_new"].format(field=field_name),
@@ -191,6 +233,41 @@ async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     ctx.user_data["edit_changes"]["fiction"] = int(value)
     ctx.user_data["edit_fields"].pop(0)
     return await _ask_edit_field(query, ctx, is_callback=True)
+
+
+async def edit_language_levels_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    lang = get_lang(ctx)
+    _, action, *rest = query.data.split(":")
+    selected: set[str] = ctx.user_data.setdefault("edit_cefr_selected", set())
+    if action == "toggle":
+        level = rest[0]
+        if level in selected:
+            selected.discard(level)
+        else:
+            selected.add(level)
+        await query.answer()
+        await query.edit_message_text(
+            tr(ctx, "ask_language_level", count=len(selected)),
+            reply_markup=cefr_levels_keyboard(lang, selected, prefix="edit_cefr"),
+            parse_mode=PM,
+        )
+        return EDITING_FIELD
+    if action == "done":
+        if not selected:
+            await query.answer(tr(ctx, "language_level_none_selected"), show_alert=True)
+            return EDITING_FIELD
+        await query.answer()
+        ctx.user_data["edit_changes"]["language_levels"] = format_language_levels(
+            selected
+        )
+        ctx.user_data.pop("edit_cefr_selected", None)
+        ctx.user_data["edit_fields"].pop(0)
+        return await _ask_edit_field(query, ctx, is_callback=True)
+    await query.answer()
+    return EDITING_FIELD
 
 
 async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
