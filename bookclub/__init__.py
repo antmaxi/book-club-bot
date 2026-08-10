@@ -18,6 +18,7 @@ from bookclub.ui import *  # noqa: F403
 
 # Handlers (tests and patches import these from bookclub_bot)
 from bookclub.handlers.add import *  # noqa: F403
+from bookclub.handlers.add_flow import add_go_back, add_previous_state  # noqa: F403
 from bookclub.handlers.admin import *  # noqa: F403
 from bookclub.handlers.commands import *  # noqa: F403
 from bookclub.handlers.edit_delete import *  # noqa: F403

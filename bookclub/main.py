@@ -46,6 +46,7 @@ from bookclub.config import (
     EDITING_FIELD,
 )
 from bookclub.db import init_db
+from bookclub.handlers.add_flow import add_go_back
 from bookclub.handlers.add import (
     add_author,
     add_creation_year,
@@ -107,6 +108,12 @@ from bookclub.logging_setup import _drain_alert_queue, logger
 from bookclub.membership import error_handler, membership_gate
 from bookclub.notifications import recover_pending_new_book_notifications
 
+_ADD_BACK_HANDLERS = [
+    CommandHandler("back", add_go_back),
+    CallbackQueryHandler(add_go_back, pattern=r"^add_back$"),
+]
+
+
 def register_handlers(app: Application) -> None:
     """Attach every handler to the application.
 
@@ -121,43 +128,53 @@ def register_handlers(app: Application) -> None:
             entry_points=[CommandHandler("add", cmd_add)],
             states={
                 ADDING_TITLE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_title)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_TITLE_CONFIRM: [
-                    CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:")
+                    CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:"),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_AUTHOR: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_author)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_author),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_PAGES: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_FICTION: [
-                    CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:")
+                    CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:"),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_REVIEW: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_review)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_ORIGINAL_LANGUAGE: [
                     CommandHandler("skip", add_original_language),
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, add_original_language
                     ),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_CREATION_YEAR: [
                     CommandHandler("skip", add_creation_year),
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, add_creation_year
                     ),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_LANGUAGE_LEVEL: [
-                    CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:")
+                    CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:"),
+                    *_ADD_BACK_HANDLERS,
                 ],
                 # /skip needs its own handler: a bare filters.TEXT here would also
                 # swallow /cancel (state handlers are matched before fallbacks).
                 ADDING_DESCRIPTION: [
                     CommandHandler("skip", add_description),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
+                    *_ADD_BACK_HANDLERS,
                 ],
             },
             fallbacks=[CommandHandler("cancel", conv_cancel)],

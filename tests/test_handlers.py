@@ -549,6 +549,35 @@ class TestAddConversation(BotHandlerTestCase):
         state = await bot.add_pages(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_PAGES)
 
+    async def test_add_back_from_pages_returns_author(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "Author Name",
+            "pages": 100,
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_PAGES
+        self.message.text = "/back"
+        state = await bot.add_go_back(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(self.ctx.user_data["add_state"], bot.ADDING_AUTHOR)
+        reply = self.message.reply_text.call_args[0][0]
+        self.assertIn("Author Name", reply)
+
+    async def test_add_back_callback_from_fiction_returns_pages(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 200,
+            "fiction": True,
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_FICTION
+        q = self._callback_query("add_back")
+        state = await bot.add_go_back(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_PAGES)
+        q.edit_message_text.assert_called_once()
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("200", text)
+
     async def test_add_review_valid(self):
         self.ctx.user_data["new_book"] = {}
         self.message.text = "https://goodreads.com/book/1"

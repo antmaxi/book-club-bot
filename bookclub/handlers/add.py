@@ -18,13 +18,17 @@ from bookclub.config import (
 )
 from bookclub.cefr import format_language_levels
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
-from bookclub.i18n import PM, get_lang, s, tr
+from bookclub.handlers.add_flow import (
+    build_add_prompt_text,
+    send_add_prompt,
+)
+from bookclub.i18n import PM, get_lang, tr
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
 from bookclub.ui import (
+    add_back_keyboard,
     book_card,
     cefr_levels_keyboard,
-    fiction_keyboard,
     h,
     is_valid_url,
     parse_optional_creation_year,
@@ -34,8 +38,7 @@ from bookclub.ui import (
 
 async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"] = {}
-    await update.message.reply_text(tr(ctx, "ask_title"), parse_mode=PM)
-    return ADDING_TITLE
+    return await send_add_prompt(update, ctx, ADDING_TITLE)
 
 
 async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -44,6 +47,7 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
     similar = find_similar_book_titles(title)
     if similar:
+        ctx.user_data["add_state"] = ADDING_TITLE_CONFIRM
         await update.message.reply_text(
             tr(
                 ctx,
@@ -55,8 +59,7 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             parse_mode=PM,
         )
         return ADDING_TITLE_CONFIRM
-    await update.message.reply_text(tr(ctx, "ask_author"), parse_mode=PM)
-    return ADDING_AUTHOR
+    return await send_add_prompt(update, ctx, ADDING_AUTHOR)
 
 
 async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -65,30 +68,31 @@ async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     _, action = query.data.split(":", 1)
     if action == "no":
         ctx.user_data.pop("new_book", None)
+        ctx.user_data.pop("add_state", None)
         await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
-    await query.edit_message_text(tr(ctx, "ask_author"), parse_mode=PM)
-    return ADDING_AUTHOR
+    return await send_add_prompt(update, ctx, ADDING_AUTHOR, edit=True)
 
 
 async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"]["author"] = update.message.text.strip()
-    await update.message.reply_text(tr(ctx, "ask_pages"), parse_mode=PM)
-    return ADDING_PAGES
+    return await send_add_prompt(update, ctx, ADDING_PAGES)
 
 
 async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    lang = get_lang(ctx)
+    nb = ctx.user_data["new_book"]
     if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text(tr(ctx, "invalid_pages"), parse_mode=PM)
+        await update.message.reply_text(
+            f"{tr(ctx, 'invalid_pages')}\n\n{build_add_prompt_text(ctx, ADDING_PAGES, nb)}",
+            reply_markup=add_back_keyboard(lang),
+            parse_mode=PM,
+        )
+        ctx.user_data["add_state"] = ADDING_PAGES
         return ADDING_PAGES
     ctx.user_data["new_book"]["pages"] = int(text)
-    await update.message.reply_text(
-        tr(ctx, "ask_fiction"),
-        reply_markup=fiction_keyboard(get_lang(ctx)),
-        parse_mode=PM,
-    )
-    return ADDING_FICTION
+    return await send_add_prompt(update, ctx, ADDING_FICTION)
 
 
 async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -96,18 +100,23 @@ async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     _, value = query.data.split(":")
     ctx.user_data["new_book"]["fiction"] = value == "1"
-    await query.edit_message_text(tr(ctx, "ask_review"), parse_mode=PM)
-    return ADDING_REVIEW
+    return await send_add_prompt(update, ctx, ADDING_REVIEW, edit=True)
 
 
 async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    lang = get_lang(ctx)
+    nb = ctx.user_data["new_book"]
     if not is_valid_url(text):
-        await update.message.reply_text(tr(ctx, "invalid_review"), parse_mode=PM)
+        await update.message.reply_text(
+            f"{tr(ctx, 'invalid_review')}\n\n{build_add_prompt_text(ctx, ADDING_REVIEW, nb)}",
+            reply_markup=add_back_keyboard(lang),
+            parse_mode=PM,
+        )
+        ctx.user_data["add_state"] = ADDING_REVIEW
         return ADDING_REVIEW
     ctx.user_data["new_book"]["review_link"] = text
-    await update.message.reply_text(tr(ctx, "ask_original_language"), parse_mode=PM)
-    return ADDING_ORIGINAL_LANGUAGE
+    return await send_add_prompt(update, ctx, ADDING_ORIGINAL_LANGUAGE)
 
 
 async def add_original_language(
@@ -115,32 +124,32 @@ async def add_original_language(
 ) -> int:
     text = update.message.text.strip() if update.message and update.message.text else ""
     ctx.user_data["new_book"]["original_language"] = "" if text == "/skip" else text
-    await update.message.reply_text(tr(ctx, "ask_creation_year"), parse_mode=PM)
-    return ADDING_CREATION_YEAR
+    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR)
 
 
 async def _prompt_after_creation_year(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
     if language_level_prompt_enabled():
-        ctx.user_data["new_book"]["language_levels"] = set()
-        lang = get_lang(ctx)
-        await update.message.reply_text(
-            tr(ctx, "ask_language_level", count=0),
-            reply_markup=cefr_levels_keyboard(lang, set(), prefix="add_cefr"),
-            parse_mode=PM,
-        )
-        return ADDING_LANGUAGE_LEVEL
-    await update.message.reply_text(tr(ctx, "ask_desc"), parse_mode=PM)
-    return ADDING_DESCRIPTION
+        ctx.user_data["new_book"].setdefault("language_levels", set())
+        return await send_add_prompt(update, ctx, ADDING_LANGUAGE_LEVEL)
+    return await send_add_prompt(update, ctx, ADDING_DESCRIPTION)
 
 
 async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip() if update.message and update.message.text else ""
+    lang = get_lang(ctx)
+    nb = ctx.user_data["new_book"]
     try:
         year = parse_optional_creation_year(text)
     except ValueError:
-        await update.message.reply_text(tr(ctx, "invalid_creation_year"), parse_mode=PM)
+        await update.message.reply_text(
+            f"{tr(ctx, 'invalid_creation_year')}\n\n"
+            f"{build_add_prompt_text(ctx, ADDING_CREATION_YEAR, nb)}",
+            reply_markup=add_back_keyboard(lang),
+            parse_mode=PM,
+        )
+        ctx.user_data["add_state"] = ADDING_CREATION_YEAR
         return ADDING_CREATION_YEAR
     ctx.user_data["new_book"]["creation_year"] = year
     return await _prompt_after_creation_year(update, ctx)
@@ -161,20 +170,23 @@ async def add_language_level_cb(
             selected.add(level)
         await query.answer()
         await query.edit_message_text(
-            tr(ctx, "ask_language_level", count=len(selected)),
-            reply_markup=cefr_levels_keyboard(lang, selected, prefix="add_cefr"),
+            build_add_prompt_text(ctx, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]),
+            reply_markup=cefr_levels_keyboard(
+                lang, selected, prefix="add_cefr", show_add_back=True
+            ),
             parse_mode=PM,
         )
+        ctx.user_data["add_state"] = ADDING_LANGUAGE_LEVEL
         return ADDING_LANGUAGE_LEVEL
     if action == "done":
         if not selected:
             await query.answer(tr(ctx, "language_level_none_selected"), show_alert=True)
             return ADDING_LANGUAGE_LEVEL
         await query.answer()
-        await query.edit_message_text(tr(ctx, "ask_desc"), parse_mode=PM)
-        return ADDING_DESCRIPTION
+        return await send_add_prompt(update, ctx, ADDING_DESCRIPTION, edit=True)
     await query.answer()
     return ADDING_LANGUAGE_LEVEL
+
 
 async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     lang = get_lang(ctx)
@@ -182,7 +194,6 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     desc = "" if text == "/skip" else text
 
     if ctx.user_data is None or "new_book" not in ctx.user_data:
-        # Should not happen in normal conversation, but could if user sends message after timeout
         logger.warning(
             f"User {update.effective_user.id} tried to add description but 'new_book' is missing."
         )
@@ -215,13 +226,12 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     if book is None:
         raise RuntimeError(f"book {book_id} missing immediately after insert")
 
-    # Mention the delay in the confirmation message
     confirm_text = f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}{tr(ctx, 'new_book_delay_note')}"
 
     await update.message.reply_text(confirm_text, parse_mode=PM)
     ctx.user_data.pop("new_book", None)
+    ctx.user_data.pop("add_state", None)
 
     schedule_new_book_notifications(ctx.job_queue, book_id, user.id)
 
     return ConversationHandler.END
-

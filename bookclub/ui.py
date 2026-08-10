@@ -70,6 +70,25 @@ def similar_title_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
                     s(lang, "similar_title_cancel_btn"),
                     callback_data="title_sim:no",
                 ),
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_back_btn"),
+                    callback_data="add_back",
+                )
+            ],
+        ]
+    )
+
+
+def add_back_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_back_btn"),
+                    callback_data="add_back",
+                )
             ]
         ]
     )
@@ -474,17 +493,25 @@ async def _show_meeting_attendee_picker(
     return ADMIN_MEETING_ATTENDEES
 
 
-def fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+def fiction_keyboard(lang: str, *, show_add_back: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
         [
-            [
-                InlineKeyboardButton(s(lang, "fiction_btn"), callback_data="fiction:1"),
-                InlineKeyboardButton(
-                    s(lang, "nonfiction_btn"), callback_data="fiction:0"
-                ),
-            ]
+            InlineKeyboardButton(s(lang, "fiction_btn"), callback_data="fiction:1"),
+            InlineKeyboardButton(
+                s(lang, "nonfiction_btn"), callback_data="fiction:0"
+            ),
         ]
-    )
+    ]
+    if show_add_back:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_back_btn"),
+                    callback_data="add_back",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def cefr_levels_keyboard(
@@ -493,6 +520,7 @@ def cefr_levels_keyboard(
     *,
     prefix: str,
     done_label_key: str = "language_level_done_btn",
+    show_add_back: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -509,6 +537,15 @@ def cefr_levels_keyboard(
             row = []
     if row:
         rows.append(row)
+    if show_add_back:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_back_btn"),
+                    callback_data="add_back",
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(
