@@ -21,6 +21,7 @@ from bookclub.config import (
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
+    ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
     ADDING_TITLE,
@@ -53,7 +54,9 @@ from bookclub.handlers.add import (
     add_description,
     add_fiction_cb,
     add_language_level_cb,
-    add_original_language,
+    add_original_language_cb,
+    add_original_language_other,
+    add_original_language_skip,
     add_pages,
     add_review,
     add_title,
@@ -98,6 +101,7 @@ from bookclub.handlers.edit_delete import (
     delete_pick_cb,
     edit_fiction_cb,
     edit_language_levels_cb,
+    edit_original_language_cb,
     edit_pick_cb,
     edit_value_handler,
     edit_yn_cb,
@@ -152,9 +156,15 @@ def register_handlers(app: Application) -> None:
                     *_ADD_BACK_HANDLERS,
                 ],
                 ADDING_ORIGINAL_LANGUAGE: [
-                    CommandHandler("skip", add_original_language),
+                    CommandHandler("skip", add_original_language_skip),
+                    CallbackQueryHandler(
+                        add_original_language_cb, pattern=r"^add_orig_lang:"
+                    ),
+                    *_ADD_BACK_HANDLERS,
+                ],
+                ADDING_ORIGINAL_LANGUAGE_OTHER: [
                     MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, add_original_language
+                        filters.TEXT & ~filters.COMMAND, add_original_language_other
                     ),
                     *_ADD_BACK_HANDLERS,
                 ],
@@ -283,6 +293,9 @@ def register_handlers(app: Application) -> None:
                     CallbackQueryHandler(edit_fiction_cb, pattern=r"^edit_fiction:"),
                     CallbackQueryHandler(
                         edit_language_levels_cb, pattern=r"^edit_cefr:"
+                    ),
+                    CallbackQueryHandler(
+                        edit_original_language_cb, pattern=r"^edit_orig_lang:"
                     ),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
                 ],

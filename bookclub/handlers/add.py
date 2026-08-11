@@ -10,6 +10,7 @@ from bookclub.config import (
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
+    ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
     ADDING_TITLE,
@@ -17,6 +18,7 @@ from bookclub.config import (
     language_level_prompt_enabled,
 )
 from bookclub.cefr import format_language_levels
+from bookclub.original_languages import stored_original_language
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.handlers.add_flow import (
     build_add_prompt_text,
@@ -31,6 +33,7 @@ from bookclub.ui import (
     cefr_levels_keyboard,
     h,
     is_valid_url,
+    original_language_keyboard,
     parse_optional_creation_year,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
@@ -119,11 +122,55 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return await send_add_prompt(update, ctx, ADDING_ORIGINAL_LANGUAGE)
 
 
-async def add_original_language(
+async def add_original_language_skip(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    ctx.user_data["new_book"]["original_language"] = ""
+    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR)
+
+
+async def add_original_language_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    _, action = query.data.split(":", 1)
+    if action == "skip":
+        ctx.user_data["new_book"]["original_language"] = ""
+        return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR, edit=True)
+    if action == "other":
+        ctx.user_data["add_state"] = ADDING_ORIGINAL_LANGUAGE_OTHER
+        await query.edit_message_text(
+            build_add_prompt_text(
+                ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
+            ),
+            reply_markup=add_back_keyboard(get_lang(ctx)),
+            parse_mode=PM,
+        )
+        return ADDING_ORIGINAL_LANGUAGE_OTHER
+    stored = stored_original_language(action)
+    if stored is None:
+        return ADDING_ORIGINAL_LANGUAGE
+    ctx.user_data["new_book"]["original_language"] = stored
+    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR, edit=True)
+
+
+async def add_original_language_other(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
     text = update.message.text.strip() if update.message and update.message.text else ""
-    ctx.user_data["new_book"]["original_language"] = "" if text == "/skip" else text
+    if not text:
+        lang = get_lang(ctx)
+        await update.message.reply_text(
+            build_add_prompt_text(
+                ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
+            ),
+            reply_markup=add_back_keyboard(lang),
+            parse_mode=PM,
+        )
+        ctx.user_data["add_state"] = ADDING_ORIGINAL_LANGUAGE_OTHER
+        return ADDING_ORIGINAL_LANGUAGE_OTHER
+    ctx.user_data["new_book"]["original_language"] = text
     return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR)
 
 

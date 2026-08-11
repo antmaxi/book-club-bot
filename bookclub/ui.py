@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
 from bookclub.cefr import CEFR_LEVELS, language_levels_display
+from bookclub.original_languages import ORIGINAL_LANGUAGE_CODES
 from bookclub.db import (
     db_meeting_user_suggestions,
     db_upsert_club_user,
@@ -503,6 +504,53 @@ def fiction_keyboard(lang: str, *, show_add_back: bool = False) -> InlineKeyboar
             ),
         ]
     ]
+    if show_add_back:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_back_btn"),
+                    callback_data="add_back",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def original_language_keyboard(
+    lang: str,
+    *,
+    prefix: str,
+    show_add_back: bool = False,
+    show_skip: bool = True,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for code in ORIGINAL_LANGUAGE_CODES:
+        row.append(
+            InlineKeyboardButton(
+                s(lang, f"orig_lang_{code}"),
+                callback_data=f"{prefix}:{code}",
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    action_row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            s(lang, "orig_lang_other_btn"),
+            callback_data=f"{prefix}:other",
+        )
+    ]
+    if show_skip:
+        action_row.append(
+            InlineKeyboardButton(
+                s(lang, "orig_lang_skip_btn"),
+                callback_data=f"{prefix}:skip",
+            )
+        )
+    rows.append(action_row)
     if show_add_back:
         rows.append(
             [

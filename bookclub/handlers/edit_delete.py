@@ -19,6 +19,7 @@ from bookclub.cefr import (
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, T, get_lang, s, tr
+from bookclub.original_languages import stored_original_language
 from bookclub.types import BookLike
 from bookclub.ui import (
     book_card,
@@ -26,6 +27,7 @@ from bookclub.ui import (
     cefr_levels_keyboard,
     h,
     is_valid_url,
+    original_language_keyboard,
     parse_optional_creation_year,
 )
 
@@ -205,6 +207,16 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return EDITING_FIELD  # handled by edit_fiction_cb
 
+    if field == "original_language":
+        await query.edit_message_text(
+            tr(ctx, "ask_original_language"),
+            parse_mode=PM,
+            reply_markup=original_language_keyboard(
+                lang, prefix="edit_orig_lang", show_skip=True
+            ),
+        )
+        return EDITING_FIELD  # handled by edit_original_language_cb
+
     if field == "language_levels":
         book = require_book(ctx.user_data["edit_book_id"])
         raw = book["language_levels"] if "language_levels" in book.keys() else None
@@ -231,6 +243,36 @@ async def edit_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
     _, value = query.data.split(":")
     ctx.user_data["edit_changes"]["fiction"] = int(value)
+    ctx.user_data["edit_fields"].pop(0)
+    return await _ask_edit_field(query, ctx, is_callback=True)
+
+
+async def edit_original_language_cb(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    lang = get_lang(ctx)
+    _, action = query.data.split(":", 1)
+    if action == "skip":
+        await query.answer()
+        ctx.user_data["edit_changes"]["original_language"] = None
+        ctx.user_data.pop("edit_orig_lang_other", None)
+        ctx.user_data["edit_fields"].pop(0)
+        return await _ask_edit_field(query, ctx, is_callback=True)
+    if action == "other":
+        await query.answer()
+        ctx.user_data["edit_orig_lang_other"] = True
+        await query.edit_message_text(
+            tr(ctx, "ask_original_language_other"), parse_mode=PM
+        )
+        return EDITING_FIELD
+    stored = stored_original_language(action)
+    if stored is None:
+        await query.answer()
+        return EDITING_FIELD
+    await query.answer()
+    ctx.user_data["edit_changes"]["original_language"] = stored
+    ctx.user_data.pop("edit_orig_lang_other", None)
     ctx.user_data["edit_fields"].pop(0)
     return await _ask_edit_field(query, ctx, is_callback=True)
 
@@ -276,7 +318,12 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     field = ctx.user_data["edit_fields"][0]
 
     # Validate
-    value: int | str
+    value: int | str | None
+    if field == "original_language" and ctx.user_data.pop("edit_orig_lang_other", False):
+        value = text or None
+        ctx.user_data["edit_changes"][field] = value
+        ctx.user_data["edit_fields"].pop(0)
+        return await _ask_edit_field(update, ctx, is_callback=False)
     if field == "pages":
         if not text.isdigit() or int(text) <= 0:
             await update.message.reply_text(

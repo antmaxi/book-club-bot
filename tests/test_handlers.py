@@ -622,8 +622,25 @@ class TestAddConversation(BotHandlerTestCase):
     async def test_add_original_language_skip(self):
         self.ctx.user_data["new_book"] = {"review_link": "http://x.com"}
         self.message.text = "/skip"
-        state = await bot.add_original_language(self.update, self.ctx)
+        state = await bot.add_original_language_skip(self.update, self.ctx)
         self.assertEqual(self.ctx.user_data["new_book"]["original_language"], "")
+        self.assertEqual(state, bot.ADDING_CREATION_YEAR)
+
+    async def test_add_original_language_picks_german(self):
+        self.ctx.user_data["new_book"] = {"review_link": "http://x.com"}
+        q = self._callback_query("add_orig_lang:de")
+        state = await bot.add_original_language_cb(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["original_language"], "German")
+        self.assertEqual(state, bot.ADDING_CREATION_YEAR)
+
+    async def test_add_original_language_other_accepts_text(self):
+        self.ctx.user_data["new_book"] = {"review_link": "http://x.com"}
+        self.ctx.user_data["add_state"] = bot.ADDING_ORIGINAL_LANGUAGE_OTHER
+        self.message.text = "Ukrainian"
+        state = await bot.add_original_language_other(self.update, self.ctx)
+        self.assertEqual(
+            self.ctx.user_data["new_book"]["original_language"], "Ukrainian"
+        )
         self.assertEqual(state, bot.ADDING_CREATION_YEAR)
 
     async def test_add_creation_year_valid(self):

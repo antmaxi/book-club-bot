@@ -11,6 +11,7 @@ from bookclub.config import (
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
+    ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
     ADDING_TITLE,
@@ -23,6 +24,7 @@ from bookclub.ui import (
     cefr_levels_keyboard,
     fiction_keyboard,
     h,
+    original_language_keyboard,
     similar_title_confirm_keyboard,
 )
 
@@ -30,6 +32,8 @@ from bookclub.ui import (
 def add_previous_state(current: int) -> int | None:
     if current == ADDING_TITLE_CONFIRM:
         return ADDING_TITLE
+    if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
+        return ADDING_ORIGINAL_LANGUAGE
     if current == ADDING_DESCRIPTION:
         if language_level_prompt_enabled():
             return ADDING_LANGUAGE_LEVEL
@@ -53,6 +57,7 @@ def _prompt_key_for_state(state: int) -> str | None:
         ADDING_FICTION: "ask_fiction",
         ADDING_REVIEW: "ask_review",
         ADDING_ORIGINAL_LANGUAGE: "ask_original_language",
+        ADDING_ORIGINAL_LANGUAGE_OTHER: "ask_original_language_other",
         ADDING_CREATION_YEAR: "ask_creation_year",
         ADDING_LANGUAGE_LEVEL: "ask_language_level",
         ADDING_DESCRIPTION: "ask_desc",
@@ -127,6 +132,10 @@ def add_prompt_markup(
         return None
     if state == ADDING_FICTION:
         return fiction_keyboard(lang, show_add_back=True)
+    if state == ADDING_ORIGINAL_LANGUAGE:
+        return original_language_keyboard(
+            lang, prefix="add_orig_lang", show_add_back=True
+        )
     if state == ADDING_LANGUAGE_LEVEL:
         levels = nb.get("language_levels")
         selected = levels if isinstance(levels, set) else set()
@@ -137,7 +146,7 @@ def add_prompt_markup(
         ADDING_AUTHOR,
         ADDING_PAGES,
         ADDING_REVIEW,
-        ADDING_ORIGINAL_LANGUAGE,
+        ADDING_ORIGINAL_LANGUAGE_OTHER,
         ADDING_CREATION_YEAR,
         ADDING_DESCRIPTION,
     ):

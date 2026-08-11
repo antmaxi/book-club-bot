@@ -36,7 +36,18 @@ T: dict[str, dict[str, TranslationValue]] = {
         "nonfiction_btn": "📰 Non-fiction",
         "ask_review": "🔗 Paste the <b>link to a review</b> (must start with http:// or https://):",
         "invalid_review": "⚠️ That doesn't look like a valid URL. Please paste a link starting with http:// or https://:",
-        "ask_original_language": "🌐 <b>Original language</b> of the book (or /skip if unsure):",
+        "ask_original_language": "🌐 <b>Original language</b> — pick one:",
+        "ask_original_language_other": "🌐 <b>Original language</b> — type the language name:",
+        "orig_lang_ru": "🇷🇺 Russian",
+        "orig_lang_de": "🇩🇪 German",
+        "orig_lang_en": "🇬🇧 English",
+        "orig_lang_it": "🇮🇹 Italian",
+        "orig_lang_fr": "🇫🇷 French",
+        "orig_lang_es": "🇪🇸 Spanish",
+        "orig_lang_zh": "🇨🇳 Chinese",
+        "orig_lang_ja": "🇯🇵 Japanese",
+        "orig_lang_other_btn": "✏️ Other",
+        "orig_lang_skip_btn": "⏭ Skip",
         "ask_creation_year": "📅 <b>Year of creation</b> (publication year; 4 digits, or /skip if unknown):",
         "ask_language_level": (
             "🎓 Estimated <b>language level</b> to read the book (CEFR A1–C2). "
@@ -247,7 +258,18 @@ T: dict[str, dict[str, TranslationValue]] = {
         "nonfiction_btn": "📰 Нехуд. литература",
         "ask_review": "🔗 Вставьте <b>ссылку на рецензию</b> (должна начинаться с http:// или https://):",
         "invalid_review": "⚠️ Это не похоже на корректный URL. Вставьте ссылку, начинающуюся с http:// или https://:",
-        "ask_original_language": "🌐 <b>Язык оригинала</b> книги (или /skip, если не знаете):",
+        "ask_original_language": "🌐 <b>Язык оригинала</b> — выберите:",
+        "ask_original_language_other": "🌐 <b>Язык оригинала</b> — введите название:",
+        "orig_lang_ru": "🇷🇺 Русский",
+        "orig_lang_de": "🇩🇪 Немецкий",
+        "orig_lang_en": "🇬🇧 Английский",
+        "orig_lang_it": "🇮🇹 Итальянский",
+        "orig_lang_fr": "🇫🇷 Французский",
+        "orig_lang_es": "🇪🇸 Испанский",
+        "orig_lang_zh": "🇨🇳 Китайский",
+        "orig_lang_ja": "🇯🇵 Японский",
+        "orig_lang_other_btn": "✏️ Другой",
+        "orig_lang_skip_btn": "⏭ Пропустить",
         "ask_creation_year": "📅 <b>Год создания</b> (год издания; 4 цифры, или /skip, если не знаете):",
         "ask_language_level": (
             "🎓 <b>Уровень языка</b> для комфортного чтения (CEFR A1–C2). "
@@ -461,7 +483,8 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_pages": "⏱ How long is it (<b>runtime in minutes</b>)? (enter a number)",
             "invalid_pages": "⚠️ Please enter a valid runtime in minutes (e.g. 120):",
             "ask_fiction": "📂 Is it a <b>feature film</b> or a <b>documentary</b>?",
-            "ask_original_language": "🌐 <b>Original language</b> of the film (or /skip if unsure):",
+            "ask_original_language": "🌐 <b>Original language</b> — pick one:",
+            "ask_original_language_other": "🌐 <b>Original language</b> — type the language name:",
             "ask_creation_year": "📅 <b>Release year</b> (4 digits, or /skip if unknown):",
             "ask_language_level": (
                 "🎓 Estimated <b>language level</b> to enjoy the film (CEFR A1–C2). "
@@ -562,7 +585,8 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "ask_pages": "⏱ Сколько <b>минут</b> длится фильм? (введите число)",
             "invalid_pages": "⚠️ Введите корректную длительность в минутах (например, 120):",
             "ask_fiction": "📂 Это <b>художественный фильм</b> или <b>документальный</b>?",
-            "ask_original_language": "🌐 <b>Язык оригинала</b> фильма (или /skip, если не знаете):",
+            "ask_original_language": "🌐 <b>Язык оригинала</b> — выберите:",
+            "ask_original_language_other": "🌐 <b>Язык оригинала</b> — введите название:",
             "ask_creation_year": "📅 <b>Год выхода</b> (4 цифры, или /skip, если не знаете):",
             "ask_language_level": (
                 "🎓 <b>Уровень языка</b> для комфортного просмотра (CEFR A1–C2). "
