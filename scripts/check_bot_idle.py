@@ -27,9 +27,17 @@ Always prints one line to stdout describing the result.
 
 import pickle
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+def _activity_utc(dt: datetime) -> datetime:
+    """Normalize persisted activity timestamps for age comparison."""
+    if dt.tzinfo is None:
+        # Legacy pickles stored naive local/UTC times without tzinfo.
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def main() -> int:
@@ -65,11 +73,12 @@ def main() -> int:
         print("IDLE (no non-admin activity recorded yet)")
         return 0
 
-    age_minutes = (datetime.now() - last_activity).total_seconds() / 60
+    last_activity = _activity_utc(last_activity)
+    age_minutes = (datetime.now(UTC) - last_activity).total_seconds() / 60
     status = "ACTIVE" if age_minutes < threshold_minutes else "IDLE"
     print(
         f"{status} (last non-admin activity {age_minutes:.1f} min ago, "
-        f"at {last_activity:%Y-%m-%d %H:%M:%S})"
+        f"at {last_activity.astimezone(UTC):%Y-%m-%d %H:%M:%S} UTC)"
     )
     return 1 if status == "ACTIVE" else 0
 
