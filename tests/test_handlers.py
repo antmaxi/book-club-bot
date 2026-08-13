@@ -518,6 +518,24 @@ class TestScoreCalc(BotHandlerTestCase):
         kwargs = q.answer.call_args[1]
         self.assertIn("Хочу: +1 балл", kwargs["text"])
 
+    async def test_score_calc_cb_includes_attendance_when_toggled(self):
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        q = self._callback_query("score_calc_info")
+        await bot.score_calc_cb(self.update, self.ctx)
+        text = q.answer.call_args[1]["text"]
+        self.assertIn("Attendance:", text)
+        self.assertIn("surplus", text)
+        self.assertLessEqual(len(text), 200)
+
+    async def test_score_calc_cb_attendance_ru_fits_alert(self):
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        self.ctx.user_data["lang"] = "ru"
+        q = self._callback_query("score_calc_info")
+        await bot.score_calc_cb(self.update, self.ctx)
+        text = q.answer.call_args[1]["text"]
+        self.assertIn("Посещаемость:", text)
+        self.assertLessEqual(len(text), 200)
+
 
 # ── /add conversation ──────────────────────────────────────────────────────────
 

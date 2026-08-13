@@ -10,6 +10,7 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - ✅ **Want to read** (+1 point)
   - 😐 **Don't care** (+0.5 points)
   - ❌ **Don't want to read** (-1 point)
+  The ranking score is the **sum** of those points (not an average). `/top` has a button that explains this. Admins can optionally count only votes from members with a positive **attendance surplus** (see below).
 - **Top Rated Books:** View a list of undiscussed books ranked by their votes score.
 - **Smart Notifications:** 
   - Get notified when a new book is added (with a 5-minute delay).
@@ -42,7 +43,22 @@ A bilingual (English/Russian) Telegram bot to help book clubs manage their readi
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
   - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
   - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 5-minute delay).
+  - **Vote counting:** Switch between counting **all votes** and counting only votes from members with a positive **attendance surplus**. When attendance mode is on, the `/top` "How a score is calculated" popup includes this rule.
+  - **Meetings:** Record who attended a discussion. Attendance is what the surplus (below) is built from.
   - **Export / import (JSON):** Copy a single book to another bot instance — pick a book under **Export book (JSON)**, copy the message text, then on the target instance use **Import book (JSON)** and paste it in one message. Votes are not transferred; attribution (`added_by_name` / `@username`) is preserved so the original submitter can still edit on the new instance. Works for discussed or hidden books too.
+
+### Attendance-based vote counting
+
+In `/adminconsole`, **Vote counting** can be set to **attendance**. Rankings (`/list`, `/top`, book cards) then ignore votes from people whose running attendance surplus is 0. Everyone can still cast and change votes; only the tally used for ranking changes.
+
+Surplus is precomputed at bot start (and whenever a meeting is recorded). Meetings are walked in date order for each person:
+
+1. Start at 0.
+2. Attended that meeting: **+1**.
+3. Missed that meeting: **−1**, but never below 0.
+4. That person’s votes count only if the final surplus is **at least 1**.
+
+Skipping a long stretch of meetings parks the surplus at 0; coming back to one meeting restores it to 1 and voting ability with it. If no meetings have been recorded yet, all votes still count.
 
 ## 🖼 Screenshots
 ![Top](screenshots/2026-04-04_screenshot_top.png)

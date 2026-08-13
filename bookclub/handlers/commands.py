@@ -22,6 +22,7 @@ from bookclub.db import (
     db_get_user_setting,
     db_get_user_vote,
     db_set_user_setting,
+    db_votes_use_attendance,
 )
 from bookclub.domain import is_admin
 from bookclub.i18n import PM, T, _COMMAND_DESC_OVERLAYS, get_lang, s, tr
@@ -493,6 +494,11 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def score_calc_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer(text=tr(ctx, "score_calc_info"), show_alert=True)
+    key = (
+        "score_calc_info_attendance"
+        if db_votes_use_attendance()
+        else "score_calc_info"
+    )
+    await query.answer(text=tr(ctx, key), show_alert=True)
 
 
