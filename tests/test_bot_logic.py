@@ -270,6 +270,88 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(book["votes_meh"], 1)
         self.assertEqual(book["votes_no"], 1)
 
+    def test_attendance_mode_ignores_votes_when_surplus_below_one(self):
+        """Include a voter iff running surplus (visit +1, miss −1, floor 0) is >= 1."""
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        regular, skipper, half = 11, 22, 33
+        bot.db_cast_vote(regular, book_id, 1)
+        bot.db_cast_vote(skipper, book_id, 1)
+        bot.db_cast_vote(half, book_id, -1)
+
+        bot.db_create_meeting(other, "2026-01-01", 1, [regular, skipper, half])
+        bot.db_create_meeting(other, "2026-01-02", 1, [regular])
+        bot.db_create_meeting(other, "2026-01-03", 1, [regular, skipper])
+        # regular: +1, +1, +1 → 3
+        # skipper: +1, −1, +1 → 1 (miss then return)
+        # half: +1, −1, −1 → 0
+
+        self.assertEqual(bot.db_attendance_surplus(regular), 3)
+        self.assertEqual(bot.db_attendance_surplus(skipper), 1)
+        self.assertEqual(bot.db_attendance_surplus(half), 0)
+
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["vote_count"], 2)
+        self.assertEqual(book["votes_yes"], 2)
+        self.assertEqual(book["votes_no"], 0)
+        self.assertEqual(book["avg_score"], 2)
+
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 0)
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["vote_count"], 3)
+        self.assertEqual(book["votes_no"], 1)
+
+    def test_attendance_mode_excludes_exact_half_attendance(self):
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        voter = 44
+        bot.db_cast_vote(voter, book_id, 1)
+        bot.db_create_meeting(other, "2026-01-01", 1, [voter])
+        bot.db_create_meeting(other, "2026-01-02", 1, [])
+        self.assertEqual(bot.db_attendance_surplus(voter), 0)
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["vote_count"], 0)
+        self.assertEqual(book["avg_score"], 0)
+
+    def test_attendance_surplus_clamped_so_return_visit_revives_vote(self):
+        """Misses cannot drive surplus below 0, so one return visit restores voting."""
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        returning = 55
+        bot.db_cast_vote(returning, book_id, 1)
+        bot.db_create_meeting(other, "2026-01-01", 1, [])
+        bot.db_create_meeting(other, "2026-01-02", 1, [])
+        bot.db_create_meeting(other, "2026-01-03", 1, [])
+        bot.db_create_meeting(other, "2026-01-04", 1, [returning])
+        self.assertEqual(bot.db_attendance_surplus(returning), 1)
+
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["vote_count"], 1)
+        self.assertEqual(book["avg_score"], 1)
+
+    def test_attendance_surplus_rebuilt_on_init_db(self):
+        import bookclub.db as db_mod
+
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        uid = 66
+        bot.db_create_meeting(other, "2026-01-01", 1, [uid])
+        db_mod._attendance_surplus = {}
+        db_mod._attendance_meeting_count = 0
+        self.assertEqual(bot.db_attendance_surplus(uid), 0)
+        bot.init_db()
+        self.assertEqual(bot.db_attendance_surplus(uid), 1)
+
+    def test_attendance_mode_with_no_meetings_counts_all_votes(self):
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_cast_vote(11, book_id, 1)
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        book = bot.db_get_book(book_id)
+        self.assertEqual(book["vote_count"], 1)
+        self.assertEqual(book["avg_score"], 1)
+
     # -- Update field --
 
     def test_db_update_book_field_title(self):

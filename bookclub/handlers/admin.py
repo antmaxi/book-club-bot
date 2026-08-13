@@ -26,6 +26,7 @@ from bookclub.config import (
 from bookclub.db import (
     book_to_export_payload,
     db_create_meeting,
+    VOTES_USE_ATTENDANCE_KEY,
     db_get_admin_setting,
     db_get_book,
     db_get_books,
@@ -94,6 +95,11 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
     post_chat = db_get_admin_setting("post_new_books_to_chat", 0)
     chat_state = "✅" if post_chat else "❌"
+    votes_attendance = db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0)
+    votes_state = tr(
+        ctx,
+        "admin_votes_mode_attendance" if votes_attendance else "admin_votes_mode_all",
+    )
 
     keyboard = InlineKeyboardMarkup(
         [
@@ -137,6 +143,12 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
                 InlineKeyboardButton(
                     tr(ctx, "admin_toggle_chat_btn", state=chat_state),
                     callback_data="admin:toggle_chat",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "admin_toggle_votes_btn", state=votes_state),
+                    callback_data="admin:toggle_votes",
                 )
             ],
             [
@@ -300,6 +312,10 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "toggle_chat":
         current = db_get_admin_setting("post_new_books_to_chat", 0)
         db_set_admin_setting("post_new_books_to_chat", 1 - current)
+        return await cmd_admin_console(update, ctx)
+    elif data == "toggle_votes":
+        current = db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0)
+        db_set_admin_setting(VOTES_USE_ATTENDANCE_KEY, 1 - current)
         return await cmd_admin_console(update, ctx)
     elif data == "export":
         all_books = db_get_books(discussed=False, include_hidden=True) + list(

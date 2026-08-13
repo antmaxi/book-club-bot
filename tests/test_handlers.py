@@ -1346,6 +1346,20 @@ class TestAdminConsole(BotHandlerTestCase):
         await bot.admin_menu_cb(self.update, self.ctx)
         self.assertEqual(bot.db_get_admin_setting("post_new_books_to_chat"), 0)
 
+    async def test_admin_toggle_votes_attendance_works(self):
+        self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 0)
+
+        self._callback_query("admin:toggle_votes")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 1)
+        markup = self.update.callback_query.edit_message_text.call_args[1]["reply_markup"]
+        labels = [btn.text for row in markup.inline_keyboard for btn in row]
+        self.assertTrue(any("attendance" in label for label in labels))
+
+        self._callback_query("admin:toggle_votes")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 0)
+
     async def test_notify_new_book_job_posts_to_chat_when_enabled(self):
         bid = self._add_book("Chatty Book")
         cfg.ALLOWED_CHAT_ID = -100123

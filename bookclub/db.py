@@ -115,6 +115,7 @@ def init_db() -> None:
             SELECT DISTINCT added_by, added_by_name, added_by_username, added_at FROM books
         """)
         conn.commit()
+    db_rebuild_attendance_surplus()
 
 
 def db_add_book(
@@ -216,6 +217,69 @@ def db_insert_seed_book(
         return int(cur.lastrowid)
 
 
+# Admin setting: 0 = count every vote (default); 1 = only votes from users
+# whose running attendance surplus is at least 1. Surplus is walked in
+# meeting order: visit +1, miss −1, never below 0. Coming back after a
+# long gap can restore voting. With no meetings recorded, every vote still
+# counts (otherwise the list would go empty).
+VOTES_USE_ATTENDANCE_KEY = "votes_use_attendance"
+
+# user_id → surplus after the last meeting. Rebuilt at startup and whenever
+# a meeting is recorded. Users who never attended are omitted (surplus 0).
+_attendance_surplus: dict[int, int] = {}
+_attendance_meeting_count: int = 0
+
+
+def db_votes_use_attendance() -> bool:
+    return db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0) == 1
+
+
+def db_rebuild_attendance_surplus() -> None:
+    """Precompute running attendance surplus for every known attendee."""
+    global _attendance_surplus, _attendance_meeting_count
+    with sqlite3.connect(config.DB_PATH) as conn:
+        meetings = conn.execute(
+            "SELECT id FROM meetings ORDER BY meeting_date ASC, id ASC"
+        ).fetchall()
+        _attendance_meeting_count = len(meetings)
+        if not meetings:
+            _attendance_surplus = {}
+            return
+        attendees_by_meeting: dict[int, set[int]] = {row[0]: set() for row in meetings}
+        all_users: set[int] = set()
+        for meeting_id, user_id in conn.execute(
+            "SELECT meeting_id, user_id FROM meeting_attendees"
+        ):
+            present = attendees_by_meeting.get(meeting_id)
+            if present is None:
+                continue
+            present.add(user_id)
+            all_users.add(user_id)
+        surplus = dict.fromkeys(all_users, 0)
+        for (meeting_id,) in meetings:
+            present = attendees_by_meeting[meeting_id]
+            for user_id in all_users:
+                if user_id in present:
+                    surplus[user_id] += 1
+                elif surplus[user_id] > 0:
+                    surplus[user_id] -= 1
+        _attendance_surplus = surplus
+
+
+def db_attendance_surplus(user_id: int) -> int:
+    return _attendance_surplus.get(user_id, 0)
+
+
+def _votes_join_sql() -> str:
+    if not db_votes_use_attendance() or _attendance_meeting_count == 0:
+        return "LEFT JOIN votes v ON b.id = v.book_id"
+    eligible = [uid for uid, score in _attendance_surplus.items() if score >= 1]
+    if not eligible:
+        return "LEFT JOIN votes v ON b.id = v.book_id AND 0"
+    ids = ",".join(str(int(uid)) for uid in eligible)
+    return f"LEFT JOIN votes v ON b.id = v.book_id AND v.user_id IN ({ids})"
+
+
 def _books_query(
     extra_where: str = "",
     order: str = "avg_score DESC, vote_count DESC, b.added_at DESC",
@@ -238,7 +302,7 @@ def _books_query(
                COALESCE(SUM(CASE WHEN v.score=0  THEN 1 ELSE 0 END),0) AS votes_meh,
                COALESCE(SUM(CASE WHEN v.score=-1 THEN 1 ELSE 0 END),0) AS votes_no
         FROM books b
-        LEFT JOIN votes v ON b.id = v.book_id
+        {_votes_join_sql()}
         {extra_where}
         GROUP BY b.id
         ORDER BY {order}
@@ -509,7 +573,8 @@ def db_create_meeting(
                     (meeting_id, uid),
                 )
         conn.commit()
-        return meeting_id
+    db_rebuild_attendance_surplus()
+    return meeting_id
 
 
 def db_list_meetings() -> list[sqlite3.Row]:
