@@ -1,0 +1,4 @@
+{
+  "name": "book-club-bot",
+  "install": "bash .cursor/install.sh"
+}
