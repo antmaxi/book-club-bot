@@ -806,6 +806,33 @@ class TestUtils(unittest.TestCase):
         display = bot.score_display(book, "ru")
         self.assertIn("оценки", display)
 
+    # -- book_compact_line --
+
+    def test_book_compact_line_shows_score_before_title(self):
+        book = make_book(
+            title="Dune",
+            author="Herbert",
+            avg_score=2.5,
+            creation_year=1965,
+        )
+        line = bot.book_compact_line(1, book)
+        self.assertEqual(line, "1. <b>2.5</b> <b>Dune</b> — Herbert (1965)")
+        score_pos = line.index("2.5")
+        title_pos = line.index("Dune")
+        self.assertLess(score_pos, title_pos)
+
+    def test_book_compact_line_zero_score_and_no_year(self):
+        book = make_book(title="Untitled", author="Anon", avg_score=0)
+        line = bot.book_compact_line(3, book)
+        self.assertEqual(line, "3. <b>0</b> <b>Untitled</b> — Anon")
+
+    def test_book_compact_line_escapes_html(self):
+        book = make_book(title="A <B>", author="X & Y", avg_score=1)
+        line = bot.book_compact_line(1, book)
+        self.assertIn("A &lt;B&gt;", line)
+        self.assertIn("X &amp; Y", line)
+        self.assertNotIn("<B>", line)
+
     # -- book_card --
 
     def test_book_card_contains_title_and_author(self):
