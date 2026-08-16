@@ -391,10 +391,12 @@ class TestList(BotHandlerTestCase):
 
     async def test_list_choice_compact_single_message(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
-        bot.db_add_book(
+        alpha_id = bot.db_add_book(
             "Alpha", "Author A", 100, True, "", "", 1, "u", creation_year=2001
         )
         bot.db_add_book("Beta", "Author B", 100, True, "", "", 1, "u")
+        bot.db_cast_vote(1001, alpha_id, 1)
+        bot.db_cast_vote(1002, alpha_id, 1)
         q = self._callback_query("list:all:compact")
         await bot.list_choice_cb(self.update, self.ctx)
         self.ctx.bot.send_message.assert_called_once()
@@ -404,6 +406,8 @@ class TestList(BotHandlerTestCase):
         self.assertIn("(2001)", text)
         self.assertIn("Beta", text)
         self.assertIn("Author B", text)
+        self.assertIn("<b>2</b> <b>Alpha</b>", text)
+        self.assertIn("<b>0</b> <b>Beta</b>", text)
 
     async def test_list_triggers_optin_when_setting_missing(self):
         """First-time users without a notify setting see the opt-in prompt."""

@@ -168,7 +168,9 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
             3,
             f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
         )
-    levels_raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
+    # sqlite3.Row: `key in row` checks values, not column names.
+    has_language_levels = "language_levels" in book.keys()  # noqa: SIM118
+    levels_raw = book["language_levels"] if has_language_levels else None
     levels_text = language_levels_display(levels_raw)
     if levels_text:
         lines.insert(
@@ -198,7 +200,11 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
 def book_compact_line(index: int, book: BookLike) -> str:
     year = book["creation_year"]
     year_suffix = f" ({year})" if year is not None else ""
-    return f"{index}. <b>{h(book['title'])}</b> — {h(book['author'])}{year_suffix}"
+    score_fmt = f"{book['avg_score']:g}"
+    return (
+        f"{index}. <b>{score_fmt}</b> <b>{h(book['title'])}</b>"
+        f" — {h(book['author'])}{year_suffix}"
+    )
 
 
 TELEGRAM_MESSAGE_MAX = 4000
@@ -324,13 +330,9 @@ def notify_books_keyboard(
         )
     nav: list[InlineKeyboardButton] = []
     if start > 0:
-        nav.append(
-            InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}")
-        )
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}"))
     if start + page_size < total:
-        nav.append(
-            InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}")
-        )
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}"))
     if nav:
         buttons.append(nav)
     buttons.append(
