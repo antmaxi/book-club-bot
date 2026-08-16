@@ -47,7 +47,6 @@ from bookclub.config import (
     EDITING_FIELD,
 )
 from bookclub.db import init_db
-from bookclub.handlers.add_flow import add_go_back
 from bookclub.handlers.add import (
     add_author,
     add_creation_year,
@@ -63,6 +62,7 @@ from bookclub.handlers.add import (
     add_title_similar_cb,
     cmd_add,
 )
+from bookclub.handlers.add_flow import add_go_back, add_go_forward
 from bookclub.handlers.admin import (
     admin_export_pick_cb,
     admin_hide_pick_cb,
@@ -77,9 +77,7 @@ from bookclub.handlers.admin import (
     admin_meeting_view_cb,
     admin_menu_cb,
     admin_notify_chat_pick_cb,
-    admin_notify_chat_top_cb,
     admin_notify_pick_cb,
-    admin_notify_top_cb,
     admin_unhide_pick_cb,
     cmd_admin_console,
 )
@@ -108,13 +106,14 @@ from bookclub.handlers.edit_delete import (
 )
 from bookclub.handlers.misc import conv_cancel, vote_cast_cb
 from bookclub.lifecycle import bot_notify_shutdown, bot_notify_startup
-from bookclub.logging_setup import _drain_alert_queue, logger
+from bookclub.logging_setup import logger
 from bookclub.membership import error_handler, membership_gate
-from bookclub.notifications import recover_pending_new_book_notifications
 
-_ADD_BACK_HANDLERS = [
+_ADD_NAV_HANDLERS = [
     CommandHandler("back", add_go_back),
     CallbackQueryHandler(add_go_back, pattern=r"^add_back$"),
+    CommandHandler("forward", add_go_forward),
+    CallbackQueryHandler(add_go_forward, pattern=r"^add_forward$"),
 ]
 
 
@@ -133,58 +132,56 @@ def register_handlers(app: Application) -> None:
             states={
                 ADDING_TITLE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_TITLE_CONFIRM: [
                     CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:"),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_AUTHOR: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_author),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_PAGES: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_FICTION: [
                     CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:"),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_REVIEW: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_ORIGINAL_LANGUAGE: [
                     CommandHandler("skip", add_original_language_skip),
                     CallbackQueryHandler(
                         add_original_language_cb, pattern=r"^add_orig_lang:"
                     ),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_ORIGINAL_LANGUAGE_OTHER: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, add_original_language_other
                     ),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_CREATION_YEAR: [
                     CommandHandler("skip", add_creation_year),
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, add_creation_year
-                    ),
-                    *_ADD_BACK_HANDLERS,
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_creation_year),
+                    *_ADD_NAV_HANDLERS,
                 ],
                 ADDING_LANGUAGE_LEVEL: [
                     CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:"),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
                 # /skip needs its own handler: a bare filters.TEXT here would also
                 # swallow /cancel (state handlers are matched before fallbacks).
                 ADDING_DESCRIPTION: [
                     CommandHandler("skip", add_description),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
-                    *_ADD_BACK_HANDLERS,
+                    *_ADD_NAV_HANDLERS,
                 ],
             },
             fallbacks=[CommandHandler("cancel", conv_cancel)],

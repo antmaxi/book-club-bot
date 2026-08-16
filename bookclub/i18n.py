@@ -25,8 +25,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "lang_set": "🇬🇧 Language set to English.",
         "ask_title": "📖 What is the <b>title</b> of the book?",
         "add_back_btn": "⬅️ Back",
+        "add_forward_btn": "➡️ Forward",
         "add_back_at_start": "You're already at the first step.",
+        "add_forward_at_end": "This is the last step — send a description or /skip.",
+        "add_forward_need_value": "This step has no saved answer yet. Fill it in first.",
         "add_back_hint": "<i>Tap Back or send /back to change a previous answer.</i>",
+        "add_forward_hint": "<i>Tap Forward or send /forward to keep this answer.</i>",
+        "add_nav_hint": "<i>Tap Forward to keep this answer, or Back to change a previous one.</i>",
         "add_current_value": "Current: <i>{value}</i>",
         "ask_author": "✍️ Who is the <b>author</b>?",
         "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
@@ -251,8 +256,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "lang_set": "🇷🇺 Язык установлен: Русский.",
         "ask_title": "📖 Как называется книга (<b>название</b>)?",
         "add_back_btn": "⬅️ Назад",
+        "add_forward_btn": "➡️ Вперёд",
         "add_back_at_start": "Вы уже на первом шаге.",
+        "add_forward_at_end": "Это последний шаг — отправьте описание или /skip.",
+        "add_forward_need_value": "На этом шаге ещё нет сохранённого ответа. Сначала заполните его.",
         "add_back_hint": "<i>Нажмите «Назад» или отправьте /back, чтобы изменить предыдущий ответ.</i>",
+        "add_forward_hint": "<i>Нажмите «Вперёд» или отправьте /forward, чтобы оставить этот ответ.</i>",
+        "add_nav_hint": "<i>Нажмите «Вперёд», чтобы оставить этот ответ, или «Назад», чтобы изменить предыдущий.</i>",
         "add_current_value": "Сейчас: <i>{value}</i>",
         "ask_author": "✍️ Кто <b>автор</b>?",
         "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
@@ -413,8 +423,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "notify_optin_yes": "🔔 Да, уведомлять",
         "notify_optin_no": "🔕 Нет, спасибо",
         "notify_optin_success": "✅ Настройки сохранены!",
-        "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
-        "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 10 минут)</i>",
+        "new_book_notification": "🆕 <b>Добавлена новая книга!</b>\n(Примечание: вы получили это через 5 минут после добавления)\n\n",
+        "new_book_delay_note": "\n\n<i>(Уведомления об этой книге будут разосланы остальным через 5 минут)</i>",
         "not_member": "⛔ Этот бот только для участников чата <b>{chat}</b>. Пожалуйста, сначала вступите в него.",
         "bot_started": "🚀 <b>Бот запущен!</b>",
         "bot_stopped": "🛑 <b>Бот остановлен.</b>",
@@ -665,8 +675,8 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
             "all_voted": "Вы проголосовали за все фильмы!",
             "settings_notify_label": "Уведомления о новых фильмах:",
             "notify_optin_prompt": "Хотите получать уведомления (с задержкой 5 минут), когда другие добавляют новые фильмы?",
-            "new_book_notification": "🆕 <b>Добавлен новый фильм!</b>\n(Примечание: вы получили это через 10 минут после добавления)\n\n",
-            "new_book_delay_note": "\n\n<i>(Уведомления об этом фильме будут разосланы остальным через 10 минут)</i>",
+            "new_book_notification": "🆕 <b>Добавлен новый фильм!</b>\n(Примечание: вы получили это через 5 минут после добавления)\n\n",
+            "new_book_delay_note": "\n\n<i>(Уведомления об этом фильме будут разосланы остальным через 5 минут)</i>",
             "vote_reminder_msg": "👋 <b>Напоминание!</b>\nВы ещё не проголосовали за некоторые популярные фильмы. Посмотрите и оставьте свой голос:\n\n",
             "admin_notify_chat_confirm": "💬 Напоминание о голосовании отправлено в общий чат ({count} фильм(ов)).",
             "admin_export_btn": "📤 Экспорт фильма (JSON)",
@@ -706,6 +716,8 @@ def _apply_entity_string_overlays(entity: str) -> None:
 _apply_entity_string_overlays(CLUB_ENTITY)
 
 PM = "HTML"
+
+
 def get_lang(ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return str(ctx.user_data.get("lang", "ru"))
 
@@ -734,4 +746,3 @@ def vote_label_text(lang: str, score: int | None) -> str:
     if score not in _VOTE_LABEL_KEYS:
         raise ValueError(f"invalid vote score: {score!r}")
     return s(lang, _VOTE_LABEL_KEYS[score])
-

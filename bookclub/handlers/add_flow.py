@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from bookclub.cefr import format_language_levels, language_levels_display
@@ -19,13 +19,13 @@ from bookclub.config import (
     language_level_prompt_enabled,
 )
 from bookclub.i18n import PM, get_lang, s, tr
+from bookclub.original_languages import display_original_language
 from bookclub.ui import (
-    add_back_keyboard,
+    add_nav_keyboard,
     cefr_levels_keyboard,
     fiction_keyboard,
     h,
     original_language_keyboard,
-    similar_title_confirm_keyboard,
 )
 
 
@@ -46,6 +46,25 @@ def add_previous_state(current: int) -> int | None:
         ADDING_ORIGINAL_LANGUAGE: ADDING_REVIEW,
         ADDING_CREATION_YEAR: ADDING_ORIGINAL_LANGUAGE,
         ADDING_LANGUAGE_LEVEL: ADDING_CREATION_YEAR,
+    }.get(current)
+
+
+def add_next_state(current: int) -> int | None:
+    if current in (ADDING_TITLE, ADDING_TITLE_CONFIRM):
+        return ADDING_AUTHOR
+    if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
+        return ADDING_CREATION_YEAR
+    if current == ADDING_CREATION_YEAR:
+        if language_level_prompt_enabled():
+            return ADDING_LANGUAGE_LEVEL
+        return ADDING_DESCRIPTION
+    return {
+        ADDING_AUTHOR: ADDING_PAGES,
+        ADDING_PAGES: ADDING_FICTION,
+        ADDING_FICTION: ADDING_REVIEW,
+        ADDING_REVIEW: ADDING_ORIGINAL_LANGUAGE,
+        ADDING_ORIGINAL_LANGUAGE: ADDING_CREATION_YEAR,
+        ADDING_LANGUAGE_LEVEL: ADDING_DESCRIPTION,
     }.get(current)
 
 
@@ -84,14 +103,18 @@ def _current_value_display(nb: dict, state: int, lang: str) -> str | None:
     if state == ADDING_REVIEW:
         v = nb.get("review_link")
         return str(v) if v else None
-    if state == ADDING_ORIGINAL_LANGUAGE:
-        v = nb.get("original_language")
-        if v is None:
+    if state in (ADDING_ORIGINAL_LANGUAGE, ADDING_ORIGINAL_LANGUAGE_OTHER):
+        if "original_language" not in nb:
             return None
-        return str(v) if v else dash
+        v = nb.get("original_language")
+        if not v:
+            return dash
+        return display_original_language(str(v), lang)
     if state == ADDING_CREATION_YEAR:
+        if "creation_year" not in nb:
+            return None
         v = nb.get("creation_year")
-        return str(v) if v is not None else None
+        return str(v) if v is not None else dash
     if state == ADDING_LANGUAGE_LEVEL:
         levels = nb.get("language_levels")
         if isinstance(levels, set):
@@ -103,9 +126,11 @@ def _current_value_display(nb: dict, state: int, lang: str) -> str | None:
     return None
 
 
-def build_add_prompt_text(
-    ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict
-) -> str:
+def add_field_is_set(nb: dict, state: int) -> bool:
+    return _current_value_display(nb, state, "en") is not None
+
+
+def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) -> str:
     key = _prompt_key_for_state(state)
     if key is None:
         return ""
@@ -120,27 +145,38 @@ def build_add_prompt_text(
     parts = [body]
     if current is not None:
         parts.append(tr(ctx, "add_current_value", value=h(current)))
-    if state != ADDING_TITLE:
+    if current is not None and state == ADDING_TITLE:
+        parts.append(tr(ctx, "add_forward_hint"))
+    elif current is not None:
+        parts.append(tr(ctx, "add_nav_hint"))
+    elif state != ADDING_TITLE:
         parts.append(tr(ctx, "add_back_hint"))
     return "\n".join(parts)
 
 
-def add_prompt_markup(
-    lang: str, state: int, nb: dict
-) -> object | None:
+def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup | None:
+    can_forward = add_field_is_set(nb, state)
+    show_back = state != ADDING_TITLE
     if state == ADDING_TITLE:
-        return None
+        return add_nav_keyboard(lang, show_back=False, show_forward=can_forward)
     if state == ADDING_FICTION:
-        return fiction_keyboard(lang, show_add_back=True)
+        return fiction_keyboard(lang, show_add_back=True, show_add_forward=can_forward)
     if state == ADDING_ORIGINAL_LANGUAGE:
         return original_language_keyboard(
-            lang, prefix="add_orig_lang", show_add_back=True
+            lang,
+            prefix="add_orig_lang",
+            show_add_back=True,
+            show_add_forward=can_forward,
         )
     if state == ADDING_LANGUAGE_LEVEL:
         levels = nb.get("language_levels")
         selected = levels if isinstance(levels, set) else set()
         return cefr_levels_keyboard(
-            lang, selected, prefix="add_cefr", show_add_back=True
+            lang,
+            selected,
+            prefix="add_cefr",
+            show_add_back=True,
+            show_add_forward=can_forward,
         )
     if state in (
         ADDING_AUTHOR,
@@ -150,7 +186,7 @@ def add_prompt_markup(
         ADDING_CREATION_YEAR,
         ADDING_DESCRIPTION,
     ):
-        return add_back_keyboard(lang)
+        return add_nav_keyboard(lang, show_back=show_back, show_forward=can_forward)
     return None
 
 
@@ -177,6 +213,18 @@ async def send_add_prompt(
     return state
 
 
+async def _nav_alert(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, key: str, current: int
+) -> int:
+    query = update.callback_query
+    msg = tr(ctx, key)
+    if query:
+        await query.answer(msg, show_alert=True)
+    elif update.message:
+        await update.message.reply_text(msg, parse_mode=PM)
+    return current
+
+
 async def add_go_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     current = ctx.user_data.get("add_state")
     if current is None:
@@ -184,12 +232,23 @@ async def add_go_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     prev = add_previous_state(current)
     query = update.callback_query
     if prev is None:
-        msg = tr(ctx, "add_back_at_start")
-        if query:
-            await query.answer(msg, show_alert=True)
-        elif update.message:
-            await update.message.reply_text(msg, parse_mode=PM)
-        return current
+        return await _nav_alert(update, ctx, "add_back_at_start", current)
     if query:
         await query.answer()
     return await send_add_prompt(update, ctx, prev, edit=bool(query))
+
+
+async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    current = ctx.user_data.get("add_state")
+    if current is None:
+        return ADDING_TITLE
+    nb = ctx.user_data.setdefault("new_book", {})
+    query = update.callback_query
+    if not add_field_is_set(nb, current):
+        return await _nav_alert(update, ctx, "add_forward_need_value", current)
+    nxt = add_next_state(current)
+    if nxt is None:
+        return await _nav_alert(update, ctx, "add_forward_at_end", current)
+    if query:
+        await query.answer()
+    return await send_add_prompt(update, ctx, nxt, edit=bool(query))

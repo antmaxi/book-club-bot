@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,16 +9,6 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
 from bookclub.cefr import CEFR_LEVELS, language_levels_display
-from bookclub.original_languages import ORIGINAL_LANGUAGE_CODES
-from bookclub.db import (
-    db_meeting_user_suggestions,
-    db_upsert_club_user,
-    format_club_user_display,
-)
-from bookclub.i18n import PM, T, get_lang, s, tr, vote_label_text
-from bookclub.logging_setup import logger
-from bookclub.types import BookLike
-
 from bookclub.config import (
     ADMIN_MEETING_ATTENDEES,
     ADMIN_NOTIFY_CHAT_PICK,
@@ -27,6 +16,19 @@ from bookclub.config import (
     MEETING_ATTENDEES_PAGE_SIZE,
     NOTIFY_BOOKS_PAGE_SIZE,
 )
+from bookclub.db import (
+    db_meeting_user_suggestions,
+    db_upsert_club_user,
+    format_club_user_display,
+)
+from bookclub.i18n import PM, T, get_lang, s, tr, vote_label_text
+from bookclub.logging_setup import logger
+from bookclub.original_languages import (
+    ORIGINAL_LANGUAGE_CODES,
+    display_original_language,
+)
+from bookclub.types import BookLike
+
 
 def format_user(book: BookLike) -> str:
     """Return @username if available, otherwise fall back to display name."""
@@ -72,27 +74,42 @@ def similar_title_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
                     callback_data="title_sim:no",
                 ),
             ],
-            [
-                InlineKeyboardButton(
-                    s(lang, "add_back_btn"),
-                    callback_data="add_back",
-                )
-            ],
+            add_nav_buttons(lang, show_back=True, show_forward=False),
         ]
     )
+
+
+def add_nav_buttons(
+    lang: str, *, show_back: bool = True, show_forward: bool = False
+) -> list[InlineKeyboardButton]:
+    buttons: list[InlineKeyboardButton] = []
+    if show_back:
+        buttons.append(
+            InlineKeyboardButton(s(lang, "add_back_btn"), callback_data="add_back")
+        )
+    if show_forward:
+        buttons.append(
+            InlineKeyboardButton(
+                s(lang, "add_forward_btn"), callback_data="add_forward"
+            )
+        )
+    return buttons
+
+
+def add_nav_keyboard(
+    lang: str, *, show_back: bool = True, show_forward: bool = False
+) -> InlineKeyboardMarkup | None:
+    row = add_nav_buttons(lang, show_back=show_back, show_forward=show_forward)
+    if not row:
+        return None
+    return InlineKeyboardMarkup([row])
 
 
 def add_back_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    s(lang, "add_back_btn"),
-                    callback_data="add_back",
-                )
-            ]
-        ]
-    )
+    markup = add_nav_keyboard(lang, show_back=True, show_forward=False)
+    if markup is None:
+        raise RuntimeError("add_back_keyboard must include a Back button")
+    return markup
 
 
 def fmt_dt_utc(dt: datetime) -> str:
@@ -103,7 +120,7 @@ def fmt_dt_utc(dt: datetime) -> str:
     """
     tz = config.display_timezone()
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     local = dt.astimezone(tz)
     off = local.strftime("%z")
     return local.strftime("%Y-%m-%d %H:%M:%S") + f" UTC{off[:3]}:{off[3:5]}"
@@ -143,7 +160,7 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
     if orig_lang:
         lines.insert(
             3,
-            f"🌐 {h(s(lang, 'original_language_label'))}: {h(str(orig_lang))}",
+            f"🌐 {h(s(lang, 'original_language_label'))}: {h(display_original_language(str(orig_lang), lang))}",
         )
     creation_year = book["creation_year"]
     if creation_year is not None:
@@ -151,7 +168,7 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
             3,
             f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
         )
-    levels_raw = book["language_levels"] if "language_levels" in book.keys() else None
+    levels_raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
     levels_text = language_levels_display(levels_raw)
     if levels_text:
         lines.insert(
@@ -348,9 +365,13 @@ async def show_notify_books_picker(
         lang, books, selected, page, prefix, done_label_key=done_label_key
     )
     if is_callback:
-        await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+        await update_or_query.edit_message_text(
+            text, reply_markup=markup, parse_mode=PM
+        )
     else:
-        await update_or_query.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+        await update_or_query.message.reply_text(
+            text, reply_markup=markup, parse_mode=PM
+        )
     ctx.user_data["notify_books_page"] = page
     if prefix == "admin_notify_chat_pick":
         return ADMIN_NOTIFY_CHAT_PICK
@@ -358,7 +379,7 @@ async def show_notify_books_picker(
 
 
 def meetings_keyboard(
-    meetings: Sequence[sqlite3.Row], prefix: str, cancel_label: str
+    meetings: Sequence[BookLike], prefix: str, cancel_label: str
 ) -> InlineKeyboardMarkup:
     buttons = []
     for m in meetings:
@@ -391,7 +412,9 @@ async def _refresh_chat_admin_suggestions(bot: Bot) -> None:
     try:
         admins = await bot.get_chat_administrators(config.ALLOWED_CHAT_ID)
     except Exception as e:
-        logger.warning("Could not fetch chat administrators for meeting suggestions: %s", e)
+        logger.warning(
+            "Could not fetch chat administrators for meeting suggestions: %s", e
+        )
         return
     for member in admins:
         user = member.user
@@ -402,7 +425,7 @@ async def _refresh_chat_admin_suggestions(bot: Bot) -> None:
 
 def meeting_attendees_keyboard(
     lang: str,
-    suggestions: Sequence[sqlite3.Row],
+    suggestions: Sequence[BookLike],
     selected: set[int],
     page: int,
 ) -> InlineKeyboardMarkup:
@@ -430,11 +453,15 @@ def meeting_attendees_keyboard(
     nav: list[InlineKeyboardButton] = []
     if start > 0:
         nav.append(
-            InlineKeyboardButton("◀️", callback_data=f"admin_meeting_att:page:{page - 1}")
+            InlineKeyboardButton(
+                "◀️", callback_data=f"admin_meeting_att:page:{page - 1}"
+            )
         )
     if start + page_size < total:
         nav.append(
-            InlineKeyboardButton("▶️", callback_data=f"admin_meeting_att:page:{page + 1}")
+            InlineKeyboardButton(
+                "▶️", callback_data=f"admin_meeting_att:page:{page + 1}"
+            )
         )
     if nav:
         buttons.append(nav)
@@ -455,7 +482,11 @@ def meeting_attendees_keyboard(
         ]
     )
     buttons.append(
-        [InlineKeyboardButton(s(lang, "cancel_btn"), callback_data="admin_meeting_att:cancel")]
+        [
+            InlineKeyboardButton(
+                s(lang, "cancel_btn"), callback_data="admin_meeting_att:cancel"
+            )
+        ]
     )
     return InlineKeyboardMarkup(buttons)
 
@@ -488,31 +519,29 @@ async def _show_meeting_attendee_picker(
     )
     markup = meeting_attendees_keyboard(lang, suggestions, selected, page)
     if is_callback:
-        await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+        await update_or_query.edit_message_text(
+            text, reply_markup=markup, parse_mode=PM
+        )
     else:
-        await update_or_query.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+        await update_or_query.message.reply_text(
+            text, reply_markup=markup, parse_mode=PM
+        )
     ctx.user_data["meeting_attendee_page"] = page
     return ADMIN_MEETING_ATTENDEES
 
 
-def fiction_keyboard(lang: str, *, show_add_back: bool = False) -> InlineKeyboardMarkup:
+def fiction_keyboard(
+    lang: str, *, show_add_back: bool = False, show_add_forward: bool = False
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(s(lang, "fiction_btn"), callback_data="fiction:1"),
-            InlineKeyboardButton(
-                s(lang, "nonfiction_btn"), callback_data="fiction:0"
-            ),
+            InlineKeyboardButton(s(lang, "nonfiction_btn"), callback_data="fiction:0"),
         ]
     ]
-    if show_add_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    s(lang, "add_back_btn"),
-                    callback_data="add_back",
-                )
-            ]
-        )
+    nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
+    if nav:
+        rows.append(nav)
     return InlineKeyboardMarkup(rows)
 
 
@@ -521,6 +550,7 @@ def original_language_keyboard(
     *,
     prefix: str,
     show_add_back: bool = False,
+    show_add_forward: bool = False,
     show_skip: bool = True,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
@@ -551,15 +581,9 @@ def original_language_keyboard(
             )
         )
     rows.append(action_row)
-    if show_add_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    s(lang, "add_back_btn"),
-                    callback_data="add_back",
-                )
-            ]
-        )
+    nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
+    if nav:
+        rows.append(nav)
     return InlineKeyboardMarkup(rows)
 
 
@@ -570,6 +594,7 @@ def cefr_levels_keyboard(
     prefix: str,
     done_label_key: str = "language_level_done_btn",
     show_add_back: bool = False,
+    show_add_forward: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -586,15 +611,9 @@ def cefr_levels_keyboard(
             row = []
     if row:
         rows.append(row)
-    if show_add_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    s(lang, "add_back_btn"),
-                    callback_data="add_back",
-                )
-            ]
-        )
+    nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
+    if nav:
+        rows.append(nav)
     rows.append(
         [
             InlineKeyboardButton(

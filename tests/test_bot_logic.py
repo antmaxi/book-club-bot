@@ -451,6 +451,19 @@ class TestDatabase(unittest.TestCase):
         self.assertIn("Original language", text)
         self.assertIn("German", text)
 
+    def test_book_card_shows_original_language_in_ui_language(self):
+        book = make_book(original_language="German")
+        text = bot.book_card(book, "ru")
+        self.assertIn("Язык оригинала", text)
+        self.assertIn("Немецкий", text)
+        self.assertNotIn("German", text)
+
+    def test_edit_current_original_language_follows_ui_language(self):
+        book = make_book(original_language="German")
+        shown = bot.edit_current_value(book, "original_language", "ru")
+        self.assertIn("Немецкий", shown)
+        self.assertNotIn("German", shown)
+
     def test_book_card_hides_original_language_when_empty(self):
         book = make_book(original_language=None)
         text = bot.book_card(book, "en")

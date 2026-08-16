@@ -17,6 +17,11 @@ from telegram.ext import ConversationHandler
 
 import bookclub_bot as bot
 import bookclub.config as cfg
+from bookclub.handlers.add_flow import (
+    add_go_forward,
+    build_add_prompt_text,
+    send_add_prompt,
+)
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
 
@@ -626,6 +631,110 @@ class TestAddConversation(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         text = q.edit_message_text.call_args[0][0]
         self.assertIn("200", text)
+
+    def _keyboard_callback_data(self, markup):
+        return [btn.callback_data for row in markup.inline_keyboard for btn in row]
+
+    async def test_add_forward_keeps_author_and_advances(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "Author Name",
+            "pages": 100,
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        q = self._callback_query("add_forward")
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_PAGES)
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Author Name")
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("100", text)
+
+    async def test_add_forward_command_from_title_skips_retype(self):
+        self.ctx.user_data["new_book"] = {"title": "Kept Title", "author": "A"}
+        self.ctx.user_data["add_state"] = bot.ADDING_TITLE
+        self.message.text = "/forward"
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertEqual(self.ctx.user_data["new_book"]["title"], "Kept Title")
+        reply = self.message.reply_text.call_args[0][0]
+        self.assertIn("A", reply)
+
+    async def test_add_forward_without_value_stays(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        q = self._callback_query("add_forward")
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        q.answer.assert_awaited()
+        self.assertTrue(q.answer.call_args[1].get("show_alert"))
+
+    async def test_add_forward_from_description_stays(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 10,
+            "fiction": True,
+            "review_link": "http://x.com",
+            "original_language": "German",
+            "creation_year": 1984,
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_DESCRIPTION
+        q = self._callback_query("add_forward")
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_DESCRIPTION)
+        q.answer.assert_awaited()
+
+    async def test_add_forward_after_skipped_year(self):
+        self.ctx.user_data["new_book"] = {"creation_year": None}
+        self.ctx.user_data["add_state"] = bot.ADDING_CREATION_YEAR
+        q = self._callback_query("add_forward")
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_DESCRIPTION)
+        self.assertIsNone(self.ctx.user_data["new_book"]["creation_year"])
+        q.edit_message_text.assert_called_once()
+
+    async def test_add_prompt_shows_forward_when_value_saved(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Author Name"}
+        state = await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_back", data)
+        self.assertIn("add_forward", data)
+
+    async def test_add_prompt_hides_forward_when_value_missing(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_back", data)
+        self.assertNotIn("add_forward", data)
+
+    async def test_add_forward_several_steps_returns_to_later_field(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        self._callback_query("add_forward")
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_PAGES)
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_FICTION)
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_REVIEW)
+        self.assertEqual(self.ctx.user_data["new_book"]["pages"], 100)
+        self.assertTrue(self.ctx.user_data["new_book"]["fiction"])
+
+    async def test_add_current_original_language_follows_ui_language(self):
+        self.ctx.user_data["lang"] = "ru"
+        nb = {"original_language": "German"}
+        text = build_add_prompt_text(self.ctx, bot.ADDING_ORIGINAL_LANGUAGE, nb)
+        self.assertIn("Немецкий", text)
+        self.assertNotIn("German", text)
 
     async def test_add_review_valid(self):
         self.ctx.user_data["new_book"] = {}
@@ -1346,9 +1455,7 @@ class TestAdminConsole(BotHandlerTestCase):
         imported_id = job_kwargs["data"]["book_id"]
         self.assertNotEqual(imported_id, source["id"])
         imported = bot.db_get_book(imported_id)
-        self.assertEqual(
-            imported["notify_adder_id"], self.update.effective_user.id
-        )
+        self.assertEqual(imported["notify_adder_id"], self.update.effective_user.id)
 
     async def test_admin_toggle_chat_works(self):
         # Default should be 0
@@ -1370,7 +1477,9 @@ class TestAdminConsole(BotHandlerTestCase):
         self._callback_query("admin:toggle_votes")
         await bot.admin_menu_cb(self.update, self.ctx)
         self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 1)
-        markup = self.update.callback_query.edit_message_text.call_args[1]["reply_markup"]
+        markup = self.update.callback_query.edit_message_text.call_args[1][
+            "reply_markup"
+        ]
         labels = [btn.text for row in markup.inline_keyboard for btn in row]
         self.assertTrue(any("attendance" in label for label in labels))
 
@@ -1491,7 +1600,9 @@ class TestAdminConsole(BotHandlerTestCase):
         bot.db_mark_discussed(bid, "2026-02-01")
         uid = 7777
         bot.db_upsert_club_user(uid, "Alice", "alice")
-        mid = bot.db_create_meeting(bid, "2026-02-15", self.update.effective_user.id, [uid])
+        mid = bot.db_create_meeting(
+            bid, "2026-02-15", self.update.effective_user.id, [uid]
+        )
 
         q = self._callback_query("admin:meetings_view")
         state = await bot.admin_menu_cb(self.update, self.ctx)
@@ -1745,6 +1856,18 @@ class TestConversationWiring(unittest.TestCase):
             "/skip must still be handled",
         )
         self.assertTrue(self._matches(handlers, "a description", is_command=False))
+
+    def test_author_state_handles_forward_and_lets_cancel_reach_fallback(self):
+        conv = self._states("add")
+        handlers = conv.states[bot.ADDING_AUTHOR]
+        self.assertTrue(
+            self._matches(handlers, "/forward", is_command=True),
+            "/forward must be handled while adding",
+        )
+        self.assertFalse(
+            self._matches(handlers, "/cancel", is_command=True),
+            "/cancel must not be consumed as the author",
+        )
 
     def test_mark_date_state_lets_cancel_reach_fallback(self):
         conv = self._states("adminconsole")

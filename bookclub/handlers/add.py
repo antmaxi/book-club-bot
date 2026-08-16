@@ -3,6 +3,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
+from bookclub.cefr import format_language_levels
 from bookclub.config import (
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
@@ -17,27 +18,25 @@ from bookclub.config import (
     ADDING_TITLE_CONFIRM,
     language_level_prompt_enabled,
 )
-from bookclub.cefr import format_language_levels
-from bookclub.original_languages import stored_original_language
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.handlers.add_flow import (
+    add_prompt_markup,
     build_add_prompt_text,
     send_add_prompt,
 )
 from bookclub.i18n import PM, get_lang, tr
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
+from bookclub.original_languages import stored_original_language
 from bookclub.ui import (
-    add_back_keyboard,
     book_card,
-    cefr_levels_keyboard,
     h,
     is_valid_url,
-    original_language_keyboard,
     parse_optional_creation_year,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
 )
+
 
 async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"] = {}
@@ -89,7 +88,7 @@ async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_pages')}\n\n{build_add_prompt_text(ctx, ADDING_PAGES, nb)}",
-            reply_markup=add_back_keyboard(lang),
+            reply_markup=add_prompt_markup(lang, ADDING_PAGES, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_PAGES
@@ -113,7 +112,7 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_valid_url(text):
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_review')}\n\n{build_add_prompt_text(ctx, ADDING_REVIEW, nb)}",
-            reply_markup=add_back_keyboard(lang),
+            reply_markup=add_prompt_markup(lang, ADDING_REVIEW, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_REVIEW
@@ -144,7 +143,11 @@ async def add_original_language_cb(
             build_add_prompt_text(
                 ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
             ),
-            reply_markup=add_back_keyboard(get_lang(ctx)),
+            reply_markup=add_prompt_markup(
+                get_lang(ctx),
+                ADDING_ORIGINAL_LANGUAGE_OTHER,
+                ctx.user_data["new_book"],
+            ),
             parse_mode=PM,
         )
         return ADDING_ORIGINAL_LANGUAGE_OTHER
@@ -165,7 +168,9 @@ async def add_original_language_other(
             build_add_prompt_text(
                 ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
             ),
-            reply_markup=add_back_keyboard(lang),
+            reply_markup=add_prompt_markup(
+                lang, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
+            ),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_ORIGINAL_LANGUAGE_OTHER
@@ -193,7 +198,7 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_creation_year')}\n\n"
             f"{build_add_prompt_text(ctx, ADDING_CREATION_YEAR, nb)}",
-            reply_markup=add_back_keyboard(lang),
+            reply_markup=add_prompt_markup(lang, ADDING_CREATION_YEAR, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_CREATION_YEAR
@@ -202,9 +207,7 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     return await _prompt_after_creation_year(update, ctx)
 
 
-async def add_language_level_cb(
-    update: Update, ctx: ContextTypes.DEFAULT_TYPE
-) -> int:
+async def add_language_level_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     lang = get_lang(ctx)
     _, action, *rest = query.data.split(":")
@@ -217,9 +220,11 @@ async def add_language_level_cb(
             selected.add(level)
         await query.answer()
         await query.edit_message_text(
-            build_add_prompt_text(ctx, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]),
-            reply_markup=cefr_levels_keyboard(
-                lang, selected, prefix="add_cefr", show_add_back=True
+            build_add_prompt_text(
+                ctx, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]
+            ),
+            reply_markup=add_prompt_markup(
+                lang, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]
             ),
             parse_mode=PM,
         )

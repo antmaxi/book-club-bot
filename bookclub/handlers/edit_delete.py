@@ -5,21 +5,24 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
+from bookclub.cefr import (
+    format_language_levels,
+    language_levels_display,
+    parse_language_levels,
+)
 from bookclub.config import (
     DELETING_CHOOSE,
     EDITING_CHOOSE,
     EDITING_FIELD,
     language_level_prompt_enabled,
 )
-from bookclub.cefr import (
-    format_language_levels,
-    language_levels_display,
-    parse_language_levels,
-)
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, T, get_lang, s, tr
-from bookclub.original_languages import stored_original_language
+from bookclub.original_languages import (
+    display_original_language,
+    stored_original_language,
+)
 from bookclub.types import BookLike
 from bookclub.ui import (
     book_card,
@@ -68,12 +71,15 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
     if field == "description":
         return book["description"] or ("—" if lang == "en" else "—")
     if field == "original_language":
-        return book["original_language"] or ("—" if lang == "en" else "—")
+        raw = book["original_language"]
+        if not raw:
+            return "—"
+        return display_original_language(str(raw), lang)
     if field == "creation_year":
         cy = book["creation_year"]
         return str(cy) if cy is not None else ("—" if lang == "en" else "—")
     if field == "language_levels":
-        raw = book["language_levels"] if "language_levels" in book.keys() else None
+        raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
         shown = language_levels_display(raw)
         return shown or ("—" if lang == "en" else "—")
     return str(book[field])
@@ -219,7 +225,7 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     if field == "language_levels":
         book = require_book(ctx.user_data["edit_book_id"])
-        raw = book["language_levels"] if "language_levels" in book.keys() else None
+        raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
         selected = parse_language_levels(raw)
         ctx.user_data["edit_cefr_selected"] = selected
         await query.edit_message_text(
@@ -251,7 +257,6 @@ async def edit_original_language_cb(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
     query = update.callback_query
-    lang = get_lang(ctx)
     _, action = query.data.split(":", 1)
     if action == "skip":
         await query.answer()
@@ -319,7 +324,9 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
     # Validate
     value: int | str | None
-    if field == "original_language" and ctx.user_data.pop("edit_orig_lang_other", False):
+    if field == "original_language" and ctx.user_data.pop(
+        "edit_orig_lang_other", False
+    ):
         value = text or None
         ctx.user_data["edit_changes"][field] = value
         ctx.user_data["edit_fields"].pop(0)
@@ -393,5 +400,3 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         T[lang]["deleted"].format(title=h(title)), parse_mode=PM
     )
     return ConversationHandler.END
-
-
