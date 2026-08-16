@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Book Club Telegram Bot — EN/RU bilingual
+Book Club Telegram Bot — EN/RU/DE
 =========================================
 Fields per book:
   - title, author, pages, fiction, review_link, description
@@ -8,7 +8,7 @@ Fields per book:
   - discussed (flag, admin-only), discussed_at (date)
 
 Features:
-  - Bilingual support (English and Russian).
+  - Language support (English, Russian, German).
   - Add and manage books for the club.
   - Vote on books: "Want", "Don't care", "Don't want".
   - Ranking system (Top books) based on average score and vote count.

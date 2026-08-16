@@ -9,11 +9,11 @@ import os
 import sqlite3
 import unittest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-import bookclub_bot as bot
 import bookclub.config as cfg
 import bookclub.logging_setup as log_setup
+import bookclub_bot as bot
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -658,9 +658,29 @@ class TestUtils(unittest.TestCase):
         ctx.user_data = {"lang": "ru"}
         self.assertEqual(bot.tr(ctx, "cancel_btn"), "❌ Отмена")
 
+    def test_tr_de(self):
+        ctx = MagicMock()
+        ctx.user_data = {"lang": "de"}
+        self.assertEqual(bot.tr(ctx, "cancel_btn"), "❌ Abbrechen")
+
     def test_tr_lang_string_directly(self):
         self.assertEqual(bot.tr("en", "cancel_btn"), "❌ Cancel")
         self.assertEqual(bot.tr("ru", "cancel_btn"), "❌ Отмена")
+        self.assertEqual(bot.tr("de", "cancel_btn"), "❌ Abbrechen")
+
+    def test_ui_languages_share_keys(self):
+        en_keys = set(bot.T["en"])
+        for lang in bot.SUPPORTED_LANGS:
+            self.assertEqual(set(bot.T[lang]), en_keys, f"T[{lang!r}] keys differ")
+            self.assertIn(lang, bot.COMMANDS)
+            self.assertIn(lang, bot.ENTITY_LEX["book"])
+            self.assertIn(lang, bot.ENTITY_LEX["film"])
+
+    def test_next_ui_lang_cycles(self):
+        self.assertEqual(bot.next_ui_lang("en"), "ru")
+        self.assertEqual(bot.next_ui_lang("ru"), "de")
+        self.assertEqual(bot.next_ui_lang("de"), "en")
+        self.assertEqual(bot.next_ui_lang("xx"), "en")
 
     def test_tr_callable_lambda(self):
         ctx = MagicMock()
@@ -676,6 +696,35 @@ class TestUtils(unittest.TestCase):
         ctx.user_data = {"lang": "en"}
         result = bot.tr(ctx, "deleted", title="My Book")
         self.assertIn("My Book", result)
+
+    def test_notify_delay_minutes_from_seconds(self):
+        default_minutes = max(1, cfg.NEW_BOOK_NOTIFY_DELAY_SECONDS // 60)
+        self.assertEqual(cfg.notify_delay_minutes(), default_minutes)
+        with patch("bookclub.config.NEW_BOOK_NOTIFY_DELAY_SECONDS", 0):
+            self.assertEqual(cfg.notify_delay_minutes(), 0)
+        with patch("bookclub.config.NEW_BOOK_NOTIFY_DELAY_SECONDS", 90):
+            self.assertEqual(cfg.notify_delay_minutes(), 1)
+
+    def test_delay_copy_follows_config(self):
+        with patch("bookclub.config.NEW_BOOK_NOTIFY_DELAY_SECONDS", 600):
+            self.assertEqual(cfg.notify_delay_minutes(), 10)
+            en = bot.tr("en", "new_book_delay_note")
+            self.assertIn("10 minutes", en)
+            self.assertNotIn("5 minutes", en)
+            ru = bot.tr("ru", "new_book_delay_note")
+            self.assertIn("10 минут", ru)
+            de = bot.tr("de", "new_book_delay_note")
+            self.assertIn("10 Minuten", de)
+            prompt = bot.tr("en", "notify_optin_prompt")
+            self.assertIn("10-minute", prompt)
+            settings = bot.tr("en", "settings_notify_on")
+            self.assertIn("10 min", settings)
+
+    def test_delay_copy_singular_minute(self):
+        with patch("bookclub.config.NEW_BOOK_NOTIFY_DELAY_SECONDS", 60):
+            self.assertIn("1 minute", bot.tr("en", "new_book_delay_note"))
+            self.assertNotIn("1 minutes", bot.tr("en", "new_book_delay_note"))
+            self.assertIn("1 минута", bot.tr("ru", "new_book_delay_note"))
 
     # -- h (HTML escaping) --
 
@@ -971,10 +1020,15 @@ class TestErrorAlertHandler(unittest.TestCase):
 
 
 class TestClubEntity(unittest.TestCase):
-    def test_film_overlay_english_labels(self):
-        film_en = bot.ENTITY_STRING_OVERLAYS["film"]["en"]
-        self.assertEqual(film_en["field_author"], "Director")
-        self.assertIn("watch", film_en["want_label"])
+    def test_film_lex_english_labels(self):
+        film_en = bot.ENTITY_LEX["film"]["en"]
+        self.assertEqual(film_en["Author"], "Director")
+        self.assertEqual(film_en["verb"], "watch")
+
+    def test_film_templates_use_lex(self):
+        with patch("bookclub.i18n.CLUB_ENTITY", "film"):
+            self.assertEqual(bot.s("en", "field_author"), "Director")
+            self.assertIn("watch", bot.s("en", "want_label"))
 
     def test_valid_club_entities_include_book_and_film(self):
         self.assertIn("book", bot._VALID_CLUB_ENTITIES)

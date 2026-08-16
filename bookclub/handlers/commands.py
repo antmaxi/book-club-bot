@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
-import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from telegram import (
     Bot,
@@ -17,7 +15,6 @@ from telegram.ext import ContextTypes
 
 import bookclub.config as config
 from bookclub.db import (
-    db_cast_vote,
     db_get_books,
     db_get_user_setting,
     db_get_user_vote,
@@ -25,14 +22,22 @@ from bookclub.db import (
     db_votes_use_attendance,
 )
 from bookclub.domain import is_admin
-from bookclub.i18n import PM, T, _COMMAND_DESC_OVERLAYS, get_lang, s, tr
+from bookclub.i18n import (
+    COMMAND_SPECS,
+    LANG_NATIVE_NAME,
+    PM,
+    format_ui,
+    get_lang,
+    next_ui_lang,
+    s,
+    tr,
+)
 from bookclub.logging_setup import logger
 from bookclub.ui import (
     _parse_list_callback,
     _show_list_format_prompt,
     book_card,
     book_compact_line,
-    books_keyboard,
     books_top_n,
     fmt_dt_utc,
     h,
@@ -41,48 +46,44 @@ from bookclub.ui import (
     send_chunked_html_messages,
 )
 
-COMMANDS = {
-    "en": [
-        BotCommand("add", "➕ Add a book"),
-        BotCommand("list", "📋 List books & vote inline"),
-        BotCommand("top", "🏆 Top rated books"),
-        BotCommand("settings", "⚙️ Settings"),
-        BotCommand("discussed", "✅ Books already discussed"),
-        BotCommand("edit", "✏️ Edit a book entry"),
-        BotCommand("delete", "🗑 Delete a book"),
-        BotCommand("adminconsole", "🛠 Admin console"),
-        BotCommand("cancel", "❌ Cancel current action"),
-        BotCommand("help", "❓ Show help"),
-        BotCommand("info", "ℹ️ About the bot"),
-    ],
-    "ru": [
-        BotCommand("add", "➕ Добавить книгу"),
-        BotCommand("list", "📋 Список книг и голосование"),
-        BotCommand("top", "🏆 Топ книг"),
-        BotCommand("settings", "⚙️ Настройки"),
-        BotCommand("discussed", "✅ Обсуждённые книги"),
-        BotCommand("edit", "✏️ Редактировать запись"),
-        BotCommand("delete", "🗑 Удалить книгу"),
-        BotCommand("adminconsole", "🛠 Админ-панель"),
-        BotCommand("cancel", "❌ Отменить действие"),
-        BotCommand("help", "❓ Показать помощь"),
-        BotCommand("info", "ℹ️ О боте"),
-    ],
-}
+
+def _build_commands() -> dict[str, list[BotCommand]]:
+    return {
+        lang: [BotCommand(name, format_ui(lang, desc)) for name, desc in specs]
+        for lang, specs in COMMAND_SPECS.items()
+    }
 
 
-def _apply_entity_command_overlays(entity: str) -> None:
-    cmd_overlay = _COMMAND_DESC_OVERLAYS.get(entity, {})
-    for lang, by_name in cmd_overlay.items():
-        COMMANDS[lang] = [
-            BotCommand(c.command, by_name.get(c.command, c.description))
-            for c in COMMANDS[lang]
-        ]
-
-
-_apply_entity_command_overlays(config.CLUB_ENTITY)
+COMMANDS = _build_commands()
 
 _ADMIN_MENU_COMMAND = "adminconsole"
+
+
+def _settings_keyboard(ctx: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    next_label = LANG_NATIVE_NAME[next_ui_lang(get_lang(ctx))]
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "settings_notify_btn"),
+                    callback_data="settings:toggle_notify",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    tr(ctx, "settings_lang_btn", next_lang_label=next_label),
+                    callback_data="settings:toggle_lang",
+                )
+            ],
+        ]
+    )
+
+
+def _settings_text(ctx: ContextTypes.DEFAULT_TYPE, notify: int) -> str:
+    val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
+    return (
+        f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+    )
 
 
 def commands_for_user(lang: str, user_id: int) -> list[BotCommand]:
@@ -145,27 +146,11 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     # -1 means not set, we'll treat it as Off (0) for the UI if they just run /settings
     # but the logic for /list will still trigger the opt-in if it's -1.
-    val_str = tr(ctx, "settings_notify_on" if notify == 1 else "settings_notify_off")
-
-    text = (
-        f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
+    await update.message.reply_text(
+        _settings_text(ctx, notify),
+        reply_markup=_settings_keyboard(ctx),
+        parse_mode=PM,
     )
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    tr(ctx, "settings_notify_btn"),
-                    callback_data="settings:toggle_notify",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    tr(ctx, "settings_lang_btn"), callback_data="settings:toggle_lang"
-                )
-            ],
-        ]
-    )
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=PM)
 
 
 async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -178,56 +163,23 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         current = db_get_user_setting(user_id, "notify_new_books")
         new_val = 1 if current <= 0 else 0
         db_set_user_setting(user_id, "notify_new_books", new_val)
-
-        val_str = tr(
-            ctx, "settings_notify_on" if new_val == 1 else "settings_notify_off"
+        await query.edit_message_text(
+            _settings_text(ctx, new_val),
+            reply_markup=_settings_keyboard(ctx),
+            parse_mode=PM,
         )
-        text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        tr(ctx, "settings_notify_btn"),
-                        callback_data="settings:toggle_notify",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        tr(ctx, "settings_lang_btn"),
-                        callback_data="settings:toggle_lang",
-                    )
-                ],
-            ]
-        )
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
     elif data[1] == "toggle_lang":
-        new_lang = "ru" if get_lang(ctx) == "en" else "en"
+        new_lang = next_ui_lang(get_lang(ctx))
         ctx.user_data["lang"] = new_lang
         await set_user_commands(ctx.bot, update, new_lang)
         await query.answer(tr(ctx, "lang_set"))
 
         notify = db_get_user_setting(user_id, "notify_new_books")
-        val_str = tr(
-            ctx, "settings_notify_on" if notify == 1 else "settings_notify_off"
+        await query.edit_message_text(
+            _settings_text(ctx, notify),
+            reply_markup=_settings_keyboard(ctx),
+            parse_mode=PM,
         )
-        text = f"{tr(ctx, 'settings_title')}\n\n{tr(ctx, 'settings_notify_label')} {val_str}"
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        tr(ctx, "settings_notify_btn"),
-                        callback_data="settings:toggle_notify",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        tr(ctx, "settings_lang_btn"),
-                        callback_data="settings:toggle_lang",
-                    )
-                ],
-            ]
-        )
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=PM)
     elif data[1] == "optin":
         val = int(data[2])
         db_set_user_setting(user_id, "notify_new_books", val)
@@ -269,9 +221,7 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 .decode("utf-8")
                 .strip()
             )
-            last_commit = fmt_dt_utc(
-                datetime.fromtimestamp(int(ct), tz=timezone.utc)
-            )
+            last_commit = fmt_dt_utc(datetime.fromtimestamp(int(ct), tz=UTC))
     except Exception as e:
         logger.warning(f"Could not get last commit via git: {e}")
 
@@ -279,9 +229,7 @@ async def cmd_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not last_commit:
         try:
             mtime = os.path.getmtime(__file__)
-            last_commit = fmt_dt_utc(
-                datetime.fromtimestamp(mtime, tz=timezone.utc)
-            )
+            last_commit = fmt_dt_utc(datetime.fromtimestamp(mtime, tz=UTC))
         except Exception as e:
             logger.warning(f"Could not get file mtime: {e}")
             last_commit = "unknown"
@@ -398,9 +346,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         lines = [header] + [
             book_compact_line(i, book) for i, book in enumerate(books, 1)
         ]
-        await send_chunked_html_messages(
-            ctx.bot, chat_id, lines, joiner="\n"
-        )
+        await send_chunked_html_messages(ctx.bot, chat_id, lines, joiner="\n")
         return
 
     for book in books:
@@ -495,10 +441,6 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def score_calc_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     key = (
-        "score_calc_info_attendance"
-        if db_votes_use_attendance()
-        else "score_calc_info"
+        "score_calc_info_attendance" if db_votes_use_attendance() else "score_calc_info"
     )
     await query.answer(text=tr(ctx, key), show_alert=True)
-
-

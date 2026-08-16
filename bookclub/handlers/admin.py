@@ -47,7 +47,7 @@ from bookclub.db import (
     find_similar_book_titles,
 )
 from bookclub.domain import is_admin, require_book
-from bookclub.i18n import PM, T, get_lang, s, tr
+from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
 from bookclub.ui import (
@@ -66,6 +66,7 @@ from bookclub.ui import (
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
 )
+
 
 async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
     """Answer and reject a callback from a non-admin. Returns True if denied.
@@ -567,7 +568,9 @@ async def _admin_notify_books_pick_cb(
                 tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
             )
         else:
-            await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
+            await query.edit_message_text(
+                tr(ctx, "admin_notify_no_users"), parse_mode=PM
+            )
         return ConversationHandler.END
 
     return ADMIN_NOTIFY_PICK if not to_chat else ADMIN_NOTIFY_CHAT_PICK
@@ -581,7 +584,9 @@ async def admin_notify_chat_top_cb(
     query = update.callback_query
 
     if not config.ALLOWED_CHAT_ID:
-        await query.edit_message_text(tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM
+        )
         return ConversationHandler.END
 
     books = db_get_books(discussed=False)
@@ -602,7 +607,9 @@ async def admin_notify_chat_top_cb(
             tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
         )
     else:
-        await query.edit_message_text(tr(ctx, "admin_notify_chat_failed"), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "admin_notify_chat_failed"), parse_mode=PM
+        )
 
     return ConversationHandler.END
 
@@ -654,7 +661,6 @@ async def admin_mark_date_handler(
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
-    lang = get_lang(ctx)
     text = update.message.text.strip()
     if text == "/today":
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -687,8 +693,11 @@ async def admin_mark_date_handler(
     else:
         db_mark_discussed(book_id, date_str)
         await update.message.reply_text(
-            T[lang]["marked_discussed"].format(
-                title=h(book["title"]), date=h(date_str)
+            tr(
+                ctx,
+                "marked_discussed",
+                title=h(book["title"]),
+                date=h(date_str),
             ),
             parse_mode=PM,
         )
@@ -708,7 +717,9 @@ async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     book_id = int(book_id)
     book = db_get_book(book_id)
     if not book or not book["discussed"]:
-        await query.edit_message_text(tr(ctx, "no_discussed_for_meeting"), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "no_discussed_for_meeting"), parse_mode=PM
+        )
         return ConversationHandler.END
     ctx.user_data["meeting_book_id"] = book_id
     ctx.user_data["meeting_attendee_ids"] = set()
@@ -719,9 +730,7 @@ async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         )
         return ConversationHandler.END
     ctx.user_data["meeting_date"] = discussed_at
-    return await _show_meeting_attendee_picker(
-        query, ctx, page=0, is_callback=True
-    )
+    return await _show_meeting_attendee_picker(query, ctx, page=0, is_callback=True)
 
 
 async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -814,7 +823,9 @@ async def admin_meeting_add_id_handler(
     username: str | None = None
     if config.ALLOWED_CHAT_ID:
         try:
-            member = await update.get_bot().get_chat_member(config.ALLOWED_CHAT_ID, user_id)
+            member = await update.get_bot().get_chat_member(
+                config.ALLOWED_CHAT_ID, user_id
+            )
             u = member.user
             full_name = u.full_name or ""
             username = u.username
@@ -828,7 +839,9 @@ async def admin_meeting_add_id_handler(
         tr(ctx, "meeting_attendee_added_id", user_id=user_id), parse_mode=PM
     )
     page = int(ctx.user_data.get("meeting_attendee_page", 0))
-    return await _show_meeting_attendee_picker(update, ctx, page=page, is_callback=False)
+    return await _show_meeting_attendee_picker(
+        update, ctx, page=page, is_callback=False
+    )
 
 
 async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -970,15 +983,11 @@ async def _finish_admin_import(
             local=h(config.CLUB_ENTITY),
         )
     await reply(msg)
-    schedule_new_book_notifications(
-        ctx.job_queue, book_id, update.effective_user.id
-    )
+    schedule_new_book_notifications(ctx.job_queue, book_id, update.effective_user.id)
     return ConversationHandler.END
 
 
-async def admin_import_handler(
-    update: Update, ctx: ContextTypes.DEFAULT_TYPE
-) -> int:
+async def admin_import_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(tr(ctx, "admin_only"), parse_mode=PM)
         return ConversationHandler.END
@@ -1039,5 +1048,3 @@ async def admin_import_similar_cb(
         pending.get("source_entity"),
         reply=lambda msg: query.edit_message_text(msg, parse_mode=PM),
     )
-
-

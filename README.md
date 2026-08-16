@@ -1,10 +1,10 @@
 # 📚 Book Club Telegram Bot
 
-A bilingual (English/Russian) Telegram bot to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
+A Telegram bot (English / Russian / German) to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
 
 ## 🌟 Features
 
-- **Bilingual Support:** Switch between English and Russian in the `/settings` menu.
+- **Languages:** Switch between English, Russian, and German in the `/settings` menu.
 - **Book Management:** Add books with details like title, author, page count, fiction/non-fiction status, review links, and descriptions.
 - **Voting System:** Users can vote on books with three options:
   - ✅ **Want to read** (+1 point)
@@ -85,7 +85,7 @@ Skipping a long stretch of meetings parks the surplus at 0; coming back to one m
    ADMIN_IDS="ID_1,ID_2"
    GITHUB_REPO="https://github.com/yourusername/your-repo"
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
-   CHAT_LANG="ru"             # Optional: Language for messages posted to the group chat (default: ru)
+   CHAT_LANG="ru"             # Optional: Group-chat language: en, ru, or de (default: ru)
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
    ASK_LANGUAGE_LEVEL="1"     # Optional: Ask CEFR level(s) A1–C2 when adding/editing (books or films)
    DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)

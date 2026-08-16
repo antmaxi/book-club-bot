@@ -15,8 +15,8 @@ from telegram import Bot, Chat, Message, MessageEntity, Update, User
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import ConversationHandler
 
-import bookclub_bot as bot
 import bookclub.config as cfg
+import bookclub_bot as bot
 from bookclub.handlers.add_flow import (
     add_go_forward,
     build_add_prompt_text,
@@ -162,9 +162,7 @@ class TestInfo(BotHandlerTestCase):
         import datetime
 
         expected = bot.fmt_dt_utc(
-            datetime.datetime.fromtimestamp(
-                self.GIT_COMMIT_EPOCH, tz=datetime.timezone.utc
-            )
+            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH, tz=datetime.UTC)
         )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -183,9 +181,7 @@ class TestInfo(BotHandlerTestCase):
         import datetime
 
         expected = bot.fmt_dt_utc(
-            datetime.datetime.fromtimestamp(
-                self.GIT_COMMIT_EPOCH, tz=datetime.timezone.utc
-            )
+            datetime.datetime.fromtimestamp(self.GIT_COMMIT_EPOCH, tz=datetime.UTC)
         )
         self.assertIn(expected, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -211,7 +207,7 @@ class TestInfo(BotHandlerTestCase):
         import datetime
 
         expected_date = bot.fmt_dt_utc(
-            datetime.datetime.fromtimestamp(1775728800, tz=datetime.timezone.utc)
+            datetime.datetime.fromtimestamp(1775728800, tz=datetime.UTC)
         )
         self.assertIn(expected_date, text)
         self.assertRegex(text, r"UTC[+-]\d{2}:\d{2}")
@@ -289,16 +285,20 @@ class TestSetUserCommands(BotHandlerTestCase):
 class TestCommandsMenu(BotHandlerTestCase):
 
     async def test_settings_in_both_menus(self):
-        for lang in ("en", "ru"):
+        for lang in bot.SUPPORTED_LANGS:
             cmds = [c.command for c in bot.COMMANDS[lang]]
             self.assertIn("settings", cmds, f"'settings' missing from {lang} menu")
 
     async def test_language_not_in_menus(self):
-        for lang in ("en", "ru"):
+        for lang in bot.SUPPORTED_LANGS:
             cmds = [c.command for c in bot.COMMANDS[lang]]
             self.assertNotIn(
                 "language", cmds, f"'language' should not be in {lang} menu"
             )
+
+    async def test_add_command_description_en(self):
+        desc = next(c.description for c in bot.COMMANDS["en"] if c.command == "add")
+        self.assertEqual(desc, "➕ Add a book")
 
     async def test_settings_description_en(self):
         desc = next(
@@ -313,7 +313,7 @@ class TestCommandsMenu(BotHandlerTestCase):
         self.assertEqual(desc, "⚙️ Настройки")
 
     async def test_info_in_both_menus(self):
-        for lang in ("en", "ru"):
+        for lang in bot.SUPPORTED_LANGS:
             cmds = [c.command for c in bot.COMMANDS[lang]]
             self.assertIn("info", cmds, f"'info' missing from {lang} menu")
 
@@ -325,8 +325,12 @@ class TestCommandsMenu(BotHandlerTestCase):
         desc = next(c.description for c in bot.COMMANDS["ru"] if c.command == "info")
         self.assertEqual(desc, "ℹ️ О боте")
 
+    async def test_info_description_de(self):
+        desc = next(c.description for c in bot.COMMANDS["de"] if c.command == "info")
+        self.assertEqual(desc, "ℹ️ Über den Bot")
+
     async def test_info_after_help_in_menu(self):
-        for lang in ("en", "ru"):
+        for lang in bot.SUPPORTED_LANGS:
             cmds = [c.command for c in bot.COMMANDS[lang]]
             self.assertEqual(cmds[-2:], ["help", "info"])
 
@@ -814,7 +818,7 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.reply_text.assert_called_once()
         confirm = self.message.reply_text.call_args[0][0]
         self.assertIn("Book added", confirm)
-        self.assertIn("5 minutes", confirm)
+        self.assertIn(bot.format_defaults("en")["minutes_phrase"], confirm)
         self.ctx.job_queue.run_once.assert_called_once()
         job_kwargs = self.ctx.job_queue.run_once.call_args[1]
         self.assertEqual(job_kwargs["when"], bot.NEW_BOOK_NOTIFY_DELAY_SECONDS)
@@ -918,8 +922,17 @@ class TestSettings(BotHandlerTestCase):
         mock_set.assert_called_once_with(self.ctx.bot, self.update, "ru")
 
     @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
-    async def test_settings_toggle_lang_ru_to_en(self, mock_set):
+    async def test_settings_toggle_lang_ru_to_de(self, mock_set):
         self.ctx.user_data["lang"] = "ru"
+        q = self._callback_query("settings:toggle_lang")
+        await bot.settings_choice_cb(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["lang"], "de")
+        q.answer.assert_called_once_with("🇩🇪 Sprache auf Deutsch gestellt.")
+        mock_set.assert_called_once_with(self.ctx.bot, self.update, "de")
+
+    @patch("bookclub.handlers.commands.set_user_commands", new_callable=AsyncMock)
+    async def test_settings_toggle_lang_de_to_en(self, mock_set):
+        self.ctx.user_data["lang"] = "de"
         q = self._callback_query("settings:toggle_lang")
         await bot.settings_choice_cb(self.update, self.ctx)
         self.assertEqual(self.ctx.user_data["lang"], "en")

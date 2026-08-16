@@ -20,6 +20,7 @@ class TestOriginalLanguages(unittest.TestCase):
     def test_display_follows_ui_language(self):
         self.assertIn("German", display_original_language("German", "en"))
         self.assertIn("Немецкий", display_original_language("German", "ru"))
+        self.assertIn("Deutsch", display_original_language("German", "de"))
         self.assertNotIn("German", display_original_language("German", "ru"))
         self.assertEqual(display_original_language("Ukrainian", "ru"), "Ukrainian")
 

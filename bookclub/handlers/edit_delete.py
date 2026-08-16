@@ -18,7 +18,7 @@ from bookclub.config import (
 )
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
-from bookclub.i18n import PM, T, get_lang, s, tr
+from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import (
     display_original_language,
     stored_original_language,
@@ -79,7 +79,11 @@ def edit_current_value(book: BookLike, field: str, lang: str) -> str:
         cy = book["creation_year"]
         return str(cy) if cy is not None else ("—" if lang == "en" else "—")
     if field == "language_levels":
-        raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
+        raw = (
+            book["language_levels"]
+            if "language_levels" in book.keys()  # noqa: SIM118
+            else None
+        )
         shown = language_levels_display(raw)
         return shown or ("—" if lang == "en" else "—")
     return str(book[field])
@@ -143,7 +147,7 @@ async def _ask_edit_field(
     field_key = f"field_{field}" if field != "review_link" else "field_review"
     field_name = s(lang, field_key)
     current = edit_current_value(book, field, lang)
-    text = T[lang]["edit_field_prompt"].format(field=field_name, value=h(current))
+    text = tr(ctx, "edit_field_prompt", field=field_name, value=h(current))
 
     if is_callback:
         await update_or_query.edit_message_text(
@@ -207,7 +211,7 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     # ans == "yes" — ask for new value
     if field == "fiction":
         await query.edit_message_text(
-            T[lang]["edit_ask_new"].format(field=T[lang]["field_fiction"]),
+            tr(ctx, "edit_ask_new", field=s(lang, "field_fiction")),
             parse_mode=PM,
             reply_markup=edit_fiction_keyboard(lang),
         )
@@ -225,7 +229,11 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     if field == "language_levels":
         book = require_book(ctx.user_data["edit_book_id"])
-        raw = book["language_levels"] if "language_levels" in book.keys() else None  # noqa: SIM118
+        raw = (
+            book["language_levels"]
+            if "language_levels" in book.keys()  # noqa: SIM118
+            else None
+        )
         selected = parse_language_levels(raw)
         ctx.user_data["edit_cefr_selected"] = selected
         await query.edit_message_text(
@@ -235,9 +243,9 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return EDITING_FIELD  # handled by edit_language_levels_cb
 
-    field_name = T[lang][f"field_{field}" if field != "review_link" else "field_review"]
+    field_name = s(lang, f"field_{field}" if field != "review_link" else "field_review")
     await query.edit_message_text(
-        T[lang]["edit_ask_new"].format(field=field_name),
+        tr(ctx, "edit_ask_new", field=field_name),
         parse_mode=PM,
     )
     return EDITING_FIELD
@@ -396,7 +404,5 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     title = book["title"]
     db_delete_book(book_id)
-    await query.edit_message_text(
-        T[lang]["deleted"].format(title=h(title)), parse_mode=PM
-    )
+    await query.edit_message_text(tr(ctx, "deleted", title=h(title)), parse_mode=PM)
     return ConversationHandler.END

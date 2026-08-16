@@ -32,6 +32,7 @@ def _club_entity_from_env() -> str:
 
 CLUB_ENTITY = _club_entity_from_env()
 
+
 def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true", "yes")
 
@@ -49,9 +50,7 @@ def _display_utc_offset_hours_from_env() -> int:
     try:
         hours = int(raw)
     except ValueError:
-        print(
-            f"Warning: invalid DISPLAY_UTC_OFFSET_HOURS={raw!r}, using 2 (UTC+2)."
-        )
+        print(f"Warning: invalid DISPLAY_UTC_OFFSET_HOURS={raw!r}, using 2 (UTC+2).")
         return 2
     if hours < -12 or hours > 14:
         print(
@@ -74,14 +73,23 @@ ALLOWED_CHAT_NAME = (
     os.environ.get("ALLOWED_CHAT_NAME") or _ENTITY_DEFAULT_CHAT_NAMES[CLUB_ENTITY]
 )
 
-# Language for messages the bot posts into the group chat. Group messages are
-# shared, so they can't follow any single user's language preference.
+# Language for messages the bot posts into the group chat (en, ru, or de).
+# Group messages are shared, so they can't follow any single user's language.
 CHAT_LANG = os.environ.get("CHAT_LANG", "ru")
 
 # Delay before broadcasting a new-book card to opted-in users (and optional group chat).
 NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
     os.environ.get("NEW_BOOK_NOTIFY_DELAY_SECONDS", "300")
 )
+
+
+def notify_delay_minutes() -> int:
+    """Whole minutes for UI copy, derived from NEW_BOOK_NOTIFY_DELAY_SECONDS."""
+    secs = NEW_BOOK_NOTIFY_DELAY_SECONDS
+    if secs <= 0:
+        return 0
+    return max(1, secs // 60)
+
 
 # Conversation states
 (
@@ -101,9 +109,22 @@ ADDING_ORIGINAL_LANGUAGE_OTHER = 28
 EDITING_CHOOSE = 8
 EDITING_FIELD = 9  # waiting for new value of current field
 DELETING_CHOOSE = 10
-ADMIN_MENU, ADMIN_MARK_CHOOSE, ADMIN_MARK_DATE, ADMIN_HIDE_CHOOSE, ADMIN_UNHIDE_CHOOSE, ADMIN_NOTIFY_PICK, ADMIN_NOTIFY_CHAT_PICK, ADMIN_EXPORT_CHOOSE, ADMIN_IMPORT_WAIT, ADMIN_MEETING_BOOK, ADMIN_MEETING_DATE, ADMIN_MEETING_ATTENDEES, ADMIN_MEETING_ADD_ID, ADMIN_MEETINGS_VIEW = (
-    range(11, 25)
-)
+(
+    ADMIN_MENU,
+    ADMIN_MARK_CHOOSE,
+    ADMIN_MARK_DATE,
+    ADMIN_HIDE_CHOOSE,
+    ADMIN_UNHIDE_CHOOSE,
+    ADMIN_NOTIFY_PICK,
+    ADMIN_NOTIFY_CHAT_PICK,
+    ADMIN_EXPORT_CHOOSE,
+    ADMIN_IMPORT_WAIT,
+    ADMIN_MEETING_BOOK,
+    ADMIN_MEETING_DATE,
+    ADMIN_MEETING_ATTENDEES,
+    ADMIN_MEETING_ADD_ID,
+    ADMIN_MEETINGS_VIEW,
+) = range(11, 25)
 
 MEETING_ATTENDEES_PAGE_SIZE = 7
 NOTIFY_BOOKS_PAGE_SIZE = 8
