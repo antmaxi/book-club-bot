@@ -7,7 +7,6 @@ from bookclub.cefr import format_language_levels
 from bookclub.config import (
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
-    ADDING_DESCRIPTION,
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
@@ -16,12 +15,12 @@ from bookclub.config import (
     ADDING_REVIEW,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
-    language_level_prompt_enabled,
 )
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.handlers.add_flow import (
     add_prompt_markup,
     build_add_prompt_text,
+    continue_add,
     send_add_prompt,
 )
 from bookclub.i18n import PM, get_lang, tr
@@ -61,7 +60,7 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             parse_mode=PM,
         )
         return ADDING_TITLE_CONFIRM
-    return await send_add_prompt(update, ctx, ADDING_AUTHOR)
+    return await continue_add(update, ctx, ADDING_TITLE)
 
 
 async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -73,12 +72,12 @@ async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         ctx.user_data.pop("add_state", None)
         await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
-    return await send_add_prompt(update, ctx, ADDING_AUTHOR, edit=True)
+    return await continue_add(update, ctx, ADDING_TITLE_CONFIRM, edit=True)
 
 
 async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["new_book"]["author"] = update.message.text.strip()
-    return await send_add_prompt(update, ctx, ADDING_PAGES)
+    return await continue_add(update, ctx, ADDING_AUTHOR)
 
 
 async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -94,7 +93,7 @@ async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         ctx.user_data["add_state"] = ADDING_PAGES
         return ADDING_PAGES
     ctx.user_data["new_book"]["pages"] = int(text)
-    return await send_add_prompt(update, ctx, ADDING_FICTION)
+    return await continue_add(update, ctx, ADDING_PAGES)
 
 
 async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -102,7 +101,7 @@ async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     _, value = query.data.split(":")
     ctx.user_data["new_book"]["fiction"] = value == "1"
-    return await send_add_prompt(update, ctx, ADDING_REVIEW, edit=True)
+    return await continue_add(update, ctx, ADDING_FICTION, edit=True)
 
 
 async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -118,14 +117,14 @@ async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         ctx.user_data["add_state"] = ADDING_REVIEW
         return ADDING_REVIEW
     ctx.user_data["new_book"]["review_link"] = text
-    return await send_add_prompt(update, ctx, ADDING_ORIGINAL_LANGUAGE)
+    return await continue_add(update, ctx, ADDING_REVIEW)
 
 
 async def add_original_language_skip(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
     ctx.user_data["new_book"]["original_language"] = ""
-    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR)
+    return await continue_add(update, ctx, ADDING_ORIGINAL_LANGUAGE)
 
 
 async def add_original_language_cb(
@@ -136,7 +135,7 @@ async def add_original_language_cb(
     _, action = query.data.split(":", 1)
     if action == "skip":
         ctx.user_data["new_book"]["original_language"] = ""
-        return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR, edit=True)
+        return await continue_add(update, ctx, ADDING_ORIGINAL_LANGUAGE, edit=True)
     if action == "other":
         ctx.user_data["add_state"] = ADDING_ORIGINAL_LANGUAGE_OTHER
         await query.edit_message_text(
@@ -155,7 +154,7 @@ async def add_original_language_cb(
     if stored is None:
         return ADDING_ORIGINAL_LANGUAGE
     ctx.user_data["new_book"]["original_language"] = stored
-    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR, edit=True)
+    return await continue_add(update, ctx, ADDING_ORIGINAL_LANGUAGE, edit=True)
 
 
 async def add_original_language_other(
@@ -176,16 +175,7 @@ async def add_original_language_other(
         ctx.user_data["add_state"] = ADDING_ORIGINAL_LANGUAGE_OTHER
         return ADDING_ORIGINAL_LANGUAGE_OTHER
     ctx.user_data["new_book"]["original_language"] = text
-    return await send_add_prompt(update, ctx, ADDING_CREATION_YEAR)
-
-
-async def _prompt_after_creation_year(
-    update: Update, ctx: ContextTypes.DEFAULT_TYPE
-) -> int:
-    if language_level_prompt_enabled():
-        ctx.user_data["new_book"].setdefault("language_levels", set())
-        return await send_add_prompt(update, ctx, ADDING_LANGUAGE_LEVEL)
-    return await send_add_prompt(update, ctx, ADDING_DESCRIPTION)
+    return await continue_add(update, ctx, ADDING_ORIGINAL_LANGUAGE_OTHER)
 
 
 async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -204,7 +194,7 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         ctx.user_data["add_state"] = ADDING_CREATION_YEAR
         return ADDING_CREATION_YEAR
     ctx.user_data["new_book"]["creation_year"] = year
-    return await _prompt_after_creation_year(update, ctx)
+    return await continue_add(update, ctx, ADDING_CREATION_YEAR)
 
 
 async def add_language_level_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -235,24 +225,32 @@ async def add_language_level_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
             await query.answer(tr(ctx, "language_level_none_selected"), show_alert=True)
             return ADDING_LANGUAGE_LEVEL
         await query.answer()
-        return await send_add_prompt(update, ctx, ADDING_DESCRIPTION, edit=True)
+        return await continue_add(update, ctx, ADDING_LANGUAGE_LEVEL, edit=True)
     await query.answer()
     return ADDING_LANGUAGE_LEVEL
 
 
-async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+async def complete_new_book(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    *,
+    description: str | None = None,
+) -> int:
     lang = get_lang(ctx)
-    text = update.message.text.strip() if update.message and update.message.text else ""
-    desc = "" if text == "/skip" else text
-
     if ctx.user_data is None or "new_book" not in ctx.user_data:
         logger.warning(
-            f"User {update.effective_user.id} tried to add description but 'new_book' is missing."
+            f"User {update.effective_user.id} tried to add an entry but 'new_book' is missing."
         )
-        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        if update.message:
+            await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                tr(ctx, "cancelled"), parse_mode=PM
+            )
         return ConversationHandler.END
 
     nb = ctx.user_data["new_book"]
+    desc = description if description is not None else (nb.get("description") or "")
     user = update.effective_user
     levels_set = nb.get("language_levels")
     language_levels = (
@@ -260,10 +258,10 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     )
     book_id = db_add_book(
         nb["title"],
-        nb["author"],
-        nb["pages"],
-        nb["fiction"],
-        nb["review_link"],
+        nb.get("author") or "",
+        nb.get("pages") or 0,
+        nb.get("fiction", True),
+        nb.get("review_link") or "",
         desc,
         user.id,
         user.full_name,
@@ -280,10 +278,21 @@ async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
 
     confirm_text = f"{tr(ctx, 'book_added')}\n\n{book_card(book, lang)}{tr(ctx, 'new_book_delay_note')}"
 
-    await update.message.reply_text(confirm_text, parse_mode=PM)
+    query = update.callback_query
+    if update.message:
+        await update.message.reply_text(confirm_text, parse_mode=PM)
+    elif query and query.message:
+        await query.edit_message_text(confirm_text, parse_mode=PM)
+
     ctx.user_data.pop("new_book", None)
     ctx.user_data.pop("add_state", None)
 
     schedule_new_book_notifications(ctx.job_queue, book_id, user.id)
 
     return ConversationHandler.END
+
+
+async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    desc = "" if text == "/skip" else text
+    return await complete_new_book(update, ctx, description=desc)

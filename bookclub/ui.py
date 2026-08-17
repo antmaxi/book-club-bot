@@ -15,6 +15,7 @@ from bookclub.config import (
     ADMIN_NOTIFY_PICK,
     MEETING_ATTENDEES_PAGE_SIZE,
     NOTIFY_BOOKS_PAGE_SIZE,
+    entry_field_enabled,
 )
 from bookclub.db import (
     db_meeting_user_suggestions,
@@ -150,41 +151,45 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
     fiction_label = (
         s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
     )
-    lines = [
-        f"{s(lang, 'card_icon')} <b>{h(book['title'])}</b>",
-        f"{s(lang, 'subtitle_icon')} {h(book['author'])}",
-        f"📂 {h(fiction_label)}  •  📄 {h(str(book['pages']))} {h(s(lang, 'pages_label'))}",
-        score_display(book, lang),
-    ]
-    orig_lang = book["original_language"] if book["original_language"] else None
-    if orig_lang:
-        lines.insert(
-            3,
-            f"🌐 {h(s(lang, 'original_language_label'))}: {h(display_original_language(str(orig_lang), lang))}",
-        )
-    creation_year = book["creation_year"]
-    if creation_year is not None:
-        lines.insert(
-            3,
-            f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
-        )
+    lines = [f"{s(lang, 'card_icon')} <b>{h(book['title'])}</b>"]
+    if entry_field_enabled("author"):
+        lines.append(f"{s(lang, 'subtitle_icon')} {h(book['author'])}")
+    details: list[str] = []
+    if entry_field_enabled("fiction"):
+        details.append(f"📂 {h(fiction_label)}")
+    if entry_field_enabled("pages"):
+        details.append(f"📄 {h(str(book['pages']))} {h(s(lang, 'pages_label'))}")
+    if details:
+        lines.append("  •  ".join(details))
+    extra: list[str] = []
     # sqlite3.Row: `key in row` checks values, not column names.
     has_language_levels = "language_levels" in book.keys()  # noqa: SIM118
     levels_raw = book["language_levels"] if has_language_levels else None
     levels_text = language_levels_display(levels_raw)
-    if levels_text:
-        lines.insert(
-            3,
+    if entry_field_enabled("language_levels") and levels_text:
+        extra.append(
             f"🎓 {h(s(lang, 'language_levels_label'))}: {h(levels_text)}",
         )
+    creation_year = book["creation_year"]
+    if entry_field_enabled("creation_year") and creation_year is not None:
+        extra.append(
+            f"📅 {h(s(lang, 'creation_year_label'))}: {h(str(creation_year))}",
+        )
+    orig_lang = book["original_language"] if book["original_language"] else None
+    if entry_field_enabled("original_language") and orig_lang:
+        extra.append(
+            f"🌐 {h(s(lang, 'original_language_label'))}: {h(display_original_language(str(orig_lang), lang))}",
+        )
+    lines.extend(extra)
+    lines.append(score_display(book, lang))
     if user_vote is not None:
         vote_label = vote_label_text(lang, user_vote)
         lines[-1] += f"  <i>({h(s(lang, 'your_vote'))}: {h(vote_label)})</i>"
-    if book["review_link"]:
+    if entry_field_enabled("review") and book["review_link"]:
         lines.append(
             f'🔗 <a href="{h(book["review_link"])}">{h(s(lang, "review_label"))}</a>'
         )
-    if book["description"]:
+    if entry_field_enabled("description") and book["description"]:
         lines += ["", f"<i>{h(book['description'])}</i>"]
     meta = (
         f"<i>{h(s(lang, 'added_by'))}: {h(format_user(book))}"
@@ -199,11 +204,16 @@ def book_card(book: BookLike, lang: str = "en", user_vote: int | None = None) ->
 
 def book_compact_line(index: int, book: BookLike) -> str:
     year = book["creation_year"]
-    year_suffix = f" ({year})" if year is not None else ""
+    year_suffix = (
+        f" ({year})"
+        if entry_field_enabled("creation_year") and year is not None
+        else ""
+    )
+    author_part = f" — {h(book['author'])}" if entry_field_enabled("author") else ""
     score_fmt = f"{book['avg_score']:g}"
     return (
         f"{index}. <b>{score_fmt}</b> <b>{h(book['title'])}</b>"
-        f" — {h(book['author'])}{year_suffix}"
+        f"{author_part}{year_suffix}"
     )
 
 

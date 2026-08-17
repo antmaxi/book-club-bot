@@ -16,7 +16,7 @@ from bookclub.config import (
     ADDING_REVIEW,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
-    language_level_prompt_enabled,
+    entry_field_enabled,
 )
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import display_original_language
@@ -28,44 +28,93 @@ from bookclub.ui import (
     original_language_keyboard,
 )
 
+_ADD_STEP_ORDER = (
+    ADDING_TITLE,
+    ADDING_AUTHOR,
+    ADDING_PAGES,
+    ADDING_FICTION,
+    ADDING_REVIEW,
+    ADDING_ORIGINAL_LANGUAGE,
+    ADDING_CREATION_YEAR,
+    ADDING_LANGUAGE_LEVEL,
+    ADDING_DESCRIPTION,
+)
+_STATE_ENTRY_FIELD = {
+    ADDING_TITLE: "title",
+    ADDING_TITLE_CONFIRM: "title",
+    ADDING_AUTHOR: "author",
+    ADDING_PAGES: "pages",
+    ADDING_FICTION: "fiction",
+    ADDING_REVIEW: "review",
+    ADDING_ORIGINAL_LANGUAGE: "original_language",
+    ADDING_ORIGINAL_LANGUAGE_OTHER: "original_language",
+    ADDING_CREATION_YEAR: "creation_year",
+    ADDING_LANGUAGE_LEVEL: "language_levels",
+    ADDING_DESCRIPTION: "description",
+}
+
+
+def _canonical_add_state(current: int) -> int:
+    if current == ADDING_TITLE_CONFIRM:
+        return ADDING_TITLE
+    if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
+        return ADDING_ORIGINAL_LANGUAGE
+    return current
+
+
+def enabled_add_states() -> list[int]:
+    return [st for st in _ADD_STEP_ORDER if entry_field_enabled(_STATE_ENTRY_FIELD[st])]
+
 
 def add_previous_state(current: int) -> int | None:
     if current == ADDING_TITLE_CONFIRM:
         return ADDING_TITLE
     if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
         return ADDING_ORIGINAL_LANGUAGE
-    if current == ADDING_DESCRIPTION:
-        if language_level_prompt_enabled():
-            return ADDING_LANGUAGE_LEVEL
-        return ADDING_CREATION_YEAR
-    return {
-        ADDING_AUTHOR: ADDING_TITLE,
-        ADDING_PAGES: ADDING_AUTHOR,
-        ADDING_FICTION: ADDING_PAGES,
-        ADDING_REVIEW: ADDING_FICTION,
-        ADDING_ORIGINAL_LANGUAGE: ADDING_REVIEW,
-        ADDING_CREATION_YEAR: ADDING_ORIGINAL_LANGUAGE,
-        ADDING_LANGUAGE_LEVEL: ADDING_CREATION_YEAR,
-    }.get(current)
+    enabled = enabled_add_states()
+    try:
+        idx = enabled.index(current)
+    except ValueError:
+        return None
+    if idx <= 0:
+        return None
+    return enabled[idx - 1]
 
 
 def add_next_state(current: int) -> int | None:
-    if current in (ADDING_TITLE, ADDING_TITLE_CONFIRM):
-        return ADDING_AUTHOR
-    if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
-        return ADDING_CREATION_YEAR
-    if current == ADDING_CREATION_YEAR:
-        if language_level_prompt_enabled():
-            return ADDING_LANGUAGE_LEVEL
-        return ADDING_DESCRIPTION
-    return {
-        ADDING_AUTHOR: ADDING_PAGES,
-        ADDING_PAGES: ADDING_FICTION,
-        ADDING_FICTION: ADDING_REVIEW,
-        ADDING_REVIEW: ADDING_ORIGINAL_LANGUAGE,
-        ADDING_ORIGINAL_LANGUAGE: ADDING_CREATION_YEAR,
-        ADDING_LANGUAGE_LEVEL: ADDING_DESCRIPTION,
-    }.get(current)
+    enabled = enabled_add_states()
+    key = _canonical_add_state(current)
+    try:
+        idx = enabled.index(key)
+    except ValueError:
+        try:
+            pos = _ADD_STEP_ORDER.index(key)
+        except ValueError:
+            return enabled[0] if enabled else None
+        for st in _ADD_STEP_ORDER[pos + 1 :]:
+            if st in enabled:
+                return st
+        return None
+    if idx + 1 >= len(enabled):
+        return None
+    return enabled[idx + 1]
+
+
+async def continue_add(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    current: int,
+    *,
+    edit: bool = False,
+) -> int:
+    nxt = add_next_state(current)
+    if nxt is None:
+        from bookclub.handlers.add import complete_new_book
+
+        return await complete_new_book(update, ctx)
+    if nxt == ADDING_LANGUAGE_LEVEL:
+        ctx.user_data.setdefault("new_book", {}).setdefault("language_levels", set())
+    return await send_add_prompt(update, ctx, nxt, edit=edit)
 
 
 def _prompt_key_for_state(state: int) -> str | None:
@@ -248,7 +297,13 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return await _nav_alert(update, ctx, "add_forward_need_value", current)
     nxt = add_next_state(current)
     if nxt is None:
-        return await _nav_alert(update, ctx, "add_forward_at_end", current)
+        if current == ADDING_DESCRIPTION:
+            return await _nav_alert(update, ctx, "add_forward_at_end", current)
+        if query:
+            await query.answer()
+        from bookclub.handlers.add import complete_new_book
+
+        return await complete_new_book(update, ctx)
     if query:
         await query.answer()
     return await send_add_prompt(update, ctx, nxt, edit=bool(query))

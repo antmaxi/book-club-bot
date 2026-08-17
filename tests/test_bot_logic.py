@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import bookclub.config as cfg
 import bookclub.logging_setup as log_setup
 import bookclub_bot as bot
+from bookclub.handlers.add_flow import add_next_state, add_previous_state
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -482,9 +483,39 @@ class TestDatabase(unittest.TestCase):
 
     def test_book_card_shows_language_levels_when_set(self):
         book = make_book(language_levels="B1,B2")
-        text = bot.book_card(book, "en")
+        enabled = cfg.DEFAULT_ENTRY_FIELDS | {"language_levels"}
+        with patch.object(cfg, "ENTRY_FIELDS", enabled):
+            text = bot.book_card(book, "en")
         self.assertIn("B1", text)
         self.assertIn("B2", text)
+
+    def test_book_card_hides_language_levels_when_field_disabled(self):
+        book = make_book(language_levels="B1,B2")
+        with patch.object(cfg, "ENTRY_FIELDS", cfg.DEFAULT_ENTRY_FIELDS):
+            text = bot.book_card(book, "en")
+        self.assertNotIn("B1", text)
+        self.assertNotIn("B2", text)
+
+    def test_book_card_hides_disabled_optional_fields(self):
+        book = make_book(
+            author="Hidden Author",
+            fiction=True,
+            pages=321,
+            review_link="https://example.com/hidden-review",
+            description="Secret blurb",
+            original_language="German",
+            creation_year=1984,
+        )
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
+            text = bot.book_card(book, "en")
+        self.assertIn("Test", text)
+        self.assertNotIn("Hidden Author", text)
+        self.assertNotIn("Fiction", text)
+        self.assertNotIn("321", text)
+        self.assertNotIn("hidden-review", text)
+        self.assertNotIn("Secret blurb", text)
+        self.assertNotIn("German", text)
+        self.assertNotIn("1984", text)
 
     def test_seed_film_script_inserts_once(self):
         inserted = 0
@@ -993,6 +1024,60 @@ class TestUtils(unittest.TestCase):
     def test_allowed_chat_id_env_set(self):
         val = int("-1001234567890") or None
         self.assertEqual(val, -1001234567890)
+
+
+# ── ENTRY_FIELDS config ────────────────────────────────────────────────────────
+
+
+class TestEntryFields(unittest.TestCase):
+    def test_default_includes_standard_not_cefr(self):
+        self.assertEqual(bot.parse_entry_fields(None), bot.DEFAULT_ENTRY_FIELDS)
+        self.assertNotIn("language_levels", bot.parse_entry_fields(""))
+        self.assertIn(
+            "language_levels", bot.parse_entry_fields(None, ask_language_level=True)
+        )
+
+    def test_all_includes_cefr(self):
+        self.assertEqual(
+            bot.parse_entry_fields("all"), frozenset(bot.OPTIONAL_ENTRY_FIELDS)
+        )
+        self.assertEqual(
+            bot.parse_entry_fields("*"), frozenset(bot.OPTIONAL_ENTRY_FIELDS)
+        )
+
+    def test_explicit_list_and_aliases(self):
+        got = bot.parse_entry_fields("author, runtime, review_link")
+        self.assertEqual(got, frozenset({"author", "pages", "review"}))
+
+    def test_title_only(self):
+        self.assertEqual(bot.parse_entry_fields("title"), frozenset())
+
+    def test_unknown_ignored(self):
+        with patch("builtins.print") as mocked_print:
+            got = bot.parse_entry_fields("author,nope")
+        self.assertEqual(got, frozenset({"author"}))
+        mocked_print.assert_called()
+
+    def test_ask_language_level_adds_cefr_to_explicit(self):
+        got = bot.parse_entry_fields("author", ask_language_level=True)
+        self.assertEqual(got, frozenset({"author", "language_levels"}))
+
+    def test_add_next_skips_disabled_fields(self):
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset({"description"})):
+            self.assertEqual(add_next_state(bot.ADDING_TITLE), bot.ADDING_DESCRIPTION)
+            self.assertIsNone(add_next_state(bot.ADDING_DESCRIPTION))
+            self.assertEqual(
+                add_previous_state(bot.ADDING_DESCRIPTION), bot.ADDING_TITLE
+            )
+
+    def test_add_next_title_only_completes(self):
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
+            self.assertIsNone(add_next_state(bot.ADDING_TITLE))
+
+    def test_entry_field_enabled_title_always(self):
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
+            self.assertTrue(bot.entry_field_enabled("title"))
+            self.assertFalse(bot.entry_field_enabled("author"))
 
 
 # ── Error-alert buffering ────────────────────────────────────────────────────────

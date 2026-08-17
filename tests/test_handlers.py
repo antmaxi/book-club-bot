@@ -701,6 +701,26 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIsNone(self.ctx.user_data["new_book"]["creation_year"])
         q.edit_message_text.assert_called_once()
 
+    @patch.object(cfg, "ENTRY_FIELDS", frozenset({"description"}))
+    async def test_add_title_skips_to_description_when_others_disabled(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "Only Desc Title"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_DESCRIPTION)
+        self.assertEqual(self.ctx.user_data["new_book"]["title"], "Only Desc Title")
+
+    @patch.object(cfg, "ENTRY_FIELDS", frozenset())
+    async def test_add_title_completes_when_no_optional_fields(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "Title Only Book"
+        self.ctx.job_queue = MagicMock()
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertNotIn("new_book", self.ctx.user_data)
+        reply = self.message.reply_text.call_args[0][0]
+        self.assertIn("Title Only Book", reply)
+        self.assertIn("added", reply.lower())
+
     async def test_add_prompt_shows_forward_when_value_saved(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Author Name"}
         state = await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
@@ -1160,7 +1180,7 @@ class TestEdit(BotHandlerTestCase):
         state = await bot.edit_pick_cb(self.update, self.ctx)
         self.assertEqual(state, bot.EDITING_FIELD)
 
-        for _ in bot.EDIT_FIELDS:
+        for _ in bot.get_edit_fields():
             q = self._callback_query("edit_yn:no")
             state = await bot.edit_yn_cb(self.update, self.ctx)
 

@@ -393,14 +393,25 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     lines = [tr(ctx, "top_title")]
     for i, book in enumerate(top_books, 1):
-        fiction_label = (
-            s(lang, "fiction_label") if book["fiction"] else s(lang, "nonfiction_label")
-        )
         score_val = book["avg_score"]
         score_fmt = f"{score_val:g}"
+        author_part = (
+            f" — {h(book['author'])}" if config.entry_field_enabled("author") else ""
+        )
+        meta: list[str] = []
+        if config.entry_field_enabled("fiction"):
+            fiction_label = (
+                s(lang, "fiction_label")
+                if book["fiction"]
+                else s(lang, "nonfiction_label")
+            )
+            meta.append(h(fiction_label))
+        if config.entry_field_enabled("pages"):
+            meta.append(f"{h(str(book['pages']))} {h(s(lang, 'pages_label'))}")
+        meta.append(f"<b>{h(s(lang, 'score_label'))}: {score_fmt}</b>")
         lines.append(
-            f"{i}. <b>{h(book['title'])}</b> — {h(book['author'])}\n"
-            f"   {h(fiction_label)}  •  {h(str(book['pages']))} {h(s(lang, 'pages_label'))}  •  <b>{h(s(lang, 'score_label'))}: {score_fmt}</b>\n"
+            f"{i}. <b>{h(book['title'])}</b>{author_part}\n"
+            f"   {'  •  '.join(meta)}\n"
             f"   {score_display(book, lang)}"
         )
 

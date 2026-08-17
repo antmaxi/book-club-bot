@@ -14,7 +14,7 @@ from bookclub.config import (
     DELETING_CHOOSE,
     EDITING_CHOOSE,
     EDITING_FIELD,
-    language_level_prompt_enabled,
+    entry_field_enabled,
 )
 from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
 from bookclub.domain import can_modify, require_book
@@ -35,7 +35,7 @@ from bookclub.ui import (
 )
 
 # ── /edit — sequential field-by-field editor ──────────────────────────────────
-_BASE_EDIT_FIELDS = [
+_EDIT_FIELD_ORDER = [
     "title",
     "author",
     "pages",
@@ -43,16 +43,18 @@ _BASE_EDIT_FIELDS = [
     "review_link",
     "original_language",
     "creation_year",
+    "language_levels",
     "description",
 ]
-EDIT_FIELDS = list(_BASE_EDIT_FIELDS)
+_EDIT_TO_ENTRY = {"review_link": "review"}
+EDIT_FIELDS = [f for f in _EDIT_FIELD_ORDER if f != "language_levels"]
 
 
 def get_edit_fields() -> list[str]:
-    fields = list(_BASE_EDIT_FIELDS)
-    if language_level_prompt_enabled():
-        idx = fields.index("creation_year") + 1
-        fields.insert(idx, "language_levels")
+    fields: list[str] = []
+    for field in _EDIT_FIELD_ORDER:
+        if entry_field_enabled(_EDIT_TO_ENTRY.get(field, field)):
+            fields.append(field)
     return fields
 
 

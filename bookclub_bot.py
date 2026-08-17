@@ -3,7 +3,9 @@
 Book Club Telegram Bot — EN/RU/DE
 =========================================
 Fields per book:
-  - title, author, pages, fiction, review_link, description
+  - title (always required)
+  - optional via ENTRY_FIELDS: author, pages, fiction, review_link,
+    original_language, creation_year, language_levels, description
   - added_at, added_by
   - discussed (flag, admin-only), discussed_at (date)
 

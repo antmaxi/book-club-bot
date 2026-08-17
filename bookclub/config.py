@@ -38,11 +38,84 @@ def _env_truthy(name: str) -> bool:
 
 
 # When enabled, /add and /edit ask for estimated CEFR level(s) (A1–C2).
+# Also implied by listing language_levels in ENTRY_FIELDS (or ENTRY_FIELDS=all).
 ASK_LANGUAGE_LEVEL = _env_truthy("ASK_LANGUAGE_LEVEL")
+
+# Optional entry properties (title is always required). Unset = all of these
+# except language_levels; set ASK_LANGUAGE_LEVEL=1 or include language_levels
+# (or ENTRY_FIELDS=all) to collect CEFR too.
+OPTIONAL_ENTRY_FIELDS: tuple[str, ...] = (
+    "author",
+    "pages",
+    "fiction",
+    "review",
+    "original_language",
+    "creation_year",
+    "language_levels",
+    "description",
+)
+_ENTRY_FIELD_ALIASES = {
+    "review_link": "review",
+    "runtime": "pages",
+}
+DEFAULT_ENTRY_FIELDS = frozenset(
+    name for name in OPTIONAL_ENTRY_FIELDS if name != "language_levels"
+)
+
+
+def canonical_entry_field(name: str) -> str:
+    key = name.strip().lower().replace("-", "_")
+    return _ENTRY_FIELD_ALIASES.get(key, key)
+
+
+def parse_entry_fields(
+    raw: str | None, *, ask_language_level: bool = False
+) -> frozenset[str]:
+    """Which optional fields to ask on /add and show on cards."""
+    names: set[str]
+    if raw is None or not raw.strip():
+        names = set(DEFAULT_ENTRY_FIELDS)
+    else:
+        token = raw.strip().lower()
+        if token in ("all", "*"):
+            names = set(OPTIONAL_ENTRY_FIELDS)
+        else:
+            names = set()
+            unknown: list[str] = []
+            for part in raw.split(","):
+                name = canonical_entry_field(part)
+                if not name or name == "title":
+                    continue
+                if name in OPTIONAL_ENTRY_FIELDS:
+                    names.add(name)
+                else:
+                    unknown.append(part.strip())
+            if unknown:
+                print(
+                    f"Warning: unknown ENTRY_FIELDS {unknown!r}. "
+                    f"Valid: {', '.join(OPTIONAL_ENTRY_FIELDS)} "
+                    "(title is always included)."
+                )
+    if ask_language_level:
+        names.add("language_levels")
+    return frozenset(names)
+
+
+ENTRY_FIELDS = parse_entry_fields(
+    os.environ.get("ENTRY_FIELDS"), ask_language_level=ASK_LANGUAGE_LEVEL
+)
+
+
+def entry_field_enabled(name: str) -> bool:
+    """True for title always; otherwise whether the optional field is on."""
+    key = canonical_entry_field(name)
+    if key == "title":
+        return True
+    return key in ENTRY_FIELDS
 
 
 def language_level_prompt_enabled() -> bool:
-    return ASK_LANGUAGE_LEVEL
+    return entry_field_enabled("language_levels")
 
 
 def _display_utc_offset_hours_from_env() -> int:

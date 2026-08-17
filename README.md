@@ -87,7 +87,10 @@ Skipping a long stretch of meetings parks the surplus at 0; coming back to one m
    ALLOWED_CHAT_ID="CHAT_ID"  # Optional: Restrict bot usage to members of this chat
    CHAT_LANG="ru"             # Optional: Group-chat language: en, ru, or de (default: ru)
    CLUB_ENTITY="book"         # Optional: What to vote on — book (default) or film
-   ASK_LANGUAGE_LEVEL="1"     # Optional: Ask CEFR level(s) A1–C2 when adding/editing (books or films)
+   # Optional: which extra fields to ask on /add and show on cards (title is always required).
+   # Unset = all except language_levels. "all" includes CEFR too. Aliases: review_link, runtime.
+   # ENTRY_FIELDS="author,pages,fiction,review,original_language,creation_year,description"
+   ASK_LANGUAGE_LEVEL="1"     # Optional: also ask CEFR A1–C2 (adds language_levels to ENTRY_FIELDS)
    DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
@@ -108,9 +111,24 @@ The database schema is shared. For films, fields are reused as follows:
 | `author` | Author | Director |
 | `pages` | Page count | Runtime (minutes) |
 | `fiction` | Fiction / non-fiction | Feature film / documentary |
-| `language_levels` | Comma-separated CEFR levels (A1–C2), if `ASK_LANGUAGE_LEVEL` is enabled | Same |
+| `language_levels` | Comma-separated CEFR levels (A1–C2), if enabled | Same |
 
-Set `ASK_LANGUAGE_LEVEL=1` to prompt members to pick one or more CEFR levels (A1 through C2) via inline buttons when adding or editing an entry.
+### Entry fields (`ENTRY_FIELDS`)
+
+Title is always required. Every other property can be turned off. `ENTRY_FIELDS` is a comma-separated list of:
+
+`author`, `pages`, `fiction`, `review`, `original_language`, `creation_year`, `language_levels`, `description`
+
+Aliases: `review_link` → `review`, `runtime` → `pages`. Listing `title` is ignored (it is always on).
+
+- **Unset or empty:** all of the fields above except `language_levels` (same as the original `/add` flow).
+- **`ENTRY_FIELDS=all`** or **`*`:** every optional field, including CEFR levels.
+- **`ASK_LANGUAGE_LEVEL=1`:** still adds `language_levels` even if you listed a subset (or left `ENTRY_FIELDS` unset).
+- Disabled fields are skipped on `/add` and `/edit`, and hidden on cards, compact lists, and `/top` even if older database rows still have values.
+
+Example: `ENTRY_FIELDS=author,description` asks only title, author, and description.
+
+Set `ASK_LANGUAGE_LEVEL=1` (or include `language_levels` in `ENTRY_FIELDS`) to prompt members to pick one or more CEFR levels (A1 through C2) via inline buttons when adding or editing an entry.
 
 You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 
