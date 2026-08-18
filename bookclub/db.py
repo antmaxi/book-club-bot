@@ -13,10 +13,12 @@ from bookclub.types import BookLike
 
 IMPORTED_USER_ID = config.IMPORTED_USER_ID
 
+
 def init_db() -> None:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS books (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 title         TEXT NOT NULL,
@@ -33,7 +35,8 @@ def init_db() -> None:
                 added_by_username TEXT DEFAULT NULL,
                 added_at          TEXT NOT NULL
             )
-        """)
+        """
+        )
         # Migrate existing DB: add book columns if missing
         for col, definition in [
             ("pages", "INTEGER NOT NULL DEFAULT 0"),
@@ -62,31 +65,38 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS votes (
                 user_id INTEGER NOT NULL,
                 book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                 score   INTEGER NOT NULL,
                 PRIMARY KEY (user_id, book_id)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id      INTEGER NOT NULL,
                 setting_key  TEXT NOT NULL,
                 setting_val  INTEGER NOT NULL,
                 PRIMARY KEY (user_id, setting_key)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS club_users (
                 user_id      INTEGER PRIMARY KEY,
                 full_name    TEXT NOT NULL DEFAULT '',
                 username     TEXT,
                 last_seen_at TEXT NOT NULL
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS meetings (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -94,26 +104,44 @@ def init_db() -> None:
                 created_at   TEXT NOT NULL,
                 created_by   INTEGER NOT NULL
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS meeting_attendees (
                 meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
                 user_id    INTEGER NOT NULL,
                 PRIMARY KEY (meeting_id, user_id)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT user_id, '', NULL, datetime('now') FROM votes
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT user_id, '', NULL, datetime('now') FROM user_settings
-        """)
-        conn.execute("""
-            INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
+        """
+        )
+        # Votes/settings backfill creates empty names first; fill them from books
+        # when we have added_by_name (INSERT OR IGNORE would skip those rows).
+        conn.execute(
+            """
+            INSERT INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT added_by, added_by_name, added_by_username, added_at FROM books
-        """)
+            WHERE added_by > 0
+            ON CONFLICT(user_id) DO UPDATE SET
+              full_name = CASE
+                WHEN club_users.full_name = '' AND excluded.full_name != ''
+                THEN excluded.full_name
+                ELSE club_users.full_name END,
+              username = COALESCE(club_users.username, excluded.username)
+        """
+        )
         conn.commit()
     db_rebuild_attendance_surplus()
 
@@ -220,14 +248,22 @@ def db_insert_seed_book(
 # Admin setting: 0 = count every vote (default); 1 = only votes from users
 # whose running attendance surplus is at least 1. Surplus is walked in
 # meeting order: visit +1, miss −1, never below 0. Coming back after a
-# long gap can restore voting. With no meetings recorded, every vote still
-# counts (otherwise the list would go empty).
+# long gap can restore voting. Meetings dated after today (club display
+# timezone) are ignored until that date. With no past meetings recorded,
+# every vote still counts (otherwise the list would go empty).
 VOTES_USE_ATTENDANCE_KEY = "votes_use_attendance"
 
-# user_id → surplus after the last meeting. Rebuilt at startup and whenever
-# a meeting is recorded. Users who never attended are omitted (surplus 0).
+# user_id → surplus after the last meeting on or before _attendance_as_of.
+# Rebuilt at startup, whenever a meeting is recorded, and when the calendar
+# date changes. Users who never attended are omitted (surplus 0).
 _attendance_surplus: dict[int, int] = {}
 _attendance_meeting_count: int = 0
+_attendance_as_of: str = ""
+
+
+def club_today_date() -> str:
+    """Club calendar date (YYYY-MM-DD) in the configured display timezone."""
+    return datetime.now(config.display_timezone()).strftime("%Y-%m-%d")
 
 
 def db_votes_use_attendance() -> bool:
@@ -236,12 +272,17 @@ def db_votes_use_attendance() -> bool:
 
 def db_rebuild_attendance_surplus() -> None:
     """Precompute running attendance surplus for every known attendee."""
-    global _attendance_surplus, _attendance_meeting_count
+    global _attendance_surplus, _attendance_meeting_count, _attendance_as_of
+    today = club_today_date()
     with sqlite3.connect(config.DB_PATH) as conn:
         meetings = conn.execute(
-            "SELECT id FROM meetings ORDER BY meeting_date ASC, id ASC"
+            """SELECT id FROM meetings
+               WHERE meeting_date <= ?
+               ORDER BY meeting_date ASC, id ASC""",
+            (today,),
         ).fetchall()
         _attendance_meeting_count = len(meetings)
+        _attendance_as_of = today
         if not meetings:
             _attendance_surplus = {}
             return
@@ -266,11 +307,18 @@ def db_rebuild_attendance_surplus() -> None:
         _attendance_surplus = surplus
 
 
+def _ensure_attendance_surplus_current() -> None:
+    if _attendance_as_of != club_today_date():
+        db_rebuild_attendance_surplus()
+
+
 def db_attendance_surplus(user_id: int) -> int:
+    _ensure_attendance_surplus_current()
     return _attendance_surplus.get(user_id, 0)
 
 
 def _votes_join_sql() -> str:
+    _ensure_attendance_surplus_current()
     if not db_votes_use_attendance() or _attendance_meeting_count == 0:
         return "LEFT JOIN votes v ON b.id = v.book_id"
     eligible = [uid for uid, score in _attendance_surplus.items() if score >= 1]
@@ -619,9 +667,14 @@ def db_get_meeting_attendee_rows(meeting_id: int) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def club_user_has_shown_name(full_name: str | None, username: str | None) -> bool:
+    return bool((full_name or "").strip() or (username or "").strip())
+
+
 def format_club_user_display(
     user_id: int, full_name: str | None, username: str | None
 ) -> str:
+    """Prefer Telegram shown name, then @username; numeric ID only as last resort."""
     name = (full_name or "").strip()
     uname = (username or "").strip()
     if name and uname:
@@ -853,4 +906,3 @@ def db_get_admin_setting(key: str, default: int = 0) -> int:
 
 def db_set_admin_setting(key: str, value: int) -> None:
     db_set_user_setting(ADMIN_USER_ID, key, value)
-

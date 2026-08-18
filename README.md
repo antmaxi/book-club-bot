@@ -51,14 +51,16 @@ A Telegram bot (English / Russian / German) to help book clubs manage their read
 
 In `/adminconsole`, **Vote counting** can be set to **attendance**. Rankings (`/list`, `/top`, book cards) then ignore votes from people whose running attendance surplus is 0. Everyone can still cast and change votes; only the tally used for ranking changes.
 
-Surplus is precomputed at bot start (and whenever a meeting is recorded). Meetings are walked in date order for each person:
+Surplus is precomputed at bot start (and whenever a meeting is recorded, or when the calendar date changes). Meetings are walked in date order for each person, **excluding discussions whose date is still in the future** (compared with today in the bot’s display timezone):
 
 1. Start at 0.
 2. Attended that meeting: **+1**.
 3. Missed that meeting: **−1**, but never below 0.
 4. That person’s votes count only if the final surplus is **at least 1**.
 
-Skipping a long stretch of meetings parks the surplus at 0; coming back to one meeting restores it to 1 and voting ability with it. If no meetings have been recorded yet, all votes still count.
+You can record attendance for a scheduled future discussion; it does not affect rankings until that date. Skipping a long stretch of meetings parks the surplus at 0; coming back to one meeting restores it to 1 and voting ability with it. If no past meetings have been recorded yet, all votes still count.
+
+When recording or viewing attendance, the bot shows each person’s Telegram display name (and `@username` when they have one). Numeric Telegram IDs appear only if the name cannot be resolved.
 
 ## 🖼 Screenshots
 ![Top](screenshots/2026-04-04_screenshot_top.png)

@@ -18,6 +18,7 @@ from bookclub.config import (
     entry_field_enabled,
 )
 from bookclub.db import (
+    club_user_has_shown_name,
     db_meeting_user_suggestions,
     db_upsert_club_user,
     format_club_user_display,
@@ -417,6 +418,51 @@ def _meeting_attendee_ids(ctx: ContextTypes.DEFAULT_TYPE) -> set[int]:
     return raw
 
 
+def _telegram_shown_profile(obj: Any) -> tuple[str, str | None]:
+    """Extract (full_name, username) from a Telegram User or private Chat.
+
+    Non-string attributes (e.g. AsyncMock in tests) are treated as missing so
+    we never persist dummy names.
+    """
+    obj_type = getattr(obj, "type", None)
+    if isinstance(obj_type, str) and obj_type not in ("private",):
+        return "", None
+    if getattr(obj, "is_bot", False) is True:
+        return "", None
+    name = getattr(obj, "full_name", None)
+    if not isinstance(name, str):
+        first = getattr(obj, "first_name", None)
+        last = getattr(obj, "last_name", None)
+        first_s = first if isinstance(first, str) else ""
+        last_s = last if isinstance(last, str) else ""
+        name = f"{first_s} {last_s}".strip()
+    username = getattr(obj, "username", None)
+    uname = username.strip() if isinstance(username, str) and username.strip() else None
+    return (name or "").strip(), uname
+
+
+async def fetch_telegram_user_profile(bot: Bot, user_id: int) -> tuple[str, str | None]:
+    """Look up a user's shown name via the group, then via a private getChat."""
+    if user_id <= 0:
+        return "", None
+    if config.ALLOWED_CHAT_ID:
+        try:
+            member = await bot.get_chat_member(config.ALLOWED_CHAT_ID, user_id)
+            name, uname = _telegram_shown_profile(getattr(member, "user", member))
+            if name or uname:
+                return name, uname
+        except Exception as e:
+            logger.warning(
+                "Could not fetch chat member %s for attendance name: %s", user_id, e
+            )
+    try:
+        chat = await bot.get_chat(user_id)
+    except Exception as e:
+        logger.warning("Could not fetch chat %s for attendance name: %s", user_id, e)
+        return "", None
+    return _telegram_shown_profile(chat)
+
+
 async def _refresh_chat_admin_suggestions(bot: Bot) -> None:
     """Best-effort: record chat admins as known users for attendee suggestions."""
     if not config.ALLOWED_CHAT_ID:
@@ -433,6 +479,24 @@ async def _refresh_chat_admin_suggestions(bot: Bot) -> None:
         if user.is_bot:
             continue
         db_upsert_club_user(user.id, user.full_name or "", user.username)
+
+
+async def refresh_missing_club_user_names(bot: Bot, rows: Sequence[BookLike]) -> bool:
+    """Fill Telegram shown names for club users that would otherwise display as IDs.
+
+    Returns True if any row was updated (caller should re-query).
+    """
+    updated = False
+    for row in rows:
+        uid = int(row["user_id"])
+        if club_user_has_shown_name(row["full_name"], row["username"]):
+            continue
+        name, uname = await fetch_telegram_user_profile(bot, uid)
+        if not name and not uname:
+            continue
+        db_upsert_club_user(uid, name, uname)
+        updated = True
+    return updated
 
 
 def meeting_attendees_keyboard(
@@ -521,6 +585,8 @@ async def _show_meeting_attendee_picker(
         return ConversationHandler.END
     await _refresh_chat_admin_suggestions(ctx.bot)
     suggestions = db_meeting_user_suggestions(book_id)
+    if await refresh_missing_club_user_names(ctx.bot, suggestions):
+        suggestions = db_meeting_user_suggestions(book_id)
     selected = _meeting_attendee_ids(ctx)
     meeting_date = ctx.user_data.get("meeting_date", "")
     text = tr(

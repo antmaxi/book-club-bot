@@ -24,9 +24,9 @@ from bookclub.config import (
     CHAT_LANG,
 )
 from bookclub.db import (
+    VOTES_USE_ATTENDANCE_KEY,
     book_to_export_payload,
     db_create_meeting,
-    VOTES_USE_ATTENDANCE_KEY,
     db_get_admin_setting,
     db_get_book,
     db_get_books,
@@ -38,13 +38,13 @@ from bookclub.db import (
     db_import_book,
     db_list_meetings,
     db_mark_discussed,
-    db_set_discussed_at,
     db_set_admin_setting,
+    db_set_discussed_at,
     db_set_hidden,
     db_upsert_club_user,
+    find_similar_book_titles,
     format_club_user_display,
     parse_book_import,
-    find_similar_book_titles,
 )
 from bookclub.domain import is_admin, require_book
 from bookclub.i18n import PM, get_lang, s, tr
@@ -56,11 +56,13 @@ from bookclub.ui import (
     book_card,
     books_keyboard,
     books_top_n,
+    fetch_telegram_user_profile,
     fmt_dt_utc,
     h,
     meetings_keyboard,
     parse_date,
     post_book_voting_to_group_chat,
+    refresh_missing_club_user_names,
     score_keyboard,
     show_notify_books_picker,
     similar_title_confirm_keyboard,
@@ -819,24 +821,13 @@ async def admin_meeting_add_id_handler(
         )
         return ADMIN_MEETING_ADD_ID
 
-    full_name = ""
-    username: str | None = None
-    if config.ALLOWED_CHAT_ID:
-        try:
-            member = await update.get_bot().get_chat_member(
-                config.ALLOWED_CHAT_ID, user_id
-            )
-            u = member.user
-            full_name = u.full_name or ""
-            username = u.username
-        except Exception as e:
-            logger.warning(
-                "admin_meeting_add_id: get_chat_member failed for %s: %s", user_id, e
-            )
+    full_name, username = await fetch_telegram_user_profile(ctx.bot, user_id)
     db_upsert_club_user(user_id, full_name, username)
     _meeting_attendee_ids(ctx).add(user_id)
+    display = format_club_user_display(user_id, full_name, username)
+    name_html = h(display) if display != str(user_id) else f"<code>{user_id}</code>"
     await update.message.reply_text(
-        tr(ctx, "meeting_attendee_added_id", user_id=user_id), parse_mode=PM
+        tr(ctx, "meeting_attendee_added_id", name=name_html), parse_mode=PM
     )
     page = int(ctx.user_data.get("meeting_attendee_page", 0))
     return await _show_meeting_attendee_picker(
@@ -859,6 +850,8 @@ async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text("Error: meeting not found.")
         return ConversationHandler.END
     rows = db_get_meeting_attendee_rows(meeting["id"])
+    if await refresh_missing_club_user_names(ctx.bot, rows):
+        rows = db_get_meeting_attendee_rows(meeting["id"])
     lines = []
     for row in rows:
         name = format_club_user_display(

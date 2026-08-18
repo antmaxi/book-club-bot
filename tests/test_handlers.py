@@ -1652,6 +1652,86 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertIn("Past Read", body)
         self.assertIn("Alice", body)
 
+    async def test_meeting_picker_shows_display_name_when_no_nick(self):
+        bid = self._add_book("Discussed Book")
+        bot.db_mark_discussed(bid, "2026-03-01")
+        voter_id = 4243
+        bot.db_upsert_club_user(voter_id, "Maria Rossi", None)
+        bot.db_cast_vote(voter_id, bid, 1)
+
+        self._callback_query("admin:meeting_create")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        q = self._callback_query(f"admin_meeting_book:{bid}")
+        await bot.admin_meeting_book_cb(self.update, self.ctx)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        labels = [btn.text for row in markup.inline_keyboard for btn in row]
+        self.assertTrue(any("Maria Rossi" in label for label in labels))
+        self.assertFalse(any(str(voter_id) in label for label in labels))
+
+    async def test_meeting_picker_resolves_telegram_shown_name_for_id_only_user(self):
+        bid = self._add_book("Discussed Book")
+        bot.db_mark_discussed(bid, "2026-03-01")
+        voter_id = 4244
+        bot.db_upsert_club_user(voter_id, "", None)
+        bot.db_cast_vote(voter_id, bid, 1)
+
+        profile = MagicMock()
+        profile.full_name = "Ivan Petrov"
+        profile.username = None
+        profile.type = "private"
+        profile.is_bot = False
+        self.ctx.bot.get_chat = AsyncMock(return_value=profile)
+
+        self._callback_query("admin:meeting_create")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        q = self._callback_query(f"admin_meeting_book:{bid}")
+        await bot.admin_meeting_book_cb(self.update, self.ctx)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        labels = [btn.text for row in markup.inline_keyboard for btn in row]
+        self.assertTrue(any("Ivan Petrov" in label for label in labels))
+        self.assertFalse(any(str(voter_id) in label for label in labels))
+
+    async def test_meeting_view_resolves_shown_name_when_no_nick(self):
+        bid = self._add_book("Past Read")
+        bot.db_mark_discussed(bid, "2026-02-01")
+        uid = 7778
+        bot.db_upsert_club_user(uid, "", None)
+        mid = bot.db_create_meeting(
+            bid, "2026-02-15", self.update.effective_user.id, [uid]
+        )
+        profile = MagicMock()
+        profile.full_name = "Shown Name"
+        profile.username = None
+        profile.type = "private"
+        profile.is_bot = False
+        self.ctx.bot.get_chat = AsyncMock(return_value=profile)
+
+        q = self._callback_query(f"admin_meeting_view:{mid}")
+        await bot.admin_meeting_view_cb(self.update, self.ctx)
+        body = q.edit_message_text.call_args[0][0]
+        self.assertIn("Shown Name", body)
+        self.assertNotIn(str(uid), body)
+
+    async def test_meeting_add_id_uses_shown_name_in_confirmation(self):
+        bid = self._add_book("Discussed Book")
+        bot.db_mark_discussed(bid, "2026-03-01")
+        self.ctx.user_data["meeting_book_id"] = bid
+        self.ctx.user_data["meeting_date"] = "2026-03-01"
+        self.ctx.user_data["meeting_attendee_ids"] = set()
+        profile = MagicMock()
+        profile.full_name = "No Nick User"
+        profile.username = None
+        profile.type = "private"
+        profile.is_bot = False
+        self.ctx.bot.get_chat = AsyncMock(return_value=profile)
+        self.message.text = "55555"
+
+        state = await bot.admin_meeting_add_id_handler(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
+        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        self.assertTrue(any("No Nick User" in t for t in texts))
+        self.assertFalse(any("55555" in t for t in texts))
+
 
 # ── Voting in a shared group message ──────────────────────────────────────────
 

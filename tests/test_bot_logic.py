@@ -353,6 +353,79 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(book["vote_count"], 1)
         self.assertEqual(book["avg_score"], 1)
 
+    def test_future_meetings_are_ignored_in_attendance_surplus(self):
+        """Discussions dated after today must not affect vote eligibility yet."""
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        voter = 77
+        bot.db_cast_vote(voter, book_id, 1)
+        with patch("bookclub.db.club_today_date", return_value="2026-06-01"):
+            bot.db_create_meeting(other, "2026-06-01", 1, [voter])
+            bot.db_create_meeting(other, "2026-06-15", 1, [])  # future miss
+            self.assertEqual(bot.db_attendance_surplus(voter), 1)
+            bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+            book = bot.db_get_book(book_id)
+            self.assertEqual(book["vote_count"], 1)
+            self.assertEqual(book["avg_score"], 1)
+
+    def test_only_future_meetings_count_all_votes(self):
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        voter = 88
+        bot.db_cast_vote(voter, book_id, 1)
+        with patch("bookclub.db.club_today_date", return_value="2026-06-01"):
+            bot.db_create_meeting(other, "2026-12-01", 1, [])
+            bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+            book = bot.db_get_book(book_id)
+            self.assertEqual(book["vote_count"], 1)
+            self.assertEqual(book["avg_score"], 1)
+
+    def test_future_meeting_starts_counting_when_its_date_arrives(self):
+        book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
+        voter = 99
+        bot.db_cast_vote(voter, book_id, 1)
+        bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
+        with patch("bookclub.db.club_today_date", return_value="2026-06-01"):
+            bot.db_create_meeting(other, "2026-06-01", 1, [voter])
+            bot.db_create_meeting(other, "2026-06-02", 1, [])
+            self.assertEqual(bot.db_attendance_surplus(voter), 1)
+            self.assertEqual(bot.db_get_book(book_id)["vote_count"], 1)
+        with patch("bookclub.db.club_today_date", return_value="2026-06-02"):
+            self.assertEqual(bot.db_attendance_surplus(voter), 0)
+            self.assertEqual(bot.db_get_book(book_id)["vote_count"], 0)
+
+    def test_format_club_user_display_prefers_shown_name_without_nick(self):
+        self.assertEqual(
+            bot.format_club_user_display(123, "Maria Rossi", None), "Maria Rossi"
+        )
+        self.assertEqual(
+            bot.format_club_user_display(123, "Maria Rossi", "maria"),
+            "Maria Rossi (@maria)",
+        )
+        self.assertEqual(bot.format_club_user_display(123, "", "maria"), "@maria")
+        self.assertEqual(bot.format_club_user_display(123, "", None), "123")
+        self.assertFalse(bot.club_user_has_shown_name("", None))
+        self.assertTrue(bot.club_user_has_shown_name("Maria", None))
+
+    def test_init_db_fills_empty_club_user_names_from_books(self):
+        book_id = bot.db_add_book(
+            "Named", "A", 10, True, "", "", 42, "Alice Example", None
+        )
+        bot.db_cast_vote(42, book_id, 1)
+        with sqlite3.connect(bot.DB_PATH) as conn:
+            conn.execute(
+                "UPDATE club_users SET full_name='', username=NULL WHERE user_id=42"
+            )
+            conn.commit()
+        suggestions = bot.db_meeting_user_suggestions(book_id)
+        row = next(r for r in suggestions if int(r["user_id"]) == 42)
+        self.assertEqual(row["full_name"], "")
+        bot.init_db()
+        suggestions = bot.db_meeting_user_suggestions(book_id)
+        row = next(r for r in suggestions if int(r["user_id"]) == 42)
+        self.assertEqual(row["full_name"], "Alice Example")
+
     # -- Update field --
 
     def test_db_update_book_field_title(self):
