@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -18,12 +20,20 @@ from bookclub.config import (
 )
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.handlers.add_flow import (
+    add_next_state,
     add_prompt_markup,
     build_add_prompt_text,
     continue_add,
     send_add_prompt,
 )
 from bookclub.i18n import PM, get_lang, tr
+from bookclub.llm import (
+    apply_suggestions_to_book,
+    llm_error_kind_i18n_key,
+    split_llm_error,
+    suggest_book_fields,
+    ui_llm_error,
+)
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
 from bookclub.original_languages import stored_original_language
@@ -42,9 +52,22 @@ async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return await send_add_prompt(update, ctx, ADDING_TITLE)
 
 
+def _clear_add_state(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    ctx.user_data.pop("new_book", None)
+    ctx.user_data.pop("add_state", None)
+    ctx.user_data.pop("admin_add", None)
+    ctx.user_data.pop("llm_suggestions_applied", None)
+    ctx.user_data.pop("llm_filled_keys", None)
+
+
 async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     title = update.message.text.strip()
-    ctx.user_data["new_book"]["title"] = title
+    if ctx.user_data.get("admin_add"):
+        ctx.user_data["new_book"] = {"title": title}
+        ctx.user_data.pop("llm_suggestions_applied", None)
+        ctx.user_data.pop("llm_filled_keys", None)
+    else:
+        ctx.user_data.setdefault("new_book", {})["title"] = title
     lang = get_lang(ctx)
     similar = find_similar_book_titles(title)
     if similar:
@@ -60,7 +83,7 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             parse_mode=PM,
         )
         return ADDING_TITLE_CONFIRM
-    return await continue_add(update, ctx, ADDING_TITLE)
+    return await advance_after_title(update, ctx, ADDING_TITLE)
 
 
 async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -68,11 +91,76 @@ async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     _, action = query.data.split(":", 1)
     if action == "no":
-        ctx.user_data.pop("new_book", None)
-        ctx.user_data.pop("add_state", None)
+        _clear_add_state(ctx)
         await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
         return ConversationHandler.END
-    return await continue_add(update, ctx, ADDING_TITLE_CONFIRM, edit=True)
+    return await advance_after_title(update, ctx, ADDING_TITLE_CONFIRM, edit=True)
+
+
+async def _send_add_status(update: Update, text: str, *, edit: bool = False) -> None:
+    query = update.callback_query
+    if edit and query:
+        await query.edit_message_text(text, parse_mode=PM)
+        return
+    if update.message:
+        await update.message.reply_text(text, parse_mode=PM)
+        return
+    if query and query.message:
+        await query.message.reply_text(text, parse_mode=PM)  # type: ignore[attr-defined]
+
+
+async def apply_admin_llm_suggestions(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not ctx.user_data.get("admin_add"):
+        return
+    if ctx.user_data.get("llm_suggestions_applied"):
+        return
+    if add_next_state(ADDING_TITLE) is None:
+        ctx.user_data["llm_suggestions_applied"] = True
+        return
+    title = str(ctx.user_data.get("new_book", {}).get("title") or "")
+    await _send_add_status(
+        update,
+        tr(ctx, "admin_add_suggesting", title=h(title)),
+        edit=bool(update.callback_query),
+    )
+    lang = get_lang(ctx)
+    suggestions, error = await asyncio.to_thread(suggest_book_fields, title, lang=lang)
+    ctx.user_data["llm_suggestions_applied"] = True
+    if error == "not_configured":
+        await _send_add_status(update, tr(ctx, "admin_add_no_llm"))
+        return
+    if error:
+        kind, detail = split_llm_error(error)
+        await _send_add_status(
+            update,
+            tr(
+                ctx,
+                "admin_add_suggest_failed",
+                kind=h(tr(ctx, llm_error_kind_i18n_key(kind))),
+                error=h(ui_llm_error(detail)),
+            ),
+        )
+        return
+    nb = ctx.user_data.setdefault("new_book", {})
+    ctx.user_data["llm_filled_keys"] = apply_suggestions_to_book(nb, suggestions)
+    if ctx.user_data["llm_filled_keys"]:
+        await _send_add_status(update, tr(ctx, "admin_add_suggested"))
+
+
+async def advance_after_title(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    current: int,
+    *,
+    edit: bool = False,
+) -> int:
+    if ctx.user_data.get("admin_add"):
+        await apply_admin_llm_suggestions(update, ctx)
+        # Status messages already posted; send the next field as a new message.
+        return await continue_add(update, ctx, current, edit=False)
+    return await continue_add(update, ctx, current, edit=edit)
 
 
 async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -284,8 +372,7 @@ async def complete_new_book(
     elif query and query.message:
         await query.edit_message_text(confirm_text, parse_mode=PM)
 
-    ctx.user_data.pop("new_book", None)
-    ctx.user_data.pop("add_state", None)
+    _clear_add_state(ctx)
 
     schedule_new_book_notifications(ctx.job_queue, book_id, user.id)
 

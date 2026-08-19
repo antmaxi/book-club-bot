@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Callable, Mapping
 from datetime import datetime
+from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
 from bookclub.config import (
+    ADDING_TITLE,
     ADMIN_EXPORT_CHOOSE,
     ADMIN_HIDE_CHOOSE,
     ADMIN_IMPORT_CONFIRM,
@@ -21,7 +25,6 @@ from bookclub.config import (
     ADMIN_NOTIFY_CHAT_PICK,
     ADMIN_NOTIFY_PICK,
     ADMIN_UNHIDE_CHOOSE,
-    CHAT_LANG,
 )
 from bookclub.db import (
     VOTES_USE_ATTENDANCE_KEY,
@@ -32,7 +35,6 @@ from bookclub.db import (
     db_get_books,
     db_get_meeting,
     db_get_meeting_attendee_rows,
-    db_get_user_setting,
     db_get_user_vote,
     db_get_users_with_setting,
     db_import_book,
@@ -47,6 +49,7 @@ from bookclub.db import (
     parse_book_import,
 )
 from bookclub.domain import is_admin, require_book
+from bookclub.handlers.add_flow import send_add_prompt
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.logging_setup import logger
 from bookclub.notifications import schedule_new_book_notifications
@@ -106,6 +109,7 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
     keyboard = InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton(tr(ctx, "admin_add_btn"), callback_data="admin:add")],
             [
                 InlineKeyboardButton(
                     tr(ctx, "admin_mark_btn"), callback_data="admin:mark"
@@ -194,6 +198,12 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await query.answer()
     data = query.data.split(":")[1]
 
+    if data == "add":
+        ctx.user_data["new_book"] = {}
+        ctx.user_data["admin_add"] = True
+        ctx.user_data.pop("llm_suggestions_applied", None)
+        ctx.user_data.pop("llm_filled_keys", None)
+        return await send_add_prompt(update, ctx, ADDING_TITLE, edit=True)
     if data == "mark":
         keyboard = InlineKeyboardMarkup(
             [

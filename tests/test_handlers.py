@@ -567,6 +567,80 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(self.ctx.user_data["new_book"]["title"], "My Book")
         self.assertEqual(state, bot.ADDING_AUTHOR)
 
+    async def test_regular_add_does_not_call_llm(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "My Book"
+        with patch("bookclub.handlers.add.suggest_book_fields") as mocked:
+            await bot.add_title(self.update, self.ctx)
+        mocked.assert_not_called()
+
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_admin_add_title_applies_suggestions(self, mock_suggest):
+        mock_suggest.return_value = (
+            {
+                "author": "Leo Tolstoy",
+                "pages": 1225,
+                "fiction": True,
+                "review_link": "https://en.wikipedia.org/wiki/War_and_Peace",
+                "original_language": "Russian",
+                "creation_year": 1869,
+                "description": "An epic novel.",
+            },
+            None,
+        )
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "War and Peace"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        nb = self.ctx.user_data["new_book"]
+        self.assertEqual(nb["author"], "Leo Tolstoy")
+        self.assertEqual(nb["pages"], 1225)
+        self.assertEqual(nb["creation_year"], 1869)
+        self.assertIn("author", self.ctx.user_data["llm_filled_keys"])
+        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        self.assertTrue(any("Leo Tolstoy" in t for t in texts))
+        self.assertTrue(any("Suggested" in t for t in texts))
+        mock_suggest.assert_called_once()
+        self.assertEqual(mock_suggest.call_args[0][0], "War and Peace")
+
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_admin_add_title_without_llm_still_advances(self, mock_suggest):
+        mock_suggest.return_value = ({}, "not_configured")
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "Mystery Title"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertNotIn("author", self.ctx.user_data["new_book"])
+        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        self.assertTrue(any("LLM_API_KEY" in t for t in texts))
+
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_admin_add_llm_failure_still_advances(self, mock_suggest):
+        mock_suggest.return_value = ({}, "auth: HTTP 401: Incorrect API key")
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "Mystery Title"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        self.assertTrue(any("Could not fetch suggestions" in t for t in texts))
+        self.assertTrue(any("API key / auth" in t for t in texts))
+        self.assertTrue(any("401" in t and "Incorrect API key" in t for t in texts))
+
+    async def test_admin_add_override_author_clears_suggestion_flag(self):
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Suggested"}
+        self.ctx.user_data["llm_filled_keys"] = {"author", "pages"}
+        self.ctx.user_data["llm_suggestions_applied"] = True
+        self.message.text = "Correct Author"
+        state = await bot.add_author(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_PAGES)
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Correct Author")
+        self.assertNotIn("author", self.ctx.user_data["llm_filled_keys"])
+        self.assertIn("pages", self.ctx.user_data["llm_filled_keys"])
+
     async def test_add_title_similar_warns_before_author(self):
         self._add_book("War and Peace")
         self.ctx.user_data["new_book"] = {}
@@ -692,6 +766,26 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(state, bot.ADDING_DESCRIPTION)
         q.answer.assert_awaited()
 
+    async def test_add_forward_from_description_with_value_completes(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 10,
+            "fiction": True,
+            "review_link": "http://x.com",
+            "original_language": "German",
+            "creation_year": 1984,
+            "description": "Kept description",
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_DESCRIPTION
+        self.ctx.job_queue = MagicMock()
+        q = self._callback_query("add_forward")
+        q.message = None
+        state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        book = bot.db_get_books(discussed=False)[0]
+        self.assertEqual(book["description"], "Kept description")
+
     async def test_add_forward_after_skipped_year(self):
         self.ctx.user_data["new_book"] = {"creation_year": None}
         self.ctx.user_data["add_state"] = bot.ADDING_CREATION_YEAR
@@ -729,6 +823,15 @@ class TestAddConversation(BotHandlerTestCase):
         data = self._keyboard_callback_data(markup)
         self.assertIn("add_back", data)
         self.assertIn("add_forward", data)
+
+    async def test_add_prompt_shows_suggested_value_for_llm_fields(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["llm_filled_keys"] = {"author"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("Suggested", text)
+        self.assertIn("Leo", text)
 
     async def test_add_prompt_hides_forward_when_value_missing(self):
         self.ctx.user_data["new_book"] = {"title": "T"}
@@ -1236,6 +1339,17 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(state, bot.ADMIN_MENU)
         self.message.reply_text.assert_called_once()
         self.assertIn("Admin Console", self.message.reply_text.call_args[0][0])
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn("admin:add", data)
+
+    async def test_admin_menu_cb_add_starts_title_prompt(self):
+        q = self._callback_query("admin:add")
+        state = await bot.admin_menu_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_TITLE)
+        self.assertTrue(self.ctx.user_data["admin_add"])
+        q.edit_message_text.assert_called_once()
+        self.assertIn("title", q.edit_message_text.call_args[0][0].lower())
 
     async def test_admin_menu_cb_mark_shows_submenu(self):
         q = self._callback_query("admin:mark")
@@ -2000,6 +2114,20 @@ class TestConversationWiring(unittest.TestCase):
         self.assertTrue(self._matches(handlers, "/today", is_command=True))
         self.assertTrue(self._matches(handlers, "2026-01-01", is_command=False))
 
+    def test_adminconsole_add_flow_handles_author_and_lets_cancel_through(self):
+        conv = self._states("adminconsole")
+        self.assertIn(bot.ADDING_AUTHOR, conv.states)
+        self.assertIn(bot.ADDING_TITLE, conv.states)
+        handlers = conv.states[bot.ADDING_AUTHOR]
+        self.assertTrue(
+            self._matches(handlers, "/forward", is_command=True),
+            "/forward must be handled in admin AI add",
+        )
+        self.assertFalse(
+            self._matches(handlers, "/cancel", is_command=True),
+            "/cancel must not be consumed as the author",
+        )
+
 
 class TestConversationReentry(unittest.TestCase):
     """Re-sending an entry command must always work.
@@ -2068,6 +2196,8 @@ class TestConversationReentry(unittest.TestCase):
             bot.ADMIN_HIDE_CHOOSE,
             bot.ADMIN_NOTIFY_PICK,
             bot.ADMIN_NOTIFY_CHAT_PICK,
+            bot.ADDING_TITLE,
+            bot.ADDING_AUTHOR,
         ):
             self.assertTrue(
                 self._handled(conv, upd, state),

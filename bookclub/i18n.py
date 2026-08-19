@@ -273,6 +273,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_forward_hint": "<i>Tap Forward or send /forward to keep this answer.</i>",
         "add_nav_hint": "<i>Tap Forward to keep this answer, or Back to change a previous one.</i>",
         "add_current_value": "Current: <i>{value}</i>",
+        "add_suggested_value": "Suggested: <i>{value}</i>",
+        "add_suggested_hint": (
+            "<i>Tap Forward to keep this suggestion, or send a new value to change it.</i>"
+        ),
         "ask_author": "{subtitle_icon} Who is the <b>{author}</b>?",
         "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
         "invalid_pages": "⚠️ Please enter a valid number of pages (e.g. 320):",
@@ -444,6 +448,33 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "never",
         "admin_export_btn": "📤 Export {sg} (JSON)",
         "admin_import_btn": "📥 Import {sg} (JSON)",
+        "admin_add_btn": "➕ Add {sg} (AI)",
+        "admin_add_suggesting": "⏳ Looking up details for <b>{title}</b>…",
+        "admin_add_suggested": (
+            "✅ Suggestions ready. Review each field — tap Forward to keep it, "
+            "or send a new value."
+        ),
+        "admin_add_suggest_failed": (
+            "⚠️ Could not fetch suggestions — {kind}: {error}. "
+            "Fill in the fields yourself."
+        ),
+        "llm_err_auth": "API key / auth",
+        "llm_err_rate_limit": "rate limit",
+        "llm_err_timeout": "timeout",
+        "llm_err_network": "network",
+        "llm_err_bad_model": "unknown model",
+        "llm_err_bad_request": "bad request",
+        "llm_err_not_found": "not found",
+        "llm_err_server": "provider server error",
+        "llm_err_empty_reply": "empty model reply",
+        "llm_err_unusable_json": "unusable JSON",
+        "llm_err_provider_non_json": "non-JSON response",
+        "llm_err_http": "HTTP error",
+        "llm_err_request": "request failed",
+        "admin_add_no_llm": (
+            "⚠️ No LLM API key configured (LLM_API_KEY / XAI_API_KEY / "
+            "OPENAI_API_KEY). Fill in the fields yourself."
+        ),
         "choose_export": "📤 Choose a {sg} to export as JSON:",
         "export_done": "📤 Copy the JSON below and send it to another bot instance (Import in /adminconsole):\n\n<pre>{payload}</pre>",
         "import_prompt": "📥 Paste the {sg} <b>JSON</b> from an export (one message). Votes are not included.\n\nSend /cancel to abort.",
@@ -508,6 +539,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_forward_hint": "<i>Нажмите «Вперёд» или отправьте /forward, чтобы оставить этот ответ.</i>",
         "add_nav_hint": "<i>Нажмите «Вперёд», чтобы оставить этот ответ, или «Назад», чтобы изменить предыдущий.</i>",
         "add_current_value": "Сейчас: <i>{value}</i>",
+        "add_suggested_value": "Предложение: <i>{value}</i>",
+        "add_suggested_hint": (
+            "<i>Нажмите «Вперёд», чтобы оставить это предложение, или отправьте новое значение, чтобы изменить его.</i>"
+        ),
         "ask_author": "{subtitle_icon} Кто <b>{author}</b>?",
         "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
         "invalid_pages": "⚠️ Введите корректное число страниц (например, 320):",
@@ -679,6 +714,33 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "никогда",
         "admin_export_btn": "📤 Экспорт {gen_sg} (JSON)",
         "admin_import_btn": "📥 Импорт {gen_sg} (JSON)",
+        "admin_add_btn": "➕ Добавить {acc} (ИИ)",
+        "admin_add_suggesting": "⏳ Ищу данные для <b>{title}</b>…",
+        "admin_add_suggested": (
+            "✅ Подсказки готовы. Проверьте каждое поле — «Вперёд», чтобы оставить, "
+            "или отправьте своё значение."
+        ),
+        "admin_add_suggest_failed": (
+            "⚠️ Не удалось получить подсказки — {kind}: {error}. "
+            "Заполните поля вручную."
+        ),
+        "llm_err_auth": "ключ API / авторизация",
+        "llm_err_rate_limit": "лимит запросов",
+        "llm_err_timeout": "таймаут",
+        "llm_err_network": "сеть",
+        "llm_err_bad_model": "неизвестная модель",
+        "llm_err_bad_request": "некорректный запрос",
+        "llm_err_not_found": "не найдено",
+        "llm_err_server": "ошибка сервера провайдера",
+        "llm_err_empty_reply": "пустой ответ модели",
+        "llm_err_unusable_json": "непригодный JSON",
+        "llm_err_provider_non_json": "ответ не JSON",
+        "llm_err_http": "ошибка HTTP",
+        "llm_err_request": "сбой запроса",
+        "admin_add_no_llm": (
+            "⚠️ Не задан ключ LLM (LLM_API_KEY / XAI_API_KEY / OPENAI_API_KEY). "
+            "Заполните поля вручную."
+        ),
         "choose_export": "📤 Выберите {acc} для экспорта в JSON:",
         "export_done": "📤 Скопируйте JSON и отправьте на другой инстанс бота (Импорт в /adminconsole):\n\n<pre>{payload}</pre>",
         "import_prompt": "📥 Вставьте <b>JSON</b> {gen_sg} из экспорта (одним сообщением). Голоса не переносятся.\n\n/cancel — отмена.",
@@ -743,6 +805,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_forward_hint": "<i>Tippe auf Weiter oder sende /forward, um diese Antwort zu behalten.</i>",
         "add_nav_hint": "<i>Tippe auf Weiter, um diese Antwort zu behalten, oder auf Zurück, um eine vorherige zu ändern.</i>",
         "add_current_value": "Aktuell: <i>{value}</i>",
+        "add_suggested_value": "Vorschlag: <i>{value}</i>",
+        "add_suggested_hint": (
+            "<i>Tippe auf Weiter, um diesen Vorschlag zu behalten, oder sende einen neuen Wert, um ihn zu ändern.</i>"
+        ),
         "ask_author": "{subtitle_icon} Wer ist der <b>{author}</b>?",
         "ask_pages": "📄 Wie viele <b>Seiten</b> hat es? (Zahl eingeben)",
         "invalid_pages": "⚠️ Bitte eine gültige Seitenzahl eingeben (z. B. 320):",
@@ -914,6 +980,33 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "nie",
         "admin_export_btn": "📤 {sg} exportieren (JSON)",
         "admin_import_btn": "📥 {sg} importieren (JSON)",
+        "admin_add_btn": "➕ {acc} hinzufügen (KI)",
+        "admin_add_suggesting": "⏳ Suche Angaben zu <b>{title}</b>…",
+        "admin_add_suggested": (
+            "✅ Vorschläge bereit. Prüfe jedes Feld — Weiter zum Behalten "
+            "oder einen neuen Wert senden."
+        ),
+        "admin_add_suggest_failed": (
+            "⚠️ Vorschläge konnten nicht geladen werden — {kind}: {error}. "
+            "Bitte die Felder selbst ausfüllen."
+        ),
+        "llm_err_auth": "API-Schlüssel / Auth",
+        "llm_err_rate_limit": "Rate-Limit",
+        "llm_err_timeout": "Zeitüberschreitung",
+        "llm_err_network": "Netzwerk",
+        "llm_err_bad_model": "unbekanntes Modell",
+        "llm_err_bad_request": "ungültige Anfrage",
+        "llm_err_not_found": "nicht gefunden",
+        "llm_err_server": "Anbieter-Serverfehler",
+        "llm_err_empty_reply": "leere Modellantwort",
+        "llm_err_unusable_json": "unbrauchbares JSON",
+        "llm_err_provider_non_json": "Antwort kein JSON",
+        "llm_err_http": "HTTP-Fehler",
+        "llm_err_request": "Anfrage fehlgeschlagen",
+        "admin_add_no_llm": (
+            "⚠️ Kein LLM-API-Schlüssel gesetzt (LLM_API_KEY / XAI_API_KEY / "
+            "OPENAI_API_KEY). Bitte die Felder selbst ausfüllen."
+        ),
         "choose_export": "📤 Wähle {acc} zum Export als JSON:",
         "export_done": "📤 JSON kopieren und an eine andere Bot-Instanz senden (Import in /adminconsole):\n\n<pre>{payload}</pre>",
         "import_prompt": "📥 Füge das {sg}-<b>JSON</b> aus einem Export ein (eine Nachricht). Stimmen sind nicht enthalten.\n\n/cancel zum Abbrechen.",
