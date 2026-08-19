@@ -394,7 +394,10 @@ def _suggestion_messages(
             "author": "director (full name)",
             "pages": "runtime in minutes (integer)",
             "fiction": "true for a feature film, false for a documentary",
-            "review": "review_link: a real http(s) URL, or omit if unsure",
+            "review": (
+                "review_link: a real http(s) URL of a catalog or review page "
+                "(IMDb, Kinopoisk, or Letterboxd), or omit if unsure"
+            ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
                 "French, Spanish, Italian, Chinese, Japanese, or another language name"
@@ -409,7 +412,10 @@ def _suggestion_messages(
             "author": "author (full name)",
             "pages": "page count (integer)",
             "fiction": "true for fiction, false for non-fiction",
-            "review": "review_link: a real http(s) URL, or omit if unsure",
+            "review": (
+                "review_link: a real http(s) URL of a catalog or review page "
+                "(Goodreads or LitRes), or omit if unsure"
+            ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
                 "French, Spanish, Italian, Chinese, Japanese, or another language name"
