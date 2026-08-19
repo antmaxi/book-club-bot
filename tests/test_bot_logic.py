@@ -772,6 +772,17 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(bot.tr("ru", "cancel_btn"), "❌ Отмена")
         self.assertEqual(bot.tr("de", "cancel_btn"), "❌ Abbrechen")
 
+    def test_admin_add_suggest_failed_keeps_provider_detail(self):
+        text = bot.tr(
+            "ru",
+            "admin_add_suggest_failed",
+            kind="таймаут",
+            error='HTTP 400: {"error":"<oops>"}',
+        )
+        self.assertIn("Не удалось получить подсказки", text)
+        self.assertIn("таймаут", text)
+        self.assertIn("<oops>", text)
+
     def test_ui_languages_share_keys(self):
         en_keys = set(bot.T["en"])
         for lang in bot.SUPPORTED_LANGS:

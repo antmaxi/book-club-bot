@@ -455,8 +455,8 @@ T: dict[str, dict[str, TranslationValue]] = {
             "or send a new value."
         ),
         "admin_add_suggest_failed": (
-            "⚠️ Could not fetch suggestions — {kind}: {error}. "
-            "Fill in the fields yourself."
+            "⚠️ Could not fetch suggestions. Fill in the fields yourself.\n\n"
+            "{kind}\n{error}"
         ),
         "llm_err_auth": "API key / auth",
         "llm_err_rate_limit": "rate limit",
@@ -721,8 +721,8 @@ T: dict[str, dict[str, TranslationValue]] = {
             "или отправьте своё значение."
         ),
         "admin_add_suggest_failed": (
-            "⚠️ Не удалось получить подсказки — {kind}: {error}. "
-            "Заполните поля вручную."
+            "⚠️ Не удалось получить подсказки. Заполните поля вручную.\n\n"
+            "{kind}\n{error}"
         ),
         "llm_err_auth": "ключ API / авторизация",
         "llm_err_rate_limit": "лимит запросов",
@@ -987,8 +987,9 @@ T: dict[str, dict[str, TranslationValue]] = {
             "oder einen neuen Wert senden."
         ),
         "admin_add_suggest_failed": (
-            "⚠️ Vorschläge konnten nicht geladen werden — {kind}: {error}. "
-            "Bitte die Felder selbst ausfüllen."
+            "⚠️ Vorschläge konnten nicht geladen werden. "
+            "Bitte die Felder selbst ausfüllen.\n\n"
+            "{kind}\n{error}"
         ),
         "llm_err_auth": "API-Schlüssel / Auth",
         "llm_err_rate_limit": "Rate-Limit",
