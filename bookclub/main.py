@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from telegram import Update
 from telegram.ext import (
@@ -117,6 +118,67 @@ _ADD_NAV_HANDLERS = [
 ]
 
 
+def add_flow_states() -> dict[Any, list[Any]]:
+    """Conversation states for the sequential add-book wizard.
+
+    Shared by /add and the admin-console AI add flow so both walk the same
+    fields (with Forward to keep a value, including LLM suggestions).
+    """
+    return {
+        ADDING_TITLE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_TITLE_CONFIRM: [
+            CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_AUTHOR: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_author),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_PAGES: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_FICTION: [
+            CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_REVIEW: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_ORIGINAL_LANGUAGE: [
+            CommandHandler("skip", add_original_language_skip),
+            CallbackQueryHandler(add_original_language_cb, pattern=r"^add_orig_lang:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_ORIGINAL_LANGUAGE_OTHER: [
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND, add_original_language_other
+            ),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_CREATION_YEAR: [
+            CommandHandler("skip", add_creation_year),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_creation_year),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_LANGUAGE_LEVEL: [
+            CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        # /skip needs its own handler: a bare filters.TEXT here would also
+        # swallow /cancel (state handlers are matched before fallbacks).
+        ADDING_DESCRIPTION: [
+            CommandHandler("skip", add_description),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
+            *_ADD_NAV_HANDLERS,
+        ],
+    }
+
+
 def register_handlers(app: Application) -> None:
     """Attach every handler to the application.
 
@@ -129,61 +191,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("add", cmd_add)],
-            states={
-                ADDING_TITLE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_TITLE_CONFIRM: [
-                    CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:"),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_AUTHOR: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_author),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_PAGES: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_pages),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_FICTION: [
-                    CallbackQueryHandler(add_fiction_cb, pattern=r"^fiction:"),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_REVIEW: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_review),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_ORIGINAL_LANGUAGE: [
-                    CommandHandler("skip", add_original_language_skip),
-                    CallbackQueryHandler(
-                        add_original_language_cb, pattern=r"^add_orig_lang:"
-                    ),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_ORIGINAL_LANGUAGE_OTHER: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, add_original_language_other
-                    ),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_CREATION_YEAR: [
-                    CommandHandler("skip", add_creation_year),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_creation_year),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                ADDING_LANGUAGE_LEVEL: [
-                    CallbackQueryHandler(add_language_level_cb, pattern=r"^add_cefr:"),
-                    *_ADD_NAV_HANDLERS,
-                ],
-                # /skip needs its own handler: a bare filters.TEXT here would also
-                # swallow /cancel (state handlers are matched before fallbacks).
-                ADDING_DESCRIPTION: [
-                    CommandHandler("skip", add_description),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
-                    *_ADD_NAV_HANDLERS,
-                ],
-            },
+            states=add_flow_states(),
             fallbacks=[CommandHandler("cancel", conv_cancel)],
             per_message=False,
             # Without this, re-sending the entry command while the conversation is
@@ -268,6 +276,7 @@ def register_handlers(app: Application) -> None:
                         admin_meeting_view_cb, pattern=r"^admin_meeting_view:"
                     )
                 ],
+                **add_flow_states(),
             },
             fallbacks=[CommandHandler("cancel", conv_cancel)],
             per_message=False,

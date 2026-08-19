@@ -107,6 +107,7 @@ async def continue_add(
     *,
     edit: bool = False,
 ) -> int:
+    note_user_edit(ctx, current)
     nxt = add_next_state(current)
     if nxt is None:
         from bookclub.handlers.add import complete_new_book
@@ -172,7 +173,30 @@ def _current_value_display(nb: dict, state: int, lang: str) -> str | None:
         if isinstance(levels, str):
             return language_levels_display(levels)
         return None
+    if state == ADDING_DESCRIPTION:
+        v = nb.get("description")
+        return str(v) if v else None
     return None
+
+
+def _nb_key_for_state(state: int) -> str | None:
+    if state == ADDING_REVIEW:
+        return "review_link"
+    field = _STATE_ENTRY_FIELD.get(state)
+    return field
+
+
+def _is_llm_suggestion(ctx: ContextTypes.DEFAULT_TYPE, state: int) -> bool:
+    filled = ctx.user_data.get("llm_filled_keys")
+    key = _nb_key_for_state(state)
+    return isinstance(filled, set) and key in filled
+
+
+def note_user_edit(ctx: ContextTypes.DEFAULT_TYPE, state: int) -> None:
+    filled = ctx.user_data.get("llm_filled_keys")
+    key = _nb_key_for_state(state)
+    if isinstance(filled, set) and key:
+        filled.discard(key)
 
 
 def add_field_is_set(nb: dict, state: int) -> bool:
@@ -192,10 +216,14 @@ def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) 
         body = tr(ctx, key)
     current = _current_value_display(nb, state, lang)
     parts = [body]
+    suggested = current is not None and _is_llm_suggestion(ctx, state)
     if current is not None:
-        parts.append(tr(ctx, "add_current_value", value=h(current)))
+        value_key = "add_suggested_value" if suggested else "add_current_value"
+        parts.append(tr(ctx, value_key, value=h(current)))
     if current is not None and state == ADDING_TITLE:
         parts.append(tr(ctx, "add_forward_hint"))
+    elif suggested:
+        parts.append(tr(ctx, "add_suggested_hint"))
     elif current is not None:
         parts.append(tr(ctx, "add_nav_hint"))
     elif state != ADDING_TITLE:
@@ -297,7 +325,7 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return await _nav_alert(update, ctx, "add_forward_need_value", current)
     nxt = add_next_state(current)
     if nxt is None:
-        if current == ADDING_DESCRIPTION:
+        if current == ADDING_DESCRIPTION and not add_field_is_set(nb, current):
             return await _nav_alert(update, ctx, "add_forward_at_end", current)
         if query:
             await query.answer()

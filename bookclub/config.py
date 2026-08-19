@@ -156,6 +156,87 @@ NEW_BOOK_NOTIFY_DELAY_SECONDS = int(
 )
 
 
+def _first_env(*names: str) -> str:
+    for name in names:
+        raw = os.environ.get(name, "").strip()
+        if raw:
+            return raw
+    return ""
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"Warning: invalid {name}={raw!r}, using {default}.")
+        return default
+    if value <= 0:
+        print(f"Warning: {name}={raw!r} must be positive, using {default}.")
+        return default
+    return value
+
+
+# OpenAI-compatible Chat Completions API for admin "Add book" field suggestions.
+# LLM_API_KEY, XAI_API_KEY, OPENAI_API_KEY, or CURSOR_API_KEY (first non-empty wins).
+_OPENAI_CHAT_BASE = "https://api.openai.com/v1"
+_XAI_CHAT_BASE = "https://api.x.ai/v1"
+
+
+def resolve_llm_api_key() -> str:
+    return _first_env("LLM_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY", "CURSOR_API_KEY")
+
+
+def resolve_llm_api_base(key: str = "") -> str:
+    raw = os.environ.get("LLM_API_BASE", "").strip().rstrip("/")
+    token = key or resolve_llm_api_key()
+    # An xai-… key against the OpenAI default (or a leftover README copy) 401s.
+    if token.startswith("xai-") and (not raw or "openai.com" in raw):
+        if raw:
+            print(
+                "Warning: xAI API key with LLM_API_BASE pointing at OpenAI; "
+                f"using {_XAI_CHAT_BASE} instead."
+            )
+        return _XAI_CHAT_BASE
+    if raw:
+        return raw
+    return _OPENAI_CHAT_BASE
+
+
+def resolve_llm_model(base: str = "", key: str = "") -> str:
+    raw = os.environ.get("LLM_MODEL", "").strip()
+    host = base or resolve_llm_api_base(key)
+    token = key or resolve_llm_api_key()
+    looks_xai = "api.x.ai" in host or token.startswith("xai-")
+    if looks_xai and (not raw or raw.startswith("gpt-")):
+        if raw.startswith("gpt-"):
+            print(
+                f"Warning: xAI endpoint with LLM_MODEL={raw!r}; using grok-4.6 instead."
+            )
+        return "grok-4.6"
+    if raw:
+        return raw
+    return "gpt-4o-mini"
+
+
+def resolve_llm_timeout_seconds(model: str = "") -> float:
+    default = 120.0 if "grok" in (model or "").casefold() else 45.0
+    return _positive_float_env("LLM_TIMEOUT_SECONDS", default)
+
+
+LLM_API_KEY = resolve_llm_api_key()
+LLM_API_BASE = resolve_llm_api_base(LLM_API_KEY)
+LLM_MODEL = resolve_llm_model(LLM_API_BASE, LLM_API_KEY)
+LLM_TIMEOUT_SECONDS = resolve_llm_timeout_seconds(LLM_MODEL)
+LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "").strip()
+
+
+def llm_configured() -> bool:
+    return bool(LLM_API_KEY)
+
+
 def notify_delay_minutes() -> int:
     """Whole minutes for UI copy, derived from NEW_BOOK_NOTIFY_DELAY_SECONDS."""
     secs = NEW_BOOK_NOTIFY_DELAY_SECONDS
