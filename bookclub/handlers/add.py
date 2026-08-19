@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bookclub.cefr import format_language_levels
@@ -97,16 +98,31 @@ async def add_title_similar_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     return await advance_after_title(update, ctx, ADDING_TITLE_CONFIRM, edit=True)
 
 
-async def _send_add_status(update: Update, text: str, *, edit: bool = False) -> None:
+async def _send_add_status(
+    update: Update, text: str, *, edit: bool = False, parse_mode: str | None = PM
+) -> None:
     query = update.callback_query
-    if edit and query:
-        await query.edit_message_text(text, parse_mode=PM)
-        return
-    if update.message:
-        await update.message.reply_text(text, parse_mode=PM)
-        return
-    if query and query.message:
-        await query.message.reply_text(text, parse_mode=PM)  # type: ignore[attr-defined]
+    try:
+        if edit and query:
+            await query.edit_message_text(text, parse_mode=parse_mode)
+            return
+        if update.message:
+            await update.message.reply_text(text, parse_mode=parse_mode)
+            return
+        if query and query.message:
+            await query.message.reply_text(text, parse_mode=parse_mode)  # type: ignore[attr-defined]
+    except BadRequest:
+        logger.warning(
+            "add status send failed with parse_mode=%s; retrying plain", parse_mode
+        )
+        if edit and query:
+            await query.edit_message_text(text)
+            return
+        if update.message:
+            await update.message.reply_text(text)
+            return
+        if query and query.message:
+            await query.message.reply_text(text)  # type: ignore[attr-defined]
 
 
 async def apply_admin_llm_suggestions(
@@ -133,14 +149,14 @@ async def apply_admin_llm_suggestions(
         return
     if error:
         kind, detail = split_llm_error(error)
+        kind_label = tr(ctx, llm_error_kind_i18n_key(kind))
+        detail_text = ui_llm_error(detail) or error
+        # Plain text: provider errors often contain <>&{} that break Telegram HTML
+        # and would drop this message, leaving only the generic warning.
         await _send_add_status(
             update,
-            tr(
-                ctx,
-                "admin_add_suggest_failed",
-                kind=h(tr(ctx, llm_error_kind_i18n_key(kind))),
-                error=h(ui_llm_error(detail)),
-            ),
+            tr(ctx, "admin_add_suggest_failed", kind=kind_label, error=detail_text),
+            parse_mode=None,
         )
         return
     nb = ctx.user_data.setdefault("new_book", {})

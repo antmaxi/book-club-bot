@@ -625,9 +625,35 @@ class TestAddConversation(BotHandlerTestCase):
         state = await bot.add_title(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_AUTHOR)
         texts = [c[0][0] for c in self.message.reply_text.call_args_list]
-        self.assertTrue(any("Could not fetch suggestions" in t for t in texts))
-        self.assertTrue(any("API key / auth" in t for t in texts))
-        self.assertTrue(any("401" in t and "Incorrect API key" in t for t in texts))
+        failed = [
+            c
+            for c in self.message.reply_text.call_args_list
+            if "Incorrect API key" in (c[0][0] if c[0] else "")
+        ]
+        self.assertTrue(failed)
+        failed_text = failed[0][0][0]
+        self.assertIn("Could not fetch suggestions", failed_text)
+        self.assertIn("API key / auth", failed_text)
+        self.assertIn("401", failed_text)
+        self.assertIsNone(failed[0].kwargs.get("parse_mode"))
+
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_admin_add_llm_failure_keeps_htmlish_detail(self, mock_suggest):
+        mock_suggest.return_value = (
+            {},
+            'bad_request: HTTP 400: {"error":"<invalid>"}',
+        )
+        self.ctx.user_data["admin_add"] = True
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "Mystery Title"
+        await bot.add_title(self.update, self.ctx)
+        failed = [
+            c[0][0]
+            for c in self.message.reply_text.call_args_list
+            if "<invalid>" in (c[0][0] if c[0] else "")
+        ]
+        self.assertTrue(failed)
+        self.assertIn("bad request", failed[0].casefold())
 
     async def test_admin_add_override_author_clears_suggestion_flag(self):
         self.ctx.user_data["admin_add"] = True
