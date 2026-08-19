@@ -177,6 +177,37 @@ class TestSuggestBookFields(unittest.TestCase):
         self.assertIn("director", user)
         self.assertIn("runtime", user)
 
+    def test_book_prompt_review_mentions_goodreads_or_litres(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "War and Peace",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"review"}),
+            )
+        user = mocked.call_args[0][0][1]["content"]
+        self.assertIn("Goodreads", user)
+        self.assertIn("LitRes", user)
+        self.assertNotIn("IMDb", user)
+
+    def test_film_prompt_review_mentions_catalog_sites(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "Inception",
+                lang="en",
+                entity="film",
+                enabled_fields=frozenset({"review"}),
+            )
+        user = mocked.call_args[0][0][1]["content"]
+        self.assertIn("IMDb", user)
+        self.assertIn("Kinopoisk", user)
+
 
 class TestChatCompletion(unittest.TestCase):
     def _response(self, payload: dict) -> MagicMock:
