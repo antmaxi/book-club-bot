@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta, timezone
+from urllib.parse import urlparse
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -192,8 +193,12 @@ def resolve_llm_api_key() -> str:
 def resolve_llm_api_base(key: str = "") -> str:
     raw = os.environ.get("LLM_API_BASE", "").strip().rstrip("/")
     token = key or resolve_llm_api_key()
+    parsed_host = urlparse(raw).hostname if raw else ""
+    is_openai_host = bool(
+        parsed_host and (parsed_host == "openai.com" or parsed_host.endswith(".openai.com"))
+    )
     # An xai-… key against the OpenAI default (or a leftover README copy) 401s.
-    if token.startswith("xai-") and (not raw or "openai.com" in raw):
+    if token.startswith("xai-") and (not raw or is_openai_host):
         if raw:
             print(
                 "Warning: xAI API key with LLM_API_BASE pointing at OpenAI; "
