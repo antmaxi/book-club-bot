@@ -1,7 +1,7 @@
 -r requirements.txt
 # Pin lint/type-check tools to the versions enforced by .pre-commit-config.yaml so
 # `ruff`/`black`/`mypy` from this venv agree with the pre-commit hooks and CI.
-black==25.1.0
+black==26.3.1
 mypy==1.14.1
 ruff==0.9.6
 pytest>=8.0
