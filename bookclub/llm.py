@@ -392,7 +392,11 @@ def _suggestion_messages(
         kind = "film"
         field_help = {
             "author": "director (full name)",
-            "pages": "runtime in minutes (integer)",
+            "pages": (
+                "runtime in minutes (integer); prefer the number printed on the "
+                "catalog/review page (IMDb, Kinopoisk, or Letterboxd usually "
+                "mention it), and omit if that page does not list it"
+            ),
             "fiction": "true for a feature film, false for a documentary",
             "review": (
                 "review_link: a real http(s) URL of a catalog or review page "
@@ -410,7 +414,11 @@ def _suggestion_messages(
         kind = "book"
         field_help = {
             "author": "author (full name)",
-            "pages": "page count (integer)",
+            "pages": (
+                "page count (integer); prefer the number printed on the "
+                "catalog/review page (Goodreads or LitRes usually mention it), "
+                "and omit if that page does not list it"
+            ),
             "fiction": "true for fiction, false for non-fiction",
             "review": (
                 "review_link: a real http(s) URL of a catalog or review page "
@@ -425,11 +433,33 @@ def _suggestion_messages(
             "description": f"description: 2–4 sentences in {desc_lang}",
         }
     lines = [field_help[name] for name in wanted if name in field_help]
+    if "pages" in wanted and "review" in wanted:
+        if entity == "film":
+            lines.append(
+                "Copy runtime from the same review_link page when that page lists it"
+            )
+        else:
+            lines.append(
+                "Copy page count from the same review_link page when that page lists it"
+            )
+    if "pages" in wanted:
+        if entity == "film":
+            lookup_hint = (
+                " When a catalog or review page lists runtime, copy that number "
+                "instead of guessing."
+            )
+        else:
+            lookup_hint = (
+                " When a catalog or review page lists page count, copy that "
+                "number instead of guessing."
+            )
+    else:
+        lookup_hint = ""
     system = (
         "You look up well-known bibliographic facts. "
         "Reply with a single JSON object and no other text. "
         "Omit a field when you are not reasonably sure. "
-        "Do not invent review URLs."
+        "Do not invent review URLs." + lookup_hint
     )
     user = (
         f"Suggest metadata for this {kind} titled {title!r}.\n"

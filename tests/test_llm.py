@@ -208,6 +208,64 @@ class TestSuggestBookFields(unittest.TestCase):
         self.assertIn("IMDb", user)
         self.assertIn("Kinopoisk", user)
 
+    def test_book_prompt_pages_from_review_page(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "War and Peace",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"pages", "review"}),
+            )
+        messages = mocked.call_args[0][0]
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("page count", system)
+        self.assertIn("catalog/review page", user)
+        self.assertIn("Goodreads", user)
+        self.assertIn("LitRes", user)
+        self.assertIn("same review_link page", user)
+        self.assertNotIn("IMDb", user)
+
+    def test_film_prompt_runtime_from_review_page(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "Inception",
+                lang="en",
+                entity="film",
+                enabled_fields=frozenset({"pages", "review"}),
+            )
+        messages = mocked.call_args[0][0]
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("runtime", system)
+        self.assertIn("catalog/review page", user)
+        self.assertIn("IMDb", user)
+        self.assertIn("same review_link page", user)
+        self.assertNotIn("Goodreads", user)
+
+    def test_book_prompt_pages_only_still_nudges_catalog_page(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields(
+                "War and Peace",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"pages"}),
+            )
+        messages = mocked.call_args[0][0]
+        user = messages[1]["content"]
+        self.assertIn("catalog/review page", user)
+        self.assertNotIn("same review_link page", user)
+        self.assertIn("page count", messages[0]["content"])
+
 
 class TestChatCompletion(unittest.TestCase):
     def _response(self, payload: dict) -> MagicMock:
