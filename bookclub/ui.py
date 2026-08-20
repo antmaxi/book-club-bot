@@ -31,6 +31,16 @@ from bookclub.original_languages import (
 )
 from bookclub.types import BookLike
 
+CONV_CANCEL = "conv_cancel"
+
+
+def cancel_button(lang: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(s(lang, "cancel_btn"), callback_data=CONV_CANCEL)
+
+
+def cancel_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[cancel_button(lang)]])
+
 
 def format_user(book: BookLike) -> str:
     """Return @username if available, otherwise fall back to display name."""
@@ -93,6 +103,7 @@ def add_ai_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
                 ),
             ],
             add_nav_buttons(lang, show_back=True, show_forward=False),
+            [cancel_button(lang)],
         ]
     )
 
@@ -116,18 +127,17 @@ def add_nav_buttons(
 
 def add_nav_keyboard(
     lang: str, *, show_back: bool = True, show_forward: bool = False
-) -> InlineKeyboardMarkup | None:
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
     row = add_nav_buttons(lang, show_back=show_back, show_forward=show_forward)
-    if not row:
-        return None
-    return InlineKeyboardMarkup([row])
+    if row:
+        rows.append(row)
+    rows.append([cancel_button(lang)])
+    return InlineKeyboardMarkup(rows)
 
 
 def add_back_keyboard(lang: str) -> InlineKeyboardMarkup:
-    markup = add_nav_keyboard(lang, show_back=True, show_forward=False)
-    if markup is None:
-        raise RuntimeError("add_back_keyboard must include a Back button")
-    return markup
+    return add_nav_keyboard(lang, show_back=True, show_forward=False)
 
 
 def fmt_dt_utc(dt: datetime) -> str:
@@ -640,6 +650,7 @@ def fiction_keyboard(
     nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
     if nav:
         rows.append(nav)
+    rows.append([cancel_button(lang)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -682,6 +693,7 @@ def original_language_keyboard(
     nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
     if nav:
         rows.append(nav)
+    rows.append([cancel_button(lang)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -720,6 +732,7 @@ def cefr_levels_keyboard(
             )
         ]
     )
+    rows.append([cancel_button(lang)])
     return InlineKeyboardMarkup(rows)
 
 

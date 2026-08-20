@@ -562,6 +562,8 @@ class TestAddConversation(BotHandlerTestCase):
         state = await bot.cmd_add(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_TITLE)
         self.message.reply_text.assert_called_once()
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        self.assertIn(bot.CONV_CANCEL, self._keyboard_callback_data(markup))
 
     async def test_add_title_stores_and_advances(self):
         self.ctx.user_data["new_book"] = {}
@@ -591,6 +593,7 @@ class TestAddConversation(BotHandlerTestCase):
         data = self._keyboard_callback_data(markup)
         self.assertIn("add_ai:yes", data)
         self.assertIn("add_ai:no", data)
+        self.assertIn(bot.CONV_CANCEL, data)
 
     @patch.object(cfg, "LLM_API_KEY", "sk-test")
     @patch("bookclub.handlers.add.suggest_book_fields")
@@ -886,6 +889,7 @@ class TestAddConversation(BotHandlerTestCase):
         data = self._keyboard_callback_data(markup)
         self.assertIn("add_back", data)
         self.assertIn("add_forward", data)
+        self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_add_prompt_shows_suggested_value_for_llm_fields(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
@@ -902,6 +906,15 @@ class TestAddConversation(BotHandlerTestCase):
         data = self._keyboard_callback_data(markup)
         self.assertIn("add_back", data)
         self.assertNotIn("add_forward", data)
+        self.assertIn(bot.CONV_CANCEL, data)
+
+    async def test_add_fiction_prompt_has_cancel_button(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_FICTION)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("fiction:1", data)
+        self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_add_forward_several_steps_returns_to_later_field(self):
         self.ctx.user_data["new_book"] = {
@@ -1356,6 +1369,19 @@ class TestEdit(BotHandlerTestCase):
         self.assertIn("Card Title", body)
         self.assertIn("A. Writer", body)
 
+    async def test_edit_field_prompt_has_cancel_button(self):
+        bid = self._add_book(
+            "Card Title",
+            user_id=self.update.effective_user.id,
+            username="testuser",
+        )
+        q = self._callback_query(f"edit_pick:{bid}")
+        await bot.edit_pick_cb(self.update, self.ctx)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn("edit_yn:yes", data)
+        self.assertIn(bot.CONV_CANCEL, data)
+
 
 # ── /cancel ────────────────────────────────────────────────────────────────────
 
@@ -1373,6 +1399,15 @@ class TestCancel(BotHandlerTestCase):
         state = await bot.conv_cancel(self.update, self.ctx)
         self.message.reply_text.assert_called_once()
         self.assertIn("Cancelled", self.message.reply_text.call_args[0][0])
+
+    async def test_conv_cancel_callback_edits_message(self):
+        q = self._callback_query(bot.CONV_CANCEL)
+        state = await bot.conv_cancel(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        q.answer.assert_called_once()
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Cancelled", q.edit_message_text.call_args[0][0])
+        self.assertEqual(self.ctx.user_data, {})
 
 
 # ── /adminconsole ─────────────────────────────────────────────────────────────
@@ -1404,6 +1439,7 @@ class TestAdminConsole(BotHandlerTestCase):
         markup = self.message.reply_text.call_args[1]["reply_markup"]
         data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
         self.assertNotIn("admin:add", data)
+        self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_admin_menu_cb_mark_shows_submenu(self):
         q = self._callback_query("admin:mark")
@@ -1461,6 +1497,9 @@ class TestAdminConsole(BotHandlerTestCase):
         state = await bot.admin_mark_pick_cb(self.update, self.ctx)
         self.assertEqual(state, bot.ADMIN_MARK_DATE)
         self.assertEqual(self.ctx.user_data["mark_book_id"], bid)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_admin_mark_date_handler_completes(self):
         bid = self._add_book("Dated")
@@ -1627,6 +1666,9 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(state, bot.ADMIN_IMPORT_WAIT)
         q.edit_message_text.assert_called_once()
         self.assertIn("JSON", q.edit_message_text.call_args[0][0])
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_admin_import_handler_inserts_book(self):
         payload = bot.book_to_export_payload(
@@ -2180,6 +2222,20 @@ class TestConversationWiring(unittest.TestCase):
             self._matches(handlers, "/cancel", is_command=True),
             "/cancel must not be consumed on the AI-choice step",
         )
+
+    def test_conversations_register_cancel_button_fallback(self):
+        for command in ("add", "edit", "delete", "adminconsole"):
+            conv = self._states(command)
+            patterns = []
+            for handler in conv.fallbacks:
+                pat = getattr(handler, "pattern", None)
+                if pat is None:
+                    continue
+                patterns.append(pat.pattern if hasattr(pat, "pattern") else str(pat))
+            self.assertTrue(
+                any(bot.CONV_CANCEL in pattern for pattern in patterns),
+                f"/{command} must handle the cancel button",
+            )
 
 
 class TestConversationReentry(unittest.TestCase):

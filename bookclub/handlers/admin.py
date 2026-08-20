@@ -57,6 +57,8 @@ from bookclub.ui import (
     book_card,
     books_keyboard,
     books_top_n,
+    cancel_button,
+    cancel_keyboard,
     fetch_telegram_user_profile,
     fmt_dt_utc,
     h,
@@ -177,6 +179,7 @@ async def cmd_admin_console(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
                     tr(ctx, "admin_import_btn"), callback_data="admin:import"
                 )
             ],
+            [cancel_button(get_lang(ctx))],
         ]
     )
     if update.callback_query:
@@ -336,7 +339,11 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ADMIN_EXPORT_CHOOSE
     elif data == "import":
-        await query.edit_message_text(tr(ctx, "import_prompt"), parse_mode=PM)
+        await query.edit_message_text(
+            tr(ctx, "import_prompt"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(get_lang(ctx)),
+        )
         return ADMIN_IMPORT_WAIT
     elif data == "meeting_create":
         books = db_get_books(discussed=True, include_hidden=True)
@@ -629,7 +636,11 @@ async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
     ctx.user_data.pop("mark_edit_date", None)
     ctx.user_data["mark_book_id"] = int(book_id)
-    await query.edit_message_text(tr(ctx, "ask_discuss_date"), parse_mode=PM)
+    await query.edit_message_text(
+        tr(ctx, "ask_discuss_date"),
+        parse_mode=PM,
+        reply_markup=cancel_keyboard(lang),
+    )
     return ADMIN_MARK_DATE
 
 
@@ -654,7 +665,9 @@ async def admin_mark_edit_pick_cb(
         + "\n\n"
         + tr(ctx, "current_discussed_date", date=h(current))
     )
-    await query.edit_message_text(prompt, parse_mode=PM)
+    await query.edit_message_text(
+        prompt, parse_mode=PM, reply_markup=cancel_keyboard(lang)
+    )
     return ADMIN_MARK_DATE
 
 
@@ -670,7 +683,11 @@ async def admin_mark_date_handler(
     else:
         parsed = parse_date(text)
         if parsed is None:
-            await update.message.reply_text(tr(ctx, "invalid_date"), parse_mode=PM)
+            await update.message.reply_text(
+                tr(ctx, "invalid_date"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
+            )
             return ADMIN_MARK_DATE
         date_str = parsed
     book_id = ctx.user_data.pop("mark_book_id", None)
@@ -754,7 +771,9 @@ async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
 
     if action == "addid":
         await query.edit_message_text(
-            tr(ctx, "meeting_attendee_add_id_prompt"), parse_mode=PM
+            tr(ctx, "meeting_attendee_add_id_prompt"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(lang),
         )
         return ADMIN_MEETING_ADD_ID
 
@@ -818,7 +837,9 @@ async def admin_meeting_add_id_handler(
             raise ValueError
     except ValueError:
         await update.message.reply_text(
-            tr(ctx, "meeting_attendee_invalid_id"), parse_mode=PM
+            tr(ctx, "meeting_attendee_invalid_id"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(get_lang(ctx)),
         )
         return ADMIN_MEETING_ADD_ID
 
@@ -992,6 +1013,7 @@ async def admin_import_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(
             tr(ctx, "import_invalid", error=h(str(e))),
             parse_mode=PM,
+            reply_markup=cancel_keyboard(get_lang(ctx)),
         )
         return ADMIN_IMPORT_WAIT
 

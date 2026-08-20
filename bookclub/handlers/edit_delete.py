@@ -27,6 +27,8 @@ from bookclub.types import BookLike
 from bookclub.ui import (
     book_card,
     books_keyboard,
+    cancel_button,
+    cancel_keyboard,
     cefr_levels_keyboard,
     h,
     is_valid_url,
@@ -101,7 +103,8 @@ def edit_yn_keyboard(lang: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     s(lang, "edit_no_btn"), callback_data="edit_yn:no"
                 ),
-            ]
+            ],
+            [cancel_button(lang)],
         ]
     )
 
@@ -116,7 +119,8 @@ def edit_fiction_keyboard(lang: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     s(lang, "nonfiction_btn"), callback_data="edit_fiction:0"
                 ),
-            ]
+            ],
+            [cancel_button(lang)],
         ]
     )
 
@@ -249,6 +253,7 @@ async def edit_yn_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(
         tr(ctx, "edit_ask_new", field=field_name),
         parse_mode=PM,
+        reply_markup=cancel_keyboard(lang),
     )
     return EDITING_FIELD
 
@@ -278,7 +283,9 @@ async def edit_original_language_cb(
         await query.answer()
         ctx.user_data["edit_orig_lang_other"] = True
         await query.edit_message_text(
-            tr(ctx, "ask_original_language_other"), parse_mode=PM
+            tr(ctx, "ask_original_language_other"),
+            parse_mode=PM,
+            reply_markup=cancel_keyboard(get_lang(ctx)),
         )
         return EDITING_FIELD
     stored = stored_original_language(action)
@@ -344,13 +351,19 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     if field == "pages":
         if not text.isdigit() or int(text) <= 0:
             await update.message.reply_text(
-                tr(ctx, "edit_invalid_pages"), parse_mode=PM
+                tr(ctx, "edit_invalid_pages"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
             )
             return EDITING_FIELD
         value = int(text)
     elif field == "review_link":
         if not is_valid_url(text):
-            await update.message.reply_text(tr(ctx, "edit_invalid_url"), parse_mode=PM)
+            await update.message.reply_text(
+                tr(ctx, "edit_invalid_url"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
+            )
             return EDITING_FIELD
         value = text
     elif field == "creation_year":
@@ -358,12 +371,16 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
             value = parse_optional_creation_year(text)
         except ValueError:
             await update.message.reply_text(
-                tr(ctx, "edit_invalid_creation_year"), parse_mode=PM
+                tr(ctx, "edit_invalid_creation_year"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
             )
             return EDITING_FIELD
         if value is None:
             await update.message.reply_text(
-                tr(ctx, "edit_invalid_creation_year"), parse_mode=PM
+                tr(ctx, "edit_invalid_creation_year"),
+                parse_mode=PM,
+                reply_markup=cancel_keyboard(get_lang(ctx)),
             )
             return EDITING_FIELD
     else:
