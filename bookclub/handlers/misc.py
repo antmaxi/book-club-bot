@@ -6,12 +6,18 @@ from telegram.ext import ContextTypes, ConversationHandler
 import bookclub.config as config
 from bookclub.db import db_cast_vote, db_get_user_vote, db_upsert_club_user
 from bookclub.domain import require_book
-from bookclub.i18n import PM, get_lang, tr, vote_label_text
+from bookclub.i18n import PM, get_lang, s, tr, vote_label_text
 from bookclub.logging_setup import logger
 from bookclub.ui import book_card, score_keyboard
 
+
 async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text(tr(ctx, "cancelled"), parse_mode=PM)
+    elif update.message:
+        await update.message.reply_text(tr(ctx, "cancelled"), parse_mode=PM)
     ctx.user_data.pop("pending_import", None)
     ctx.user_data.clear()
     return ConversationHandler.END
@@ -64,7 +70,9 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             # Group chat: acknowledge voter, skip edit entirely
             # (statistics would be identical anyway)
             vote_label = vote_label_text(config.CHAT_LANG, uv)
-            await query.answer(tr(config.CHAT_LANG, "vote_registered", label=vote_label))
+            await query.answer(
+                tr(config.CHAT_LANG, "vote_registered", label=vote_label)
+            )
             logger.info(
                 f"[RE-VOTE] User {user_id} re-voted '{vote_label}' on book {book_id} "
                 f"('{book['title']}') in group chat — no edit performed"
@@ -138,4 +146,3 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             )
         else:
             raise
-

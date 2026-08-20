@@ -1093,6 +1093,23 @@ class TestUtils(unittest.TestCase):
         self.assertIn("😐 Don't care", labels)
         self.assertIn("❌ Don't want", labels)
 
+    def test_interactive_keyboards_include_cancel(self):
+        def callbacks(kb):
+            return [btn.callback_data for row in kb.inline_keyboard for btn in row]
+
+        self.assertIn(bot.CONV_CANCEL, callbacks(bot.add_nav_keyboard("en")))
+        self.assertIn(bot.CONV_CANCEL, callbacks(bot.fiction_keyboard("en")))
+        self.assertIn(
+            bot.CONV_CANCEL,
+            callbacks(bot.original_language_keyboard("en", prefix="add_orig_lang")),
+        )
+        self.assertIn(
+            bot.CONV_CANCEL,
+            callbacks(bot.cefr_levels_keyboard("en", set(), prefix="add_cefr")),
+        )
+        self.assertIn(bot.CONV_CANCEL, callbacks(bot.add_ai_choice_keyboard("en")))
+        self.assertIn(bot.CONV_CANCEL, callbacks(bot.cancel_keyboard("en")))
+
     # -- ALLOWED_CHAT_ID config --
 
     def test_allowed_chat_id_env_not_set(self):

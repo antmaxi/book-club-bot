@@ -23,6 +23,7 @@ from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import display_original_language
 from bookclub.ui import (
     add_nav_keyboard,
+    cancel_keyboard,
     cefr_levels_keyboard,
     fiction_keyboard,
     h,
@@ -234,7 +235,7 @@ def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) 
     return "\n".join(parts)
 
 
-def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup | None:
+def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup:
     can_forward = add_field_is_set(nb, state)
     show_back = state != ADDING_TITLE
     if state == ADDING_TITLE:
@@ -267,7 +268,7 @@ def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup |
         ADDING_DESCRIPTION,
     ):
         return add_nav_keyboard(lang, show_back=show_back, show_forward=can_forward)
-    return None
+    return cancel_keyboard(lang)
 
 
 async def send_add_prompt(

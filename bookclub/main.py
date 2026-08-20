@@ -111,12 +111,19 @@ from bookclub.handlers.misc import conv_cancel, vote_cast_cb
 from bookclub.lifecycle import bot_notify_shutdown, bot_notify_startup
 from bookclub.logging_setup import logger
 from bookclub.membership import error_handler, membership_gate
+from bookclub.ui import CONV_CANCEL
 
 _ADD_NAV_HANDLERS = [
     CommandHandler("back", add_go_back),
     CallbackQueryHandler(add_go_back, pattern=r"^add_back$"),
     CommandHandler("forward", add_go_forward),
     CallbackQueryHandler(add_go_forward, pattern=r"^add_forward$"),
+]
+
+
+_CONV_FALLBACKS: list[Any] = [
+    CommandHandler("cancel", conv_cancel),
+    CallbackQueryHandler(conv_cancel, pattern=rf"^{CONV_CANCEL}$"),
 ]
 
 
@@ -194,7 +201,7 @@ def register_handlers(app: Application) -> None:
         ConversationHandler(
             entry_points=[CommandHandler("add", cmd_add)],
             states=add_flow_states(),
-            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            fallbacks=_CONV_FALLBACKS,
             per_message=False,
             # Without this, re-sending the entry command while the conversation is
             # still open matches nothing at all and the bot answers with silence —
@@ -279,7 +286,7 @@ def register_handlers(app: Application) -> None:
                     )
                 ],
             },
-            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            fallbacks=_CONV_FALLBACKS,
             per_message=False,
             # Without this, re-sending the entry command while the conversation is
             # still open matches nothing at all and the bot answers with silence —
@@ -307,7 +314,7 @@ def register_handlers(app: Application) -> None:
                     MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler),
                 ],
             },
-            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            fallbacks=_CONV_FALLBACKS,
             per_message=False,
             # Without this, re-sending the entry command while the conversation is
             # still open matches nothing at all and the bot answers with silence —
@@ -324,7 +331,7 @@ def register_handlers(app: Application) -> None:
                     CallbackQueryHandler(delete_pick_cb, pattern=r"^del_pick:")
                 ],
             },
-            fallbacks=[CommandHandler("cancel", conv_cancel)],
+            fallbacks=_CONV_FALLBACKS,
             per_message=False,
             # Without this, re-sending the entry command while the conversation is
             # still open matches nothing at all and the bot answers with silence —
