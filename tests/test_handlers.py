@@ -40,6 +40,8 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         self._orig_chat_id = cfg.ALLOWED_CHAT_ID
         cfg.ALLOWED_CHAT_ID = None
         bot.ALLOWED_CHAT_ID = None
+        self._orig_llm_key = cfg.LLM_API_KEY
+        cfg.LLM_API_KEY = ""
 
         # The membership cache is module-global; a verdict cached by one test
         # would otherwise leak into the next.
@@ -67,6 +69,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         cfg.ALLOWED_CHAT_ID = self._orig_chat_id
         bot.ALLOWED_CHAT_ID = self._orig_chat_id
+        cfg.LLM_API_KEY = self._orig_llm_key
         if os.path.exists(self.DB_FILE):
             os.remove(self.DB_FILE)
 
@@ -574,8 +577,24 @@ class TestAddConversation(BotHandlerTestCase):
             await bot.add_title(self.update, self.ctx)
         mocked.assert_not_called()
 
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
+    async def test_add_title_asks_ai_choice_when_llm_configured(self):
+        self.ctx.user_data["new_book"] = {}
+        self.message.text = "My Book"
+        with patch("bookclub.handlers.add.suggest_book_fields") as mocked:
+            state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AI_CHOOSE)
+        mocked.assert_not_called()
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("AI help", text)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_ai:yes", data)
+        self.assertIn("add_ai:no", data)
+
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
     @patch("bookclub.handlers.add.suggest_book_fields")
-    async def test_admin_add_title_applies_suggestions(self, mock_suggest):
+    async def test_add_ai_yes_applies_suggestions(self, mock_suggest):
         mock_suggest.return_value = (
             {
                 "author": "Leo Tolstoy",
@@ -588,10 +607,10 @@ class TestAddConversation(BotHandlerTestCase):
             },
             None,
         )
-        self.ctx.user_data["admin_add"] = True
-        self.ctx.user_data["new_book"] = {}
-        self.message.text = "War and Peace"
-        state = await bot.add_title(self.update, self.ctx)
+        self.ctx.user_data["new_book"] = {"title": "War and Peace"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        self._callback_query("add_ai:yes")
+        state = await bot.add_ai_cb(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_AUTHOR)
         nb = self.ctx.user_data["new_book"]
         self.assertEqual(nb["author"], "Leo Tolstoy")
@@ -599,32 +618,50 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(nb["creation_year"], 1869)
         self.assertIn("author", self.ctx.user_data["llm_filled_keys"])
         texts = [c[0][0] for c in self.message.reply_text.call_args_list]
+        q = self.update.callback_query
+        q_texts = [c[0][0] for c in q.edit_message_text.call_args_list]
         self.assertTrue(any("Leo Tolstoy" in t for t in texts))
         self.assertTrue(any("Suggested" in t for t in texts))
+        self.assertTrue(any("Looking up" in t for t in q_texts))
         mock_suggest.assert_called_once()
         self.assertEqual(mock_suggest.call_args[0][0], "War and Peace")
 
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
     @patch("bookclub.handlers.add.suggest_book_fields")
-    async def test_admin_add_title_without_llm_still_advances(self, mock_suggest):
+    async def test_add_ai_no_skips_llm(self, mock_suggest):
+        self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        q = self._callback_query("add_ai:no")
+        state = await bot.add_ai_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        self.assertNotIn("author", self.ctx.user_data["new_book"])
+        mock_suggest.assert_not_called()
+        q.edit_message_text.assert_called()
+        self.assertFalse(self.ctx.user_data.get("llm_add"))
+
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_add_ai_yes_without_llm_still_advances(self, mock_suggest):
         mock_suggest.return_value = ({}, "not_configured")
-        self.ctx.user_data["admin_add"] = True
-        self.ctx.user_data["new_book"] = {}
-        self.message.text = "Mystery Title"
-        state = await bot.add_title(self.update, self.ctx)
+        self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        self._callback_query("add_ai:yes")
+        state = await bot.add_ai_cb(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_AUTHOR)
         self.assertNotIn("author", self.ctx.user_data["new_book"])
         texts = [c[0][0] for c in self.message.reply_text.call_args_list]
-        self.assertTrue(any("LLM_API_KEY" in t for t in texts))
+        q_texts = [
+            c[0][0] for c in self.update.callback_query.edit_message_text.call_args_list
+        ]
+        self.assertTrue(any("LLM_API_KEY" in t for t in texts + q_texts))
 
     @patch("bookclub.handlers.add.suggest_book_fields")
-    async def test_admin_add_llm_failure_still_advances(self, mock_suggest):
+    async def test_add_ai_llm_failure_still_advances(self, mock_suggest):
         mock_suggest.return_value = ({}, "auth: HTTP 401: Incorrect API key")
-        self.ctx.user_data["admin_add"] = True
-        self.ctx.user_data["new_book"] = {}
-        self.message.text = "Mystery Title"
-        state = await bot.add_title(self.update, self.ctx)
+        self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        self._callback_query("add_ai:yes")
+        state = await bot.add_ai_cb(self.update, self.ctx)
         self.assertEqual(state, bot.ADDING_AUTHOR)
-        texts = [c[0][0] for c in self.message.reply_text.call_args_list]
         failed = [
             c
             for c in self.message.reply_text.call_args_list
@@ -638,15 +675,15 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIsNone(failed[0].kwargs.get("parse_mode"))
 
     @patch("bookclub.handlers.add.suggest_book_fields")
-    async def test_admin_add_llm_failure_keeps_htmlish_detail(self, mock_suggest):
+    async def test_add_ai_llm_failure_keeps_htmlish_detail(self, mock_suggest):
         mock_suggest.return_value = (
             {},
             'bad_request: HTTP 400: {"error":"<invalid>"}',
         )
-        self.ctx.user_data["admin_add"] = True
-        self.ctx.user_data["new_book"] = {}
-        self.message.text = "Mystery Title"
-        await bot.add_title(self.update, self.ctx)
+        self.ctx.user_data["new_book"] = {"title": "Mystery Title"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AI_CHOOSE
+        self._callback_query("add_ai:yes")
+        await bot.add_ai_cb(self.update, self.ctx)
         failed = [
             c[0][0]
             for c in self.message.reply_text.call_args_list
@@ -655,8 +692,8 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertTrue(failed)
         self.assertIn("bad request", failed[0].casefold())
 
-    async def test_admin_add_override_author_clears_suggestion_flag(self):
-        self.ctx.user_data["admin_add"] = True
+    async def test_add_ai_override_author_clears_suggestion_flag(self):
+        self.ctx.user_data["llm_add"] = True
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Suggested"}
         self.ctx.user_data["llm_filled_keys"] = {"author", "pages"}
         self.ctx.user_data["llm_suggestions_applied"] = True
@@ -852,7 +889,6 @@ class TestAddConversation(BotHandlerTestCase):
 
     async def test_add_prompt_shows_suggested_value_for_llm_fields(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
-        self.ctx.user_data["admin_add"] = True
         self.ctx.user_data["llm_filled_keys"] = {"author"}
         await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
         text = self.message.reply_text.call_args[0][0]
@@ -1367,15 +1403,7 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertIn("Admin Console", self.message.reply_text.call_args[0][0])
         markup = self.message.reply_text.call_args[1]["reply_markup"]
         data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
-        self.assertIn("admin:add", data)
-
-    async def test_admin_menu_cb_add_starts_title_prompt(self):
-        q = self._callback_query("admin:add")
-        state = await bot.admin_menu_cb(self.update, self.ctx)
-        self.assertEqual(state, bot.ADDING_TITLE)
-        self.assertTrue(self.ctx.user_data["admin_add"])
-        q.edit_message_text.assert_called_once()
-        self.assertIn("title", q.edit_message_text.call_args[0][0].lower())
+        self.assertNotIn("admin:add", data)
 
     async def test_admin_menu_cb_mark_shows_submenu(self):
         q = self._callback_query("admin:mark")
@@ -2140,18 +2168,17 @@ class TestConversationWiring(unittest.TestCase):
         self.assertTrue(self._matches(handlers, "/today", is_command=True))
         self.assertTrue(self._matches(handlers, "2026-01-01", is_command=False))
 
-    def test_adminconsole_add_flow_handles_author_and_lets_cancel_through(self):
-        conv = self._states("adminconsole")
-        self.assertIn(bot.ADDING_AUTHOR, conv.states)
-        self.assertIn(bot.ADDING_TITLE, conv.states)
-        handlers = conv.states[bot.ADDING_AUTHOR]
+    def test_add_ai_choose_lets_cancel_reach_fallback(self):
+        conv = self._states("add")
+        self.assertIn(bot.ADDING_AI_CHOOSE, conv.states)
+        handlers = conv.states[bot.ADDING_AI_CHOOSE]
         self.assertTrue(
             self._matches(handlers, "/forward", is_command=True),
-            "/forward must be handled in admin AI add",
+            "/forward must treat AI-choose as manual fill",
         )
         self.assertFalse(
             self._matches(handlers, "/cancel", is_command=True),
-            "/cancel must not be consumed as the author",
+            "/cancel must not be consumed on the AI-choice step",
         )
 
 

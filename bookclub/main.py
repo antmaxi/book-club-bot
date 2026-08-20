@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 
 from bookclub.config import (
+    ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
@@ -49,6 +50,7 @@ from bookclub.config import (
 )
 from bookclub.db import init_db
 from bookclub.handlers.add import (
+    add_ai_cb,
     add_author,
     add_creation_year,
     add_description,
@@ -119,11 +121,7 @@ _ADD_NAV_HANDLERS = [
 
 
 def add_flow_states() -> dict[Any, list[Any]]:
-    """Conversation states for the sequential add-book wizard.
-
-    Shared by /add and the admin-console AI add flow so both walk the same
-    fields (with Forward to keep a value, including LLM suggestions).
-    """
+    """Conversation states for the sequential add-book wizard used by /add."""
     return {
         ADDING_TITLE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
@@ -131,6 +129,10 @@ def add_flow_states() -> dict[Any, list[Any]]:
         ],
         ADDING_TITLE_CONFIRM: [
             CallbackQueryHandler(add_title_similar_cb, pattern=r"^title_sim:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_AI_CHOOSE: [
+            CallbackQueryHandler(add_ai_cb, pattern=r"^add_ai:"),
             *_ADD_NAV_HANDLERS,
         ],
         ADDING_AUTHOR: [
@@ -276,7 +278,6 @@ def register_handlers(app: Application) -> None:
                         admin_meeting_view_cb, pattern=r"^admin_meeting_view:"
                     )
                 ],
-                **add_flow_states(),
             },
             fallbacks=[CommandHandler("cancel", conv_cancel)],
             per_message=False,

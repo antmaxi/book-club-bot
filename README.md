@@ -27,7 +27,7 @@ A Telegram bot (English / Russian / German) to help book clubs manage their read
 ### User Commands
 - `/start` or `/help`: Welcome message and command list.
 - `/info`: About the bot and last update time.
-- `/add`: Add a new book to the list.
+- `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand.
 - `/list`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
 - `/settings`: Change your notification and language preferences.
@@ -38,7 +38,6 @@ A Telegram bot (English / Russian / German) to help book clubs manage their read
 
 ### Admin Commands
 - `/adminconsole`: Centralized panel for admins to:
-  - **Add book (AI):** Type only the title; an LLM fills in the other enabled fields. You then confirm or edit them one by one (Forward keeps a suggestion). Requires an OpenAI-compatible API key (`LLM_API_KEY`, or `XAI_API_KEY` / `OPENAI_API_KEY`). An `xai-…` key infers xAI + `grok-4.6` if base/model are unset or still set to OpenAI defaults. Recreate the container after editing `.env`.
   - **Mark discussed:** Mark a book as discussed and move it to the archive.
   - **Hide books:** Temporarily hide books from the `/list` and `/top` without deleting them.
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
@@ -97,7 +96,7 @@ When recording or viewing attendance, the bot shows each person’s Telegram dis
    DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)
    INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
-   # Optional: LLM for admin-console "Add book (AI)" field suggestions.
+   # Optional: LLM for /add field suggestions (after the title).
    # OpenAI-compatible Chat Completions (OpenAI, xAI, OpenRouter, Groq, …).
    # An xai-… key is enough: base URL and grok-4.6 are inferred if unset.
    # LLM_API_KEY="xai-..."     # or XAI_API_KEY / OPENAI_API_KEY
@@ -143,11 +142,11 @@ Set `ASK_LANGUAGE_LEVEL=1` (or include `language_levels` in `ENTRY_FIELDS`) to p
 
 You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 
-### Admin “Add book (AI)”
+### `/add` AI suggestions
 
-In `/adminconsole`, **Add book (AI)** asks only for the title, then calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks the other enabled `ENTRY_FIELDS` one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or type / pick a new value to replace it.
+After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand. **Use AI** calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks those fields one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or type / pick a new value to replace it. **I'll fill it in** is the original manual wizard.
 
-Set `LLM_API_KEY` (or `XAI_API_KEY` / `OPENAI_API_KEY`). An `xai-…` key infers `LLM_API_BASE=https://api.x.ai/v1` and `LLM_MODEL=grok-4.6` if those are unset or still set to OpenAI defaults (`api.openai.com` / `gpt-4o-mini`). Code lives in the image, so after `git pull` rebuild: `docker compose up -d --build --force-recreate`. Recreate is also required after editing `.env`. If the key is missing or the request fails, the same add wizard continues and you fill the fields yourself. Failures send the problem type and provider detail on their own lines (plain text, so Telegram HTML cannot drop them), and as an ERROR alert to the main admin.
+The AI choice is offered only when an API key is configured (`LLM_API_KEY`, or `XAI_API_KEY` / `OPENAI_API_KEY`). An `xai-…` key infers `LLM_API_BASE=https://api.x.ai/v1` and `LLM_MODEL=grok-4.6` if those are unset or still set to OpenAI defaults (`api.openai.com` / `gpt-4o-mini`). Code lives in the image, so after `git pull` rebuild: `docker compose up -d --build --force-recreate`. Recreate is also required after editing `.env`. If the request fails, the same add wizard continues and you fill the fields yourself. Failures send the problem type and provider detail on their own lines (plain text, so Telegram HTML cannot drop them), and as an ERROR alert to the main admin.
 
 To move one entry between instances (e.g. after spinning up a new bot or merging clubs), use **Export book (JSON)** / **Import book (JSON)** in `/adminconsole` on each side — see Admin Commands above. The payload is a small JSON document (`format`: `bookclub-bot-book`); `entity` in the file is informational if book vs film labels differ.
 

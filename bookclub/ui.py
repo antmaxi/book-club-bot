@@ -81,6 +81,22 @@ def similar_title_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def add_ai_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_ai_yes_btn"), callback_data="add_ai:yes"
+                ),
+                InlineKeyboardButton(
+                    s(lang, "add_ai_no_btn"), callback_data="add_ai:no"
+                ),
+            ],
+            add_nav_buttons(lang, show_back=True, show_forward=False),
+        ]
+    )
+
+
 def add_nav_buttons(
     lang: str, *, show_back: bool = True, show_forward: bool = False
 ) -> list[InlineKeyboardButton]:
@@ -341,9 +357,13 @@ def notify_books_keyboard(
         )
     nav: list[InlineKeyboardButton] = []
     if start > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}"))
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}")
+        )
     if start + page_size < total:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}"))
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}")
+        )
     if nav:
         buttons.append(nav)
     buttons.append(

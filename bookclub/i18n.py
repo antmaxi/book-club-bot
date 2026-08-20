@@ -264,6 +264,11 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome_admin_suffix": "\n🛠 /adminconsole — Admin console",
         "lang_set": "🇬🇧 Language set to English.",
         "ask_title": "{card_icon} What is the <b>title</b> of the {sg}?",
+        "add_ai_ask": (
+            "✨ Fill in the other fields with <b>AI help</b>, or enter them yourself?"
+        ),
+        "add_ai_yes_btn": "✨ Use AI",
+        "add_ai_no_btn": "✍️ I'll fill it in",
         "add_back_btn": "⬅️ Back",
         "add_forward_btn": "➡️ Forward",
         "add_back_at_start": "You're already at the first step.",
@@ -448,13 +453,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "never",
         "admin_export_btn": "📤 Export {sg} (JSON)",
         "admin_import_btn": "📥 Import {sg} (JSON)",
-        "admin_add_btn": "➕ Add {sg} (AI)",
-        "admin_add_suggesting": "⏳ Looking up details for <b>{title}</b>…",
-        "admin_add_suggested": (
+        "add_ai_suggesting": "⏳ Looking up details for <b>{title}</b>…",
+        "add_ai_suggested": (
             "✅ Suggestions ready. Review each field — tap Forward to keep it, "
             "or send a new value."
         ),
-        "admin_add_suggest_failed": (
+        "add_ai_suggest_failed": (
             "⚠️ Could not fetch suggestions. Fill in the fields yourself.\n\n"
             "{kind}\n{error}"
         ),
@@ -471,7 +475,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_provider_non_json": "non-JSON response",
         "llm_err_http": "HTTP error",
         "llm_err_request": "request failed",
-        "admin_add_no_llm": (
+        "add_ai_no_llm": (
             "⚠️ No LLM API key configured (LLM_API_KEY / XAI_API_KEY / "
             "OPENAI_API_KEY). Fill in the fields yourself."
         ),
@@ -530,6 +534,9 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome_admin_suffix": "\n🛠 /adminconsole — Админ-панель",
         "lang_set": "🇷🇺 Язык установлен: Русский.",
         "ask_title": "{card_icon} Как называется {sg} (<b>название</b>)?",
+        "add_ai_ask": ("✨ Заполнить остальные поля с <b>помощью ИИ</b> или вручную?"),
+        "add_ai_yes_btn": "✨ С ИИ",
+        "add_ai_no_btn": "✍️ Заполню сам",
         "add_back_btn": "⬅️ Назад",
         "add_forward_btn": "➡️ Вперёд",
         "add_back_at_start": "Вы уже на первом шаге.",
@@ -714,13 +721,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "никогда",
         "admin_export_btn": "📤 Экспорт {gen_sg} (JSON)",
         "admin_import_btn": "📥 Импорт {gen_sg} (JSON)",
-        "admin_add_btn": "➕ Добавить {acc} (ИИ)",
-        "admin_add_suggesting": "⏳ Ищу данные для <b>{title}</b>…",
-        "admin_add_suggested": (
+        "add_ai_suggesting": "⏳ Ищу данные для <b>{title}</b>…",
+        "add_ai_suggested": (
             "✅ Подсказки готовы. Проверьте каждое поле — «Вперёд», чтобы оставить, "
             "или отправьте своё значение."
         ),
-        "admin_add_suggest_failed": (
+        "add_ai_suggest_failed": (
             "⚠️ Не удалось получить подсказки. Заполните поля вручную.\n\n"
             "{kind}\n{error}"
         ),
@@ -737,7 +743,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_provider_non_json": "ответ не JSON",
         "llm_err_http": "ошибка HTTP",
         "llm_err_request": "сбой запроса",
-        "admin_add_no_llm": (
+        "add_ai_no_llm": (
             "⚠️ Не задан ключ LLM (LLM_API_KEY / XAI_API_KEY / OPENAI_API_KEY). "
             "Заполните поля вручную."
         ),
@@ -796,6 +802,11 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome_admin_suffix": "\n🛠 /adminconsole — Admin-Konsole",
         "lang_set": "🇩🇪 Sprache auf Deutsch gestellt.",
         "ask_title": "{card_icon} Wie lautet der <b>Titel</b> des {gen_sg}?",
+        "add_ai_ask": (
+            "✨ Die übrigen Felder mit <b>KI-Hilfe</b> ausfüllen oder selbst eingeben?"
+        ),
+        "add_ai_yes_btn": "✨ KI nutzen",
+        "add_ai_no_btn": "✍️ Selbst ausfüllen",
         "add_back_btn": "⬅️ Zurück",
         "add_forward_btn": "➡️ Weiter",
         "add_back_at_start": "Du bist bereits beim ersten Schritt.",
@@ -980,13 +991,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "never": "nie",
         "admin_export_btn": "📤 {sg} exportieren (JSON)",
         "admin_import_btn": "📥 {sg} importieren (JSON)",
-        "admin_add_btn": "➕ {acc} hinzufügen (KI)",
-        "admin_add_suggesting": "⏳ Suche Angaben zu <b>{title}</b>…",
-        "admin_add_suggested": (
+        "add_ai_suggesting": "⏳ Suche Angaben zu <b>{title}</b>…",
+        "add_ai_suggested": (
             "✅ Vorschläge bereit. Prüfe jedes Feld — Weiter zum Behalten "
             "oder einen neuen Wert senden."
         ),
-        "admin_add_suggest_failed": (
+        "add_ai_suggest_failed": (
             "⚠️ Vorschläge konnten nicht geladen werden. "
             "Bitte die Felder selbst ausfüllen.\n\n"
             "{kind}\n{error}"
@@ -1004,7 +1014,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "llm_err_provider_non_json": "Antwort kein JSON",
         "llm_err_http": "HTTP-Fehler",
         "llm_err_request": "Anfrage fehlgeschlagen",
-        "admin_add_no_llm": (
+        "add_ai_no_llm": (
             "⚠️ Kein LLM-API-Schlüssel gesetzt (LLM_API_KEY / XAI_API_KEY / "
             "OPENAI_API_KEY). Bitte die Felder selbst ausfüllen."
         ),

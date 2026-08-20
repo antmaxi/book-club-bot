@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes
 
 from bookclub.cefr import format_language_levels, language_levels_display
 from bookclub.config import (
+    ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
@@ -68,6 +69,8 @@ def enabled_add_states() -> list[int]:
 
 def add_previous_state(current: int) -> int | None:
     if current == ADDING_TITLE_CONFIRM:
+        return ADDING_TITLE
+    if current == ADDING_AI_CHOOSE:
         return ADDING_TITLE
     if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
         return ADDING_ORIGINAL_LANGUAGE
@@ -319,6 +322,12 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     current = ctx.user_data.get("add_state")
     if current is None:
         return ADDING_TITLE
+    query = update.callback_query
+    if current == ADDING_AI_CHOOSE:
+        if query:
+            await query.answer()
+        ctx.user_data["llm_add"] = False
+        return await continue_add(update, ctx, ADDING_TITLE, edit=bool(query))
     nb = ctx.user_data.setdefault("new_book", {})
     query = update.callback_query
     if not add_field_is_set(nb, current):

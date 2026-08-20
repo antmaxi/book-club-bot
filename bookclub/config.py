@@ -180,7 +180,7 @@ def _positive_float_env(name: str, default: float) -> float:
     return value
 
 
-# OpenAI-compatible Chat Completions API for admin "Add book" field suggestions.
+# OpenAI-compatible Chat Completions API for /add field suggestions.
 # LLM_API_KEY, XAI_API_KEY, OPENAI_API_KEY, or CURSOR_API_KEY (first non-empty wins).
 _OPENAI_CHAT_BASE = "https://api.openai.com/v1"
 _XAI_CHAT_BASE = "https://api.x.ai/v1"
@@ -195,7 +195,8 @@ def resolve_llm_api_base(key: str = "") -> str:
     token = key or resolve_llm_api_key()
     parsed_host = urlparse(raw).hostname if raw else ""
     is_openai_host = bool(
-        parsed_host and (parsed_host == "openai.com" or parsed_host.endswith(".openai.com"))
+        parsed_host
+        and (parsed_host == "openai.com" or parsed_host.endswith(".openai.com"))
     )
     # An xai-… key against the OpenAI default (or a leftover README copy) 401s.
     if token.startswith("xai-") and (not raw or is_openai_host):
@@ -265,6 +266,7 @@ ADDING_TITLE_CONFIRM = 25
 ADMIN_IMPORT_CONFIRM = 26
 ADDING_LANGUAGE_LEVEL = 27
 ADDING_ORIGINAL_LANGUAGE_OTHER = 28
+ADDING_AI_CHOOSE = 29
 EDITING_CHOOSE = 8
 EDITING_FIELD = 9  # waiting for new value of current field
 DELETING_CHOOSE = 10

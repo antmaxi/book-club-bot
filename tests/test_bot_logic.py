@@ -772,10 +772,10 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(bot.tr("ru", "cancel_btn"), "❌ Отмена")
         self.assertEqual(bot.tr("de", "cancel_btn"), "❌ Abbrechen")
 
-    def test_admin_add_suggest_failed_keeps_provider_detail(self):
+    def test_add_ai_suggest_failed_keeps_provider_detail(self):
         text = bot.tr(
             "ru",
-            "admin_add_suggest_failed",
+            "add_ai_suggest_failed",
             kind="таймаут",
             error='HTTP 400: {"error":"<oops>"}',
         )
@@ -1157,6 +1157,9 @@ class TestEntryFields(unittest.TestCase):
     def test_add_next_title_only_completes(self):
         with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
             self.assertIsNone(add_next_state(bot.ADDING_TITLE))
+
+    def test_add_previous_from_ai_choose_is_title(self):
+        self.assertEqual(add_previous_state(bot.ADDING_AI_CHOOSE), bot.ADDING_TITLE)
 
     def test_entry_field_enabled_title_always(self):
         with patch.object(cfg, "ENTRY_FIELDS", frozenset()):

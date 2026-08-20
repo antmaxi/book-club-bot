@@ -19,7 +19,7 @@ Features:
 
 Commands:
   /start / /help   - Welcome message and command overview
-  /add             - Add a new book (with 5-minute delayed notification to others)
+  /add             - Add a new book (optional AI help for the other fields)
   /list            - List all undiscussed books (all or only unvoted)
   /top             - View top-rated undiscussed books
   /settings        - Manage notification and language preferences
