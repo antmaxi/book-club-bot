@@ -21,12 +21,14 @@ from bookclub.config import (
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
+    ADDING_DRAFT_CHOOSE,
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
     ADMIN_EXPORT_CHOOSE,
@@ -55,6 +57,8 @@ from bookclub.handlers.add import (
     add_author,
     add_creation_year,
     add_description,
+    add_draft_cb,
+    add_draft_del_cb,
     add_fiction_cb,
     add_language_level_cb,
     add_original_language_cb,
@@ -62,6 +66,7 @@ from bookclub.handlers.add import (
     add_original_language_skip,
     add_pages,
     add_review,
+    add_start_cb,
     add_title,
     add_title_similar_cb,
     cmd_add,
@@ -71,6 +76,7 @@ from bookclub.handlers.add_flow import (
     add_go_back,
     add_go_edit,
     add_go_forward,
+    add_go_save,
 )
 from bookclub.handlers.admin import (
     admin_export_pick_cb,
@@ -124,6 +130,8 @@ _ADD_NAV_HANDLERS = [
     CallbackQueryHandler(add_go_back, pattern=r"^add_back$"),
     CommandHandler("forward", add_go_forward),
     CallbackQueryHandler(add_go_forward, pattern=r"^add_forward$"),
+    CommandHandler("save", add_go_save),
+    CallbackQueryHandler(add_go_save, pattern=r"^add_save$"),
     CallbackQueryHandler(add_go_edit, pattern=r"^add_edit$"),
 ]
 
@@ -137,6 +145,15 @@ _CONV_FALLBACKS: list[Any] = [
 def add_flow_states() -> dict[Any, list[Any]]:
     """Conversation states for the sequential add-book wizard used by /add."""
     return {
+        ADDING_START: [
+            CallbackQueryHandler(add_start_cb, pattern=r"^add_start:"),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_DRAFT_CHOOSE: [
+            CallbackQueryHandler(add_draft_cb, pattern=r"^add_draft:\d+$"),
+            CallbackQueryHandler(add_draft_del_cb, pattern=r"^add_draft_del:\d+$"),
+            *_ADD_NAV_HANDLERS,
+        ],
         ADDING_TITLE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_title),
             *_ADD_NAV_HANDLERS,

@@ -33,7 +33,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 ### User Commands
 - `/start` or `/help`: Welcome message and command list.
 - `/info`: About the bot and last update time.
-- `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand.
+- `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand. **Save** keeps an unfinished draft; `/add` can continue a saved draft.
 - `/list`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
 - `/settings`: Change your notification and language preferences.
@@ -150,7 +150,7 @@ You can run separate bot instances (different tokens, different `.env` files) fo
 
 ### `/add` AI suggestions
 
-After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand. **Use AI** calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks those fields one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or **Edit** to put it in the message field and change it (then send). **I'll fill it in** is the original manual wizard.
+After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand — or, if you already have unfinished drafts, `/add` starts with **Use AI**, **I'll fill it in**, and **Continue a saved draft**. **Use AI** calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks those fields one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or **Edit** to put it in the message field and change it (then send). **I'll fill it in** is the original manual wizard. Tap **Save** (or `/save`) to keep progress; a later `/add` can resume that draft, including which fields are still AI suggestions (unless you edited them).
 
 If the bot has **inline mode** enabled in @BotFather (`/setinline`), **Edit** inserts the suggestion into the compose field. Otherwise it copies the text so you can paste and change it. Suggestions longer than Telegram’s 256-character copy/inline limit open a reply prompt with the text ready to copy.
 

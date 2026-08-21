@@ -21,6 +21,7 @@ from bookclub.handlers.add_flow import (
     add_edit_inline_query,
     add_go_edit,
     add_go_forward,
+    add_go_save,
     build_add_prompt_text,
     send_add_prompt,
     typed_add_text,
@@ -568,6 +569,29 @@ class TestAddConversation(BotHandlerTestCase):
         markup = self.message.reply_text.call_args[1]["reply_markup"]
         self.assertIn(bot.CONV_CANCEL, self._keyboard_callback_data(markup))
 
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
+    async def test_cmd_add_with_llm_shows_start_choices(self):
+        state = await bot.cmd_add(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_START)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_start:ai", data)
+        self.assertIn("add_start:manual", data)
+        self.assertNotIn("add_start:drafts", data)
+
+    async def test_cmd_add_with_drafts_offers_continue(self):
+        bot.db_insert_add_draft(
+            self.update.effective_user.id,
+            "Saved Book",
+            {"new_book": {"title": "Saved Book"}, "add_state": bot.ADDING_AUTHOR},
+        )
+        state = await bot.cmd_add(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_START)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_start:drafts", data)
+        self.assertIn("add_start:manual", data)
+
     async def test_add_title_stores_and_advances(self):
         self.ctx.user_data["new_book"] = {}
         self.message.text = "My Book"
@@ -892,6 +916,7 @@ class TestAddConversation(BotHandlerTestCase):
         data = self._keyboard_callback_data(markup)
         self.assertIn("add_back", data)
         self.assertIn("add_forward", data)
+        self.assertIn("add_save", data)
         self.assertIn(bot.CONV_CANCEL, data)
 
     async def test_add_prompt_shows_suggested_value_for_llm_fields(self):
@@ -976,6 +1001,108 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(state, bot.ADDING_AUTHOR)
         q.answer.assert_awaited()
         self.assertTrue(q.answer.call_args[1].get("show_alert"))
+
+    async def test_add_save_without_title_alerts(self):
+        self.ctx.user_data["new_book"] = {}
+        self.ctx.user_data["add_state"] = bot.ADDING_TITLE
+        q = self._callback_query("add_save")
+        state = await add_go_save(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_TITLE)
+        self.assertTrue(q.answer.call_args[1].get("show_alert"))
+        self.assertEqual(bot.db_list_add_drafts(self.update.effective_user.id), [])
+
+    async def test_add_save_and_resume_keeps_unedited_ai_fields(self):
+        uid = self.update.effective_user.id
+        self.ctx.user_data["new_book"] = {
+            "title": "War and Peace",
+            "author": "Leo Tolstoy",
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        self.ctx.user_data["llm_add"] = True
+        self.ctx.user_data["llm_filled_keys"] = {"author"}
+        q = self._callback_query("add_save")
+        state = await add_go_save(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        drafts = bot.db_list_add_drafts(uid)
+        self.assertEqual(len(drafts), 1)
+        draft_id, title = drafts[0]
+        self.assertEqual(title, "War and Peace")
+        q.answer.assert_awaited()
+
+        start = await bot.cmd_add(self.update, self.ctx)
+        self.assertEqual(start, bot.ADDING_START)
+        self._callback_query("add_start:drafts")
+        listed = await bot.add_start_cb(self.update, self.ctx)
+        self.assertEqual(listed, bot.ADDING_DRAFT_CHOOSE)
+        self._callback_query(f"add_draft:{draft_id}")
+        resumed = await bot.add_draft_cb(self.update, self.ctx)
+        self.assertEqual(resumed, bot.ADDING_AUTHOR)
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Leo Tolstoy")
+        self.assertEqual(self.ctx.user_data["llm_filled_keys"], {"author"})
+        self.assertTrue(self.ctx.user_data["llm_add"])
+        text = self.update.callback_query.edit_message_text.call_args[0][0]
+        self.assertIn("Suggested", text)
+
+    async def test_add_save_after_edit_drops_ai_flag_on_resume(self):
+        uid = self.update.effective_user.id
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Correct Author"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        self.ctx.user_data["llm_add"] = True
+        self.ctx.user_data["llm_filled_keys"] = set()
+        await add_go_save(self.update, self.ctx)
+        draft_id = bot.db_list_add_drafts(uid)[0][0]
+        await bot.cmd_add(self.update, self.ctx)
+        self._callback_query("add_start:drafts")
+        await bot.add_start_cb(self.update, self.ctx)
+        self._callback_query(f"add_draft:{draft_id}")
+        await bot.add_draft_cb(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["llm_filled_keys"], set())
+        text = self.update.callback_query.edit_message_text.call_args[0][0]
+        self.assertIn("Current", text)
+        self.assertNotIn("Suggested", text)
+
+    async def test_complete_add_deletes_draft(self):
+        uid = self.update.effective_user.id
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
+        }
+        self.ctx.user_data["add_draft_id"] = bot.db_insert_add_draft(
+            uid, "T", {"new_book": {"title": "T"}}
+        )
+        self.message.text = "Desc"
+        self.ctx.job_queue = None
+        await bot.add_description(self.update, self.ctx)
+        self.assertEqual(bot.db_list_add_drafts(uid), [])
+
+    async def test_add_draft_delete_removes_row(self):
+        uid = self.update.effective_user.id
+        draft_id = bot.db_insert_add_draft(
+            uid, "Gone", {"new_book": {"title": "Gone"}, "add_state": bot.ADDING_AUTHOR}
+        )
+        self._callback_query(f"add_draft_del:{draft_id}")
+        state = await bot.add_draft_del_cb(self.update, self.ctx)
+        self.assertEqual(bot.db_list_add_drafts(uid), [])
+        self.assertEqual(state, bot.ADDING_START)
+
+    @patch.object(cfg, "LLM_API_KEY", "sk-test")
+    @patch("bookclub.handlers.add.suggest_book_fields")
+    async def test_start_ai_choice_skips_second_ask(self, mock_suggest):
+        mock_suggest.return_value = (
+            {"author": "Jane Austen", "pages": 200, "fiction": True},
+            None,
+        )
+        self.ctx.user_data["new_book"] = {}
+        self.ctx.user_data["llm_add"] = True
+        self.ctx.user_data["add_from_start"] = True
+        self.message.text = "Pride and Prejudice"
+        state = await bot.add_title(self.update, self.ctx)
+        mock_suggest.assert_called_once()
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Jane Austen")
+        self.assertEqual(state, bot.ADDING_AUTHOR)
 
     async def test_add_edit_inline_query_returns_typed_value(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
@@ -2358,6 +2485,16 @@ class TestConversationWiring(unittest.TestCase):
         self.assertFalse(
             self._matches(handlers, "/cancel", is_command=True),
             "/cancel must not be consumed on the AI-choice step",
+        )
+
+    def test_add_start_and_draft_states_registered(self):
+        conv = self._states("add")
+        self.assertIn(bot.ADDING_START, conv.states)
+        self.assertIn(bot.ADDING_DRAFT_CHOOSE, conv.states)
+        author = conv.states[bot.ADDING_AUTHOR]
+        self.assertTrue(
+            self._matches(author, "/save", is_command=True),
+            "/save must be handled while adding",
         )
 
     def test_conversations_register_cancel_button_fallback(self):

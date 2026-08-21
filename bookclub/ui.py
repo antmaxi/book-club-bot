@@ -39,6 +39,20 @@ def cancel_button(lang: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(s(lang, "cancel_btn"), callback_data=CONV_CANCEL)
 
 
+def save_button(lang: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(s(lang, "add_save_btn"), callback_data="add_save")
+
+
+def add_wizard_footer(
+    lang: str, *, show_save: bool = False
+) -> list[list[InlineKeyboardButton]]:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_save:
+        rows.append([save_button(lang)])
+    rows.append([cancel_button(lang)])
+    return rows
+
+
 def cancel_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[cancel_button(lang)]])
 
@@ -88,11 +102,14 @@ def similar_title_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
                 ),
             ],
             add_nav_buttons(lang, show_back=True, show_forward=False),
+            *add_wizard_footer(lang, show_save=True),
         ]
     )
 
 
-def add_ai_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
+def add_ai_choice_keyboard(
+    lang: str, *, show_save: bool = True
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
@@ -104,9 +121,65 @@ def add_ai_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
                 ),
             ],
             add_nav_buttons(lang, show_back=True, show_forward=False),
-            [cancel_button(lang)],
+            *add_wizard_footer(lang, show_save=show_save),
         ]
     )
+
+
+def add_start_keyboard(
+    lang: str, *, llm: bool, has_drafts: bool
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if llm:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_ai_yes_btn"), callback_data="add_start:ai"
+                ),
+                InlineKeyboardButton(
+                    s(lang, "add_ai_no_btn"), callback_data="add_start:manual"
+                ),
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_start_new_btn"), callback_data="add_start:manual"
+                )
+            ]
+        )
+    if has_drafts:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_continue_btn"), callback_data="add_start:drafts"
+                )
+            ]
+        )
+    rows.append([cancel_button(lang)])
+    return InlineKeyboardMarkup(rows)
+
+
+def add_drafts_keyboard(
+    lang: str, drafts: Sequence[tuple[int, str]]
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for draft_id, title in drafts:
+        label = title.strip() or s(lang, "add_draft_untitled")
+        if len(label) > 40:
+            label = label[:37] + "…"
+        rows.append(
+            [
+                InlineKeyboardButton(label, callback_data=f"add_draft:{draft_id}"),
+                InlineKeyboardButton("🗑", callback_data=f"add_draft_del:{draft_id}"),
+            ]
+        )
+    nav = add_nav_buttons(lang, show_back=True, show_forward=False)
+    if nav:
+        rows.append(nav)
+    rows.append([cancel_button(lang)])
+    return InlineKeyboardMarkup(rows)
 
 
 def add_edit_button(
@@ -157,6 +230,7 @@ def add_nav_keyboard(
     show_forward: bool = False,
     edit_value: str | None = None,
     use_inline: bool = False,
+    show_save: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row = add_nav_buttons(
@@ -168,7 +242,7 @@ def add_nav_keyboard(
     )
     if row:
         rows.append(row)
-    rows.append([cancel_button(lang)])
+    rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
 
 
@@ -284,7 +358,7 @@ TELEGRAM_MESSAGE_MAX = 4000
 
 
 async def send_chunked_html_messages(
-    bot,
+    bot: Bot,
     chat_id: int,
     lines: Sequence[str],
     *,
@@ -324,7 +398,7 @@ def _parse_list_callback(data: str) -> tuple[str, str | None]:
 
 
 async def _show_list_format_prompt(
-    query, ctx: ContextTypes.DEFAULT_TYPE, filter_choice: str
+    query: Any, ctx: ContextTypes.DEFAULT_TYPE, filter_choice: str
 ) -> None:
     ctx.user_data["pending_list_choice"] = filter_choice
     keyboard = InlineKeyboardMarkup(
@@ -675,7 +749,11 @@ async def _show_meeting_attendee_picker(
 
 
 def fiction_keyboard(
-    lang: str, *, show_add_back: bool = False, show_add_forward: bool = False
+    lang: str,
+    *,
+    show_add_back: bool = False,
+    show_add_forward: bool = False,
+    show_save: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -686,7 +764,7 @@ def fiction_keyboard(
     nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
     if nav:
         rows.append(nav)
-    rows.append([cancel_button(lang)])
+    rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
 
 
@@ -697,6 +775,7 @@ def original_language_keyboard(
     show_add_back: bool = False,
     show_add_forward: bool = False,
     show_skip: bool = True,
+    show_save: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -729,7 +808,7 @@ def original_language_keyboard(
     nav = add_nav_buttons(lang, show_back=show_add_back, show_forward=show_add_forward)
     if nav:
         rows.append(nav)
-    rows.append([cancel_button(lang)])
+    rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
 
 
@@ -741,6 +820,7 @@ def cefr_levels_keyboard(
     done_label_key: str = "language_level_done_btn",
     show_add_back: bool = False,
     show_add_forward: bool = False,
+    show_save: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -768,7 +848,7 @@ def cefr_levels_keyboard(
             )
         ]
     )
-    rows.append([cancel_button(lang)])
+    rows.extend(add_wizard_footer(lang, show_save=show_save))
     return InlineKeyboardMarkup(rows)
 
 

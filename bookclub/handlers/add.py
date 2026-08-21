@@ -11,22 +11,34 @@ from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
+    ADDING_DRAFT_CHOOSE,
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
     llm_configured,
 )
-from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
+from bookclub.db import (
+    db_add_book,
+    db_delete_add_draft,
+    db_get_add_draft,
+    db_get_book,
+    db_list_add_drafts,
+    find_similar_book_titles,
+)
 from bookclub.handlers.add_flow import (
     add_next_state,
+    apply_add_draft,
     build_add_prompt_text,
     continue_add,
     markup_for_add,
+    persist_add_draft_if_saved,
+    resume_add_state,
     send_add_prompt,
     typed_add_text,
 )
@@ -43,6 +55,8 @@ from bookclub.notifications import schedule_new_book_notifications
 from bookclub.original_languages import stored_original_language
 from bookclub.ui import (
     add_ai_choice_keyboard,
+    add_drafts_keyboard,
+    add_start_keyboard,
     book_card,
     h,
     is_valid_url,
@@ -55,6 +69,10 @@ from bookclub.ui import (
 async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     _clear_add_state(ctx)
     ctx.user_data["new_book"] = {}
+    user = update.effective_user
+    drafts = db_list_add_drafts(user.id) if user else []
+    if llm_configured() or drafts:
+        return await ask_add_start(update, ctx, edit=False)
     return await send_add_prompt(update, ctx, ADDING_TITLE)
 
 
@@ -65,6 +83,118 @@ def _clear_add_state(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     ctx.user_data.pop("admin_add", None)
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
+    ctx.user_data.pop("add_draft_id", None)
+    ctx.user_data.pop("add_from_start", None)
+
+
+async def ask_add_start(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, *, edit: bool = False
+) -> int:
+    ctx.user_data["add_state"] = ADDING_START
+    ctx.user_data["add_from_start"] = True
+    user = update.effective_user
+    drafts = db_list_add_drafts(user.id) if user else []
+    lang = get_lang(ctx)
+    llm = llm_configured()
+    text = tr(ctx, "add_start_ask")
+    markup = add_start_keyboard(lang, llm=llm, has_drafts=bool(drafts))
+    query = update.callback_query
+    if edit and query:
+        await query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+    elif update.message:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+    elif query and query.message:
+        await query.message.reply_text(  # type: ignore[attr-defined]
+            text, reply_markup=markup, parse_mode=PM
+        )
+    return ADDING_START
+
+
+async def add_start_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    _, action = query.data.split(":", 1)
+    ctx.user_data.setdefault("new_book", {})
+    ctx.user_data["add_from_start"] = True
+    if action == "drafts":
+        return await ask_add_drafts(update, ctx, edit=True)
+    ctx.user_data["new_book"] = {}
+    ctx.user_data.pop("add_draft_id", None)
+    ctx.user_data.pop("llm_suggestions_applied", None)
+    ctx.user_data.pop("llm_filled_keys", None)
+    ctx.user_data["llm_add"] = action == "ai"
+    return await send_add_prompt(update, ctx, ADDING_TITLE, edit=True)
+
+
+async def ask_add_drafts(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+    alert_empty: bool = True,
+) -> int:
+    ctx.user_data["add_state"] = ADDING_DRAFT_CHOOSE
+    ctx.user_data["add_from_start"] = True
+    user = update.effective_user
+    drafts = db_list_add_drafts(user.id) if user else []
+    lang = get_lang(ctx)
+    query = update.callback_query
+    if not drafts:
+        if alert_empty and query:
+            await query.answer(tr(ctx, "add_drafts_empty"), show_alert=True)
+        return await ask_add_start(update, ctx, edit=edit or bool(query))
+    text = tr(ctx, "add_drafts_ask")
+    markup = add_drafts_keyboard(lang, drafts)
+    if edit and query:
+        await query.edit_message_text(text, reply_markup=markup, parse_mode=PM)
+    elif update.message:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode=PM)
+    elif query and query.message:
+        await query.message.reply_text(  # type: ignore[attr-defined]
+            text, reply_markup=markup, parse_mode=PM
+        )
+    return ADDING_DRAFT_CHOOSE
+
+
+async def add_draft_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    _, raw_id = query.data.split(":", 1)
+    try:
+        draft_id = int(raw_id)
+    except ValueError:
+        await query.answer()
+        return await ask_add_drafts(update, ctx, edit=True)
+    user = update.effective_user
+    if user is None:
+        await query.answer()
+        return ConversationHandler.END
+    payload = db_get_add_draft(draft_id, user.id)
+    if payload is None:
+        await query.answer(tr(ctx, "add_draft_missing"), show_alert=True)
+        return await ask_add_drafts(update, ctx, edit=True)
+    await query.answer()
+    apply_add_draft(ctx, payload, draft_id)
+    state = resume_add_state(ctx.user_data.get("add_state"))
+    if state == ADDING_AI_CHOOSE:
+        return await ask_add_ai(update, ctx, edit=True)
+    return await send_add_prompt(update, ctx, state, edit=True)
+
+
+async def add_draft_del_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    _, raw_id = query.data.split(":", 1)
+    try:
+        draft_id = int(raw_id)
+    except ValueError:
+        await query.answer()
+        return await ask_add_drafts(update, ctx, edit=True)
+    user = update.effective_user
+    if user is None:
+        await query.answer()
+        return ConversationHandler.END
+    db_delete_add_draft(draft_id, user.id)
+    await query.answer(tr(ctx, "add_draft_deleted"))
+    return await ask_add_drafts(update, ctx, edit=True, alert_empty=False)
 
 
 async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -72,11 +202,11 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data.setdefault("new_book", {})["title"] = title
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
-    ctx.user_data.pop("llm_add", None)
     lang = get_lang(ctx)
     similar = find_similar_book_titles(title)
     if similar:
         ctx.user_data["add_state"] = ADDING_TITLE_CONFIRM
+        persist_add_draft_if_saved(update, ctx)
         await update.message.reply_text(
             tr(
                 ctx,
@@ -171,6 +301,7 @@ async def ask_add_ai(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE, *, edit: bool = False
 ) -> int:
     ctx.user_data["add_state"] = ADDING_AI_CHOOSE
+    persist_add_draft_if_saved(update, ctx)
     lang = get_lang(ctx)
     text = tr(ctx, "add_ai_ask")
     markup = add_ai_choice_keyboard(lang)
@@ -204,7 +335,14 @@ async def advance_after_title(
     *,
     edit: bool = False,
 ) -> int:
-    if add_next_state(ADDING_TITLE) is not None and llm_configured():
+    if add_next_state(ADDING_TITLE) is None:
+        return await continue_add(update, ctx, current, edit=edit)
+    if ctx.user_data.get("llm_add") is True:
+        await apply_llm_suggestions(update, ctx)
+        return await continue_add(update, ctx, ADDING_TITLE, edit=False)
+    if ctx.user_data.get("llm_add") is False:
+        return await continue_add(update, ctx, current, edit=edit)
+    if llm_configured():
         return await ask_add_ai(update, ctx, edit=edit)
     return await continue_add(update, ctx, current, edit=edit)
 
@@ -401,6 +539,9 @@ async def complete_new_book(
     )
     if book_id is None:
         raise RuntimeError("db_add_book did not return a book id")
+    draft_id = ctx.user_data.get("add_draft_id")
+    if draft_id:
+        db_delete_add_draft(int(draft_id), user.id)
     book = db_get_book(book_id)
     if book is None:
         raise RuntimeError(f"book {book_id} missing immediately after insert")

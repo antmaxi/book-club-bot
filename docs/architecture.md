@@ -10,7 +10,7 @@ Implementation lives in the `bookclub/` package. `bookclub_bot.py` re-exports th
 flowchart LR
   TG[Telegram Bot API]
   BOT["bookclub_bot.py → bookclub.main"]
-  SQ[(SQLite<br/>books, votes, settings, meetings)]
+  SQ[(SQLite<br/>books, votes, settings, meetings, add_drafts)]
   PK[(PicklePersistence<br/>conversations, bot_data)]
   LOG[(logs/bookclub_bot.log)]
   LLM[OpenAI-compatible LLM<br/>optional, /add suggestions]
@@ -210,7 +210,7 @@ Notes:
 
 ## Notable flows
 
-**`/add`:** title → optional similar-title confirm → AI vs manual → remaining `ENTRY_FIELDS`. AI uses `bookclub.llm` only when an API key is configured. Suggested text fields include an **Edit** button. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
+**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → remaining `ENTRY_FIELDS`. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI uses `bookclub.llm` only when an API key is configured. Suggested text fields include an **Edit** button. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
 
 **Voting:** inline buttons on cards (`vote_cast:`). Works in DM and in the group chat; the message is edited so everyone sees the new tally.
 

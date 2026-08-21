@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from telegram import (
     ForceReply,
     InlineKeyboardMarkup,
@@ -15,16 +17,19 @@ from bookclub.config import (
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
+    ADDING_DRAFT_CHOOSE,
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_ORIGINAL_LANGUAGE_OTHER,
     ADDING_PAGES,
     ADDING_REVIEW,
+    ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
     entry_field_enabled,
 )
+from bookclub.db import db_update_add_draft
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import display_original_language
 from bookclub.ui import (
@@ -91,6 +96,8 @@ def add_previous_state(current: int) -> int | None:
         return ADDING_TITLE
     if current == ADDING_AI_CHOOSE:
         return ADDING_TITLE
+    if current == ADDING_DRAFT_CHOOSE:
+        return ADDING_START
     if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
         return ADDING_ORIGINAL_LANGUAGE
     enabled = enabled_add_states()
@@ -221,6 +228,79 @@ def note_user_edit(ctx: ContextTypes.DEFAULT_TYPE, state: int) -> None:
         filled.discard(key)
 
 
+def serialize_add_draft(ctx: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
+    nb = dict(ctx.user_data.get("new_book") or {})
+    levels = nb.get("language_levels")
+    if isinstance(levels, set):
+        nb["language_levels"] = sorted(levels)
+    filled = ctx.user_data.get("llm_filled_keys")
+    return {
+        "new_book": nb,
+        "add_state": ctx.user_data.get("add_state"),
+        "llm_add": ctx.user_data.get("llm_add"),
+        "admin_add": ctx.user_data.get("admin_add"),
+        "llm_suggestions_applied": ctx.user_data.get("llm_suggestions_applied"),
+        "llm_filled_keys": sorted(filled) if isinstance(filled, set) else [],
+        "add_from_start": bool(ctx.user_data.get("add_from_start")),
+    }
+
+
+def apply_add_draft(
+    ctx: ContextTypes.DEFAULT_TYPE, payload: dict[str, Any], draft_id: int
+) -> None:
+    nb = dict(payload.get("new_book") or {})
+    levels = nb.get("language_levels")
+    if isinstance(levels, list):
+        nb["language_levels"] = set(levels)
+    ctx.user_data["new_book"] = nb
+    ctx.user_data["add_state"] = payload.get("add_state")
+    ctx.user_data["llm_add"] = payload.get("llm_add")
+    ctx.user_data["admin_add"] = payload.get("admin_add")
+    ctx.user_data["llm_suggestions_applied"] = payload.get("llm_suggestions_applied")
+    filled = payload.get("llm_filled_keys") or []
+    ctx.user_data["llm_filled_keys"] = (
+        set(filled) if isinstance(filled, list) else set()
+    )
+    ctx.user_data["add_draft_id"] = draft_id
+    ctx.user_data["add_from_start"] = True
+
+
+def persist_add_draft_if_saved(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    draft_id = ctx.user_data.get("add_draft_id")
+    if not draft_id:
+        return
+    user = update.effective_user
+    if user is None:
+        return
+    nb = ctx.user_data.get("new_book") or {}
+    title = str(nb.get("title") or "")
+    if not title:
+        return
+    db_update_add_draft(int(draft_id), user.id, title, serialize_add_draft(ctx))
+
+
+def resume_add_state(saved: object) -> int:
+    if not isinstance(saved, int):
+        return ADDING_TITLE
+    special = {
+        ADDING_TITLE_CONFIRM,
+        ADDING_AI_CHOOSE,
+        ADDING_ORIGINAL_LANGUAGE_OTHER,
+        ADDING_START,
+        ADDING_DRAFT_CHOOSE,
+    }
+    if saved in special:
+        if saved in (ADDING_START, ADDING_DRAFT_CHOOSE, ADDING_TITLE_CONFIRM):
+            return ADDING_TITLE
+        return saved
+    enabled = enabled_add_states()
+    if saved in enabled:
+        return saved
+    key = _canonical_add_state(saved)
+    nxt = add_next_state(key)
+    return nxt if nxt is not None else (enabled[0] if enabled else ADDING_TITLE)
+
+
 def raw_add_value(nb: dict, state: int) -> str | None:
     if state == ADDING_AUTHOR:
         v = nb.get("author")
@@ -278,6 +358,8 @@ def markup_for_add(
         nb,
         edit_value=add_edit_value(ctx, state, nb),
         use_inline=bot_supports_inline(ctx),
+        show_save=bool(nb.get("title")),
+        show_title_back=bool(ctx.user_data.get("add_from_start")),
     )
 
 
@@ -320,19 +402,32 @@ def add_prompt_markup(
     *,
     edit_value: str | None = None,
     use_inline: bool = False,
+    show_save: bool = False,
+    show_title_back: bool = False,
 ) -> InlineKeyboardMarkup:
     can_forward = add_field_is_set(nb, state)
     show_back = state != ADDING_TITLE
     if state == ADDING_TITLE:
-        return add_nav_keyboard(lang, show_back=False, show_forward=can_forward)
+        return add_nav_keyboard(
+            lang,
+            show_back=show_title_back,
+            show_forward=can_forward,
+            show_save=show_save,
+        )
     if state == ADDING_FICTION:
-        return fiction_keyboard(lang, show_add_back=True, show_add_forward=can_forward)
+        return fiction_keyboard(
+            lang,
+            show_add_back=True,
+            show_add_forward=can_forward,
+            show_save=show_save,
+        )
     if state == ADDING_ORIGINAL_LANGUAGE:
         return original_language_keyboard(
             lang,
             prefix="add_orig_lang",
             show_add_back=True,
             show_add_forward=can_forward,
+            show_save=show_save,
         )
     if state == ADDING_LANGUAGE_LEVEL:
         levels = nb.get("language_levels")
@@ -343,6 +438,7 @@ def add_prompt_markup(
             prefix="add_cefr",
             show_add_back=True,
             show_add_forward=can_forward,
+            show_save=show_save,
         )
     if state in (
         ADDING_AUTHOR,
@@ -358,6 +454,7 @@ def add_prompt_markup(
             show_forward=can_forward,
             edit_value=edit_value,
             use_inline=use_inline,
+            show_save=show_save,
         )
     return cancel_keyboard(lang)
 
@@ -370,9 +467,10 @@ async def send_add_prompt(
     edit: bool = False,
 ) -> int:
     nb = ctx.user_data.setdefault("new_book", {})
+    ctx.user_data["add_state"] = state
+    persist_add_draft_if_saved(update, ctx)
     text = build_add_prompt_text(ctx, state, nb)
     markup = markup_for_add(ctx, state, nb)
-    ctx.user_data["add_state"] = state
 
     query = update.callback_query
     if edit and query:
@@ -402,8 +500,18 @@ async def add_go_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     current = ctx.user_data.get("add_state")
     if current is None:
         return ADDING_TITLE
-    prev = add_previous_state(current)
     query = update.callback_query
+    if current == ADDING_START:
+        return await _nav_alert(update, ctx, "add_back_at_start", current)
+    if current == ADDING_DRAFT_CHOOSE or (
+        current == ADDING_TITLE and ctx.user_data.get("add_from_start")
+    ):
+        if query:
+            await query.answer()
+        from bookclub.handlers.add import ask_add_start
+
+        return await ask_add_start(update, ctx, edit=bool(query))
+    prev = add_previous_state(current)
     if prev is None:
         return await _nav_alert(update, ctx, "add_back_at_start", current)
     if query:
@@ -421,6 +529,8 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             await query.answer()
         ctx.user_data["llm_add"] = False
         return await continue_add(update, ctx, ADDING_TITLE, edit=bool(query))
+    if current in (ADDING_START, ADDING_DRAFT_CHOOSE):
+        return await _nav_alert(update, ctx, "add_forward_need_value", current)
     nb = ctx.user_data.setdefault("new_book", {})
     query = update.callback_query
     if not add_field_is_set(nb, current):
@@ -437,6 +547,36 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if query:
         await query.answer()
     return await send_add_prompt(update, ctx, nxt, edit=bool(query))
+
+
+async def add_go_save(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    from bookclub.db import ADD_DRAFTS_MAX, db_count_add_drafts, db_insert_add_draft
+
+    current = ctx.user_data.get("add_state")
+    if not isinstance(current, int):
+        return ADDING_TITLE
+    nb = ctx.user_data.get("new_book") or {}
+    title = str(nb.get("title") or "").strip()
+    if not title:
+        return await _nav_alert(update, ctx, "add_save_need_title", current)
+    user = update.effective_user
+    if user is None:
+        return current
+    payload = serialize_add_draft(ctx)
+    draft_id = ctx.user_data.get("add_draft_id")
+    query = update.callback_query
+    if draft_id:
+        db_update_add_draft(int(draft_id), user.id, title, payload)
+    else:
+        if db_count_add_drafts(user.id) >= ADD_DRAFTS_MAX:
+            return await _nav_alert(update, ctx, "add_save_too_many", current)
+        ctx.user_data["add_draft_id"] = db_insert_add_draft(user.id, title, payload)
+    msg = tr(ctx, "add_saved")
+    if query:
+        await query.answer(msg, show_alert=True)
+    elif update.message:
+        await update.message.reply_text(msg, parse_mode=PM)
+    return current
 
 
 async def add_go_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:

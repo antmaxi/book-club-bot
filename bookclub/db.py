@@ -12,13 +12,14 @@ from bookclub.cefr import format_language_levels
 from bookclub.types import BookLike
 
 IMPORTED_USER_ID = config.IMPORTED_USER_ID
+_CREATION_YEAR_MIN = 1000
+_CREATION_YEAR_MAX = 2100
 
 
 def init_db() -> None:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 title         TEXT NOT NULL,
@@ -35,8 +36,7 @@ def init_db() -> None:
                 added_by_username TEXT DEFAULT NULL,
                 added_at          TEXT NOT NULL
             )
-        """
-        )
+        """)
         # Migrate existing DB: add book columns if missing
         for col, definition in [
             ("pages", "INTEGER NOT NULL DEFAULT 0"),
@@ -65,38 +65,31 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 user_id INTEGER NOT NULL,
                 book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                 score   INTEGER NOT NULL,
                 PRIMARY KEY (user_id, book_id)
             )
-        """
-        )
-        conn.execute(
-            """
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id      INTEGER NOT NULL,
                 setting_key  TEXT NOT NULL,
                 setting_val  INTEGER NOT NULL,
                 PRIMARY KEY (user_id, setting_key)
             )
-        """
-        )
-        conn.execute(
-            """
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS club_users (
                 user_id      INTEGER PRIMARY KEY,
                 full_name    TEXT NOT NULL DEFAULT '',
                 username     TEXT,
                 last_seen_at TEXT NOT NULL
             )
-        """
-        )
-        conn.execute(
-            """
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS meetings (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -104,33 +97,37 @@ def init_db() -> None:
                 created_at   TEXT NOT NULL,
                 created_by   INTEGER NOT NULL
             )
-        """
-        )
-        conn.execute(
-            """
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS meeting_attendees (
                 meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
                 user_id    INTEGER NOT NULL,
                 PRIMARY KEY (meeting_id, user_id)
             )
-        """
-        )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS add_drafts (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                title      TEXT NOT NULL DEFAULT '',
+                payload    TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
         conn.execute(
-            """
+            "CREATE INDEX IF NOT EXISTS idx_add_drafts_user ON add_drafts(user_id)"
+        )
+        conn.execute("""
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT user_id, '', NULL, datetime('now') FROM votes
-        """
-        )
-        conn.execute(
-            """
+        """)
+        conn.execute("""
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT user_id, '', NULL, datetime('now') FROM user_settings
-        """
-        )
+        """)
         # Votes/settings backfill creates empty names first; fill them from books
         # when we have added_by_name (INSERT OR IGNORE would skip those rows).
-        conn.execute(
-            """
+        conn.execute("""
             INSERT INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT added_by, added_by_name, added_by_username, added_at FROM books
             WHERE added_by > 0
@@ -140,10 +137,81 @@ def init_db() -> None:
                 THEN excluded.full_name
                 ELSE club_users.full_name END,
               username = COALESCE(club_users.username, excluded.username)
-        """
-        )
+        """)
         conn.commit()
     db_rebuild_attendance_surplus()
+
+
+ADD_DRAFTS_MAX = 20
+
+
+def db_insert_add_draft(user_id: int, title: str, payload: dict[str, Any]) -> int:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        cur = conn.execute(
+            "INSERT INTO add_drafts (user_id, title, payload, updated_at) "
+            "VALUES (?,?,?,datetime('now'))",
+            (user_id, title, json.dumps(payload, ensure_ascii=False)),
+        )
+        conn.commit()
+        draft_id = cur.lastrowid
+    if draft_id is None:
+        raise RuntimeError("add_draft insert did not return id")
+    return int(draft_id)
+
+
+def db_update_add_draft(
+    draft_id: int, user_id: int, title: str, payload: dict[str, Any]
+) -> bool:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        cur = conn.execute(
+            "UPDATE add_drafts SET title=?, payload=?, updated_at=datetime('now') "
+            "WHERE id=? AND user_id=?",
+            (title, json.dumps(payload, ensure_ascii=False), draft_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def db_get_add_draft(draft_id: int, user_id: int) -> dict[str, Any] | None:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT payload FROM add_drafts WHERE id=? AND user_id=?",
+            (draft_id, user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row[0])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def db_list_add_drafts(user_id: int) -> list[tuple[int, str]]:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, title FROM add_drafts WHERE user_id=? "
+            "ORDER BY updated_at DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+    return [(int(r[0]), str(r[1] or "")) for r in rows]
+
+
+def db_count_add_drafts(user_id: int) -> int:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM add_drafts WHERE user_id=?", (user_id,)
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def db_delete_add_draft(draft_id: int, user_id: int) -> bool:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        cur = conn.execute(
+            "DELETE FROM add_drafts WHERE id=? AND user_id=?", (draft_id, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def db_add_book(
@@ -536,10 +604,8 @@ def db_get_books_pending_notify() -> list[sqlite3.Row]:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn.execute(
-            """SELECT b.* FROM books b
-               WHERE b.notify_sent=0 AND b.notify_after IS NOT NULL"""
-        ).fetchall()
+        return conn.execute("""SELECT b.* FROM books b
+               WHERE b.notify_sent=0 AND b.notify_after IS NOT NULL""").fetchall()
 
 
 def db_toggle_hidden(book_id: int) -> None:
@@ -613,7 +679,10 @@ def db_create_meeting(
                VALUES (?,?,?,?)""",
             (book_id, meeting_date, now, created_by),
         )
-        meeting_id = int(cur.lastrowid)
+        meeting_id = cur.lastrowid
+        if meeting_id is None:
+            raise RuntimeError("meeting insert did not return id")
+        meeting_id = int(meeting_id)
         for uid in attendee_ids:
             if uid > 0:
                 conn.execute(
@@ -629,28 +698,29 @@ def db_list_meetings() -> list[sqlite3.Row]:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn.execute(
-            """SELECT m.id, m.book_id, m.meeting_date, m.created_at,
+        return conn.execute("""SELECT m.id, m.book_id, m.meeting_date, m.created_at,
                       b.title, b.author,
                       (SELECT COUNT(*) FROM meeting_attendees ma WHERE ma.meeting_id = m.id)
                         AS attendee_count
                FROM meetings m
                JOIN books b ON b.id = m.book_id
-               ORDER BY m.meeting_date DESC, m.id DESC"""
-        ).fetchall()
+               ORDER BY m.meeting_date DESC, m.id DESC""").fetchall()
 
 
 def db_get_meeting(meeting_id: int) -> sqlite3.Row | None:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn.execute(
-            """SELECT m.*, b.title, b.author
+        return cast(
+            sqlite3.Row | None,
+            conn.execute(
+                """SELECT m.*, b.title, b.author
                FROM meetings m
                JOIN books b ON b.id = m.book_id
                WHERE m.id = ?""",
-            (meeting_id,),
-        ).fetchone()
+                (meeting_id,),
+            ).fetchone(),
+        )
 
 
 def db_get_meeting_attendee_rows(meeting_id: int) -> list[sqlite3.Row]:

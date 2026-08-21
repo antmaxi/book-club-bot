@@ -74,6 +74,7 @@ class TestDatabase(unittest.TestCase):
         self.assertIn("books", tables)
         self.assertIn("votes", tables)
         self.assertIn("user_settings", tables)
+        self.assertIn("add_drafts", tables)
 
     def test_init_db_idempotent(self):
         """Calling init_db() twice should not raise."""
@@ -667,6 +668,58 @@ class TestDatabase(unittest.TestCase):
         self.assertNotIn(3, result)
         self.assertEqual(len(result), 2)
 
+    def test_add_drafts_crud_and_user_isolation(self):
+        payload = {
+            "new_book": {"title": "War and Peace", "author": "Leo"},
+            "add_state": bot.ADDING_AUTHOR,
+            "llm_add": True,
+            "llm_filled_keys": ["author"],
+        }
+        did = bot.db_insert_add_draft(1, "War and Peace", payload)
+        bot.db_insert_add_draft(2, "Other User", {"new_book": {"title": "Other"}})
+        listed = bot.db_list_add_drafts(1)
+        self.assertEqual(listed, [(did, "War and Peace")])
+        self.assertIsNone(bot.db_get_add_draft(did, 2))
+        loaded = bot.db_get_add_draft(did, 1)
+        self.assertEqual(loaded["llm_filled_keys"], ["author"])
+        self.assertTrue(
+            bot.db_update_add_draft(
+                did, 1, "War and Peace", {**payload, "llm_filled_keys": []}
+            )
+        )
+        self.assertEqual(bot.db_get_add_draft(did, 1)["llm_filled_keys"], [])
+        self.assertFalse(bot.db_delete_add_draft(did, 2))
+        self.assertTrue(bot.db_delete_add_draft(did, 1))
+        self.assertEqual(bot.db_list_add_drafts(1), [])
+
+    def test_serialize_add_draft_keeps_ai_flags_and_levels(self):
+        from bookclub.handlers.add_flow import apply_add_draft, serialize_add_draft
+
+        ctx = MagicMock()
+        ctx.user_data = {
+            "new_book": {
+                "title": "T",
+                "author": "Leo",
+                "language_levels": {"A1", "B2"},
+            },
+            "add_state": bot.ADDING_AUTHOR,
+            "llm_add": True,
+            "llm_filled_keys": {"author"},
+            "add_from_start": True,
+        }
+        payload = serialize_add_draft(ctx)
+        self.assertEqual(payload["llm_filled_keys"], ["author"])
+        self.assertEqual(sorted(payload["new_book"]["language_levels"]), ["A1", "B2"])
+        self.assertIsInstance(ctx.user_data["new_book"]["language_levels"], set)
+
+        dest = MagicMock()
+        dest.user_data = {}
+        apply_add_draft(dest, payload, 7)
+        self.assertEqual(dest.user_data["add_draft_id"], 7)
+        self.assertEqual(dest.user_data["llm_filled_keys"], {"author"})
+        self.assertEqual(dest.user_data["new_book"]["language_levels"], {"A1", "B2"})
+        self.assertTrue(dest.user_data["llm_add"])
+
     def test_db_get_users_with_setting_empty(self):
         result = bot.db_get_users_with_setting("notify_new_books", 1)
         self.assertEqual(result, [])
@@ -1108,6 +1161,22 @@ class TestUtils(unittest.TestCase):
             callbacks(bot.cefr_levels_keyboard("en", set(), prefix="add_cefr")),
         )
         self.assertIn(bot.CONV_CANCEL, callbacks(bot.add_ai_choice_keyboard("en")))
+        self.assertIn(
+            "add_start:drafts",
+            callbacks(bot.add_start_keyboard("en", llm=True, has_drafts=True)),
+        )
+        self.assertIn(
+            "add_start:ai",
+            callbacks(bot.add_start_keyboard("en", llm=True, has_drafts=False)),
+        )
+        self.assertIn(
+            "add_start:manual",
+            callbacks(bot.add_start_keyboard("en", llm=True, has_drafts=False)),
+        )
+        kb = bot.add_drafts_keyboard("en", [(1, "War and Peace")])
+        data = callbacks(kb)
+        self.assertIn("add_draft:1", data)
+        self.assertIn("add_draft_del:1", data)
         self.assertIn(bot.CONV_CANCEL, callbacks(bot.cancel_keyboard("en")))
 
     def test_add_edit_button_copies_short_text(self):
@@ -1202,6 +1271,9 @@ class TestEntryFields(unittest.TestCase):
 
     def test_add_previous_from_ai_choose_is_title(self):
         self.assertEqual(add_previous_state(bot.ADDING_AI_CHOOSE), bot.ADDING_TITLE)
+
+    def test_add_previous_from_draft_choose_is_start(self):
+        self.assertEqual(add_previous_state(bot.ADDING_DRAFT_CHOOSE), bot.ADDING_START)
 
     def test_entry_field_enabled_title_always(self):
         with patch.object(cfg, "ENTRY_FIELDS", frozenset()):

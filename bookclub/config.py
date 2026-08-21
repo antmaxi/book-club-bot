@@ -7,7 +7,9 @@ from urllib.parse import urlparse
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/club-voting-bot")
+GITHUB_REPO = os.environ.get(
+    "GITHUB_REPO", "https://github.com/antmaxi/club-voting-bot"
+)
 DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 
 # Members of this chat are allowed to use the bot.
@@ -267,6 +269,8 @@ ADMIN_IMPORT_CONFIRM = 26
 ADDING_LANGUAGE_LEVEL = 27
 ADDING_ORIGINAL_LANGUAGE_OTHER = 28
 ADDING_AI_CHOOSE = 29
+ADDING_START = 30
+ADDING_DRAFT_CHOOSE = 31
 EDITING_CHOOSE = 8
 EDITING_FIELD = 9  # waiting for new value of current field
 DELETING_CHOOSE = 10
