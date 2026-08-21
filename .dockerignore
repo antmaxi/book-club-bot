@@ -4,8 +4,8 @@ bookclub_dbs/
 bookclub_bot.log
 bot_persistence
 
-# Exclude screenshots
-screenshots/
+# Exclude documentation and images
+docs/
 
 # Exclude development and environment files
 .env

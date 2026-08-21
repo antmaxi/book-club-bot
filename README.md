@@ -1,6 +1,12 @@
 # 📚 Book Club Telegram Bot
 
+<p align="center">
+  <img src="docs/img/book-club-bot.jpg" alt="Book Club Telegram Bot" width="420">
+</p>
+
 A Telegram bot (English / Russian / German) to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
+
+How the code is structured: [Architecture](docs/architecture.md).
 
 ## 🌟 Features
 
@@ -63,9 +69,9 @@ You can record attendance for a scheduled future discussion; it does not affect 
 When recording or viewing attendance, the bot shows each person’s Telegram display name (and `@username` when they have one). Numeric Telegram IDs appear only if the name cannot be resolved.
 
 ## 🖼 Screenshots
-![Top](screenshots/2026-04-04_screenshot_top.png)
-![List](screenshots/2026-04-04_screenshot_list.png)
-![Settings](screenshots/2026-04-04_screenshot_settings.png)
+![Top](docs/img/screenshots/2026-04-04_screenshot_top.png)
+![List](docs/img/screenshots/2026-04-04_screenshot_list.png)
+![Settings](docs/img/screenshots/2026-04-04_screenshot_settings.png)
 
 ## 🚀 Getting Started
 
