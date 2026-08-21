@@ -210,7 +210,7 @@ Notes:
 
 ## Notable flows
 
-**`/add`:** title → optional similar-title confirm → AI vs manual → remaining `ENTRY_FIELDS`. AI uses `bookclub.llm` only when an API key is configured. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
+**`/add`:** title → optional similar-title confirm → AI vs manual → remaining `ENTRY_FIELDS`. AI uses `bookclub.llm` only when an API key is configured. Suggested text fields include an **Edit** button. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
 
 **Voting:** inline buttons on cards (`vote_cast:`). Works in DM and in the group chat; the message is edited so everyone sees the new tally.
 

@@ -11,16 +11,19 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from telegram import Bot, Chat, Message, MessageEntity, Update, User
+from telegram import Bot, Chat, ForceReply, Message, MessageEntity, Update, User
 from telegram.error import BadRequest, NetworkError
-from telegram.ext import ConversationHandler
+from telegram.ext import ConversationHandler, InlineQueryHandler
 
 import bookclub.config as cfg
 import bookclub_bot as bot
 from bookclub.handlers.add_flow import (
+    add_edit_inline_query,
+    add_go_edit,
     add_go_forward,
     build_add_prompt_text,
     send_add_prompt,
+    typed_add_text,
 )
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
@@ -898,6 +901,115 @@ class TestAddConversation(BotHandlerTestCase):
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Suggested", text)
         self.assertIn("Leo", text)
+        self.assertIn("Edit", text)
+
+    async def test_add_prompt_edit_copies_short_suggestion(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo Tolstoy"}
+        self.ctx.user_data["llm_filled_keys"] = {"author"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        edit = next(
+            btn
+            for row in markup.inline_keyboard
+            for btn in row
+            if btn.copy_text is not None
+        )
+        self.assertEqual(edit.copy_text.text, "Leo Tolstoy")
+        self.assertIn("add_forward", self._keyboard_callback_data(markup))
+
+    async def test_add_prompt_edit_uses_inline_when_supported(self):
+        self.ctx.bot.supports_inline_queries = True
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo Tolstoy"}
+        self.ctx.user_data["llm_filled_keys"] = {"author"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        edit = next(
+            btn
+            for row in markup.inline_keyboard
+            for btn in row
+            if btn.switch_inline_query_current_chat
+        )
+        self.assertEqual(edit.switch_inline_query_current_chat, "Leo Tolstoy")
+
+    async def test_add_prompt_long_suggestion_uses_edit_callback(self):
+        desc = "x" * 300
+        self.ctx.user_data["new_book"] = {"title": "T", "description": desc}
+        self.ctx.user_data["llm_filled_keys"] = {"description"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_DESCRIPTION)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        self.assertIn("add_edit", self._keyboard_callback_data(markup))
+
+    async def test_add_prompt_hides_edit_without_suggestion(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Author Name"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        self.assertFalse(
+            any(
+                btn.copy_text
+                or btn.switch_inline_query_current_chat
+                or btn.callback_data == "add_edit"
+                for row in markup.inline_keyboard
+                for btn in row
+            )
+        )
+
+    async def test_add_go_edit_sends_suggestion_for_reply(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo Tolstoy"}
+        self.ctx.user_data["llm_filled_keys"] = {"author"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        q = self._callback_query("add_edit")
+        q.message = AsyncMock()
+        state = await add_go_edit(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        q.message.reply_text.assert_awaited()
+        text = q.message.reply_text.call_args[0][0]
+        self.assertIn("Leo Tolstoy", text)
+        self.assertIsInstance(
+            q.message.reply_text.call_args[1]["reply_markup"], ForceReply
+        )
+
+    async def test_add_go_edit_without_suggestion_stays(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        q = self._callback_query("add_edit")
+        state = await add_go_edit(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        q.answer.assert_awaited()
+        self.assertTrue(q.answer.call_args[1].get("show_alert"))
+
+    async def test_add_edit_inline_query_returns_typed_value(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        iq = AsyncMock()
+        iq.query = "Leo Tolstoy"
+        iq.chat_type = "private"
+        self.update.inline_query = iq
+        await add_edit_inline_query(self.update, self.ctx)
+        results = iq.answer.call_args[0][0]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].input_message_content.message_text, "Leo Tolstoy")
+
+    async def test_add_edit_inline_query_empty_outside_add(self):
+        iq = AsyncMock()
+        iq.query = "nope"
+        iq.chat_type = "private"
+        self.update.inline_query = iq
+        await add_edit_inline_query(self.update, self.ctx)
+        results = iq.answer.call_args[0][0]
+        self.assertEqual(results, [])
+
+    def test_typed_add_text_strips_bot_username(self):
+        self.ctx.bot.username = "clubbot"
+        self.message.text = "@clubbot Leo Tolstoy"
+        self.assertEqual(typed_add_text(self.update, self.ctx), "Leo Tolstoy")
+
+    async def test_add_author_strips_inline_prefix(self):
+        self.ctx.bot.username = "clubbot"
+        self.ctx.user_data["new_book"] = {"title": "T"}
+        self.message.text = "@clubbot Jane Austen"
+        state = await bot.add_author(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Jane Austen")
+        self.assertEqual(state, bot.ADDING_PAGES)
 
     async def test_add_prompt_hides_forward_when_value_missing(self):
         self.ctx.user_data["new_book"] = {"title": "T"}
@@ -2194,6 +2306,31 @@ class TestConversationWiring(unittest.TestCase):
         self.assertFalse(
             self._matches(handlers, "/cancel", is_command=True),
             "/cancel must not be consumed as the author",
+        )
+
+    def test_author_state_handles_edit_callback(self):
+        conv = self._states("add")
+        handlers = conv.states[bot.ADDING_AUTHOR]
+        update = MagicMock(spec=Update)
+        update.message = None
+        update.edited_message = None
+        update.channel_post = None
+        q = MagicMock()
+        q.data = "add_edit"
+        update.callback_query = q
+        self.assertTrue(
+            any(h.check_update(update) for h in handlers),
+            "add_edit must be handled while adding",
+        )
+
+    def test_inline_query_handler_registered(self):
+        app = MagicMock()
+        added = []
+        app.add_handler = lambda h, *a, **kw: added.append(h)
+        bot.register_handlers(app)
+        self.assertTrue(
+            any(isinstance(h, InlineQueryHandler) for h in added),
+            "inline queries must be handled for AI Edit",
         )
 
     def test_mark_date_state_lets_cancel_reach_fallback(self):

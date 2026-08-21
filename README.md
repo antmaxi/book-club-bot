@@ -150,7 +150,9 @@ You can run separate bot instances (different tokens, different `.env` files) fo
 
 ### `/add` AI suggestions
 
-After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand. **Use AI** calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks those fields one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or type / pick a new value to replace it. **I'll fill it in** is the original manual wizard.
+After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand. **Use AI** calls an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) and walks those fields one by one with the model’s guesses filled in. Tap **Forward** to keep a suggestion, or **Edit** to put it in the message field and change it (then send). **I'll fill it in** is the original manual wizard.
+
+If the bot has **inline mode** enabled in @BotFather (`/setinline`), **Edit** inserts the suggestion into the compose field. Otherwise it copies the text so you can paste and change it. Suggestions longer than Telegram’s 256-character copy/inline limit open a reply prompt with the text ready to copy.
 
 The AI choice is offered only when an API key is configured (`LLM_API_KEY`, or `XAI_API_KEY` / `OPENAI_API_KEY`). An `xai-…` key infers `LLM_API_BASE=https://api.x.ai/v1` and `LLM_MODEL=grok-4.6` if those are unset or still set to OpenAI defaults (`api.openai.com` / `gpt-4o-mini`). Code lives in the image, so after `git pull` rebuild: `docker compose up -d --build --force-recreate`. Recreate is also required after editing `.env`. If the request fails, the same add wizard continues and you fill the fields yourself. Failures send the problem type and provider detail on their own lines (plain text, so Telegram HTML cannot drop them), and as an ERROR alert to the main admin.
 

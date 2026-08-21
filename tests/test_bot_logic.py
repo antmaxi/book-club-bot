@@ -1110,6 +1110,31 @@ class TestUtils(unittest.TestCase):
         self.assertIn(bot.CONV_CANCEL, callbacks(bot.add_ai_choice_keyboard("en")))
         self.assertIn(bot.CONV_CANCEL, callbacks(bot.cancel_keyboard("en")))
 
+    def test_add_edit_button_copies_short_text(self):
+        btn = bot.add_edit_button("en", "Leo Tolstoy")
+        self.assertEqual(btn.copy_text.text, "Leo Tolstoy")
+        self.assertIsNone(btn.switch_inline_query_current_chat)
+        self.assertIsNone(btn.callback_data)
+
+    def test_add_edit_button_inline_when_requested(self):
+        btn = bot.add_edit_button("en", "Leo Tolstoy", use_inline=True)
+        self.assertEqual(btn.switch_inline_query_current_chat, "Leo Tolstoy")
+        self.assertIsNone(btn.copy_text)
+
+    def test_add_edit_button_long_text_uses_callback(self):
+        btn = bot.add_edit_button("en", "x" * 300)
+        self.assertEqual(btn.callback_data, "add_edit")
+        self.assertIsNone(btn.copy_text)
+
+    def test_add_nav_keyboard_includes_edit_between_back_and_forward(self):
+        kb = bot.add_nav_keyboard(
+            "en", show_back=True, show_forward=True, edit_value="Leo"
+        )
+        row = kb.inline_keyboard[0]
+        self.assertEqual(row[0].callback_data, "add_back")
+        self.assertEqual(row[1].copy_text.text, "Leo")
+        self.assertEqual(row[2].callback_data, "add_forward")
+
     # -- ALLOWED_CHAT_ID config --
 
     def test_allowed_chat_id_env_not_set(self):

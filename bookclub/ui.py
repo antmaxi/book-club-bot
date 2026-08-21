@@ -4,7 +4,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import InlineKeyboardButtonLimit
 from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
@@ -108,14 +109,38 @@ def add_ai_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def add_edit_button(
+    lang: str, value: str, *, use_inline: bool = False
+) -> InlineKeyboardButton:
+    """Put ``value`` in the compose field (inline) or copy it (clipboard)."""
+    if use_inline and 1 <= len(value) <= InlineKeyboardButtonLimit.MAX_COPY_TEXT:
+        return InlineKeyboardButton(
+            s(lang, "add_edit_btn"),
+            switch_inline_query_current_chat=value,
+        )
+    if 1 <= len(value) <= InlineKeyboardButtonLimit.MAX_COPY_TEXT:
+        return InlineKeyboardButton(
+            s(lang, "add_edit_btn"),
+            copy_text=CopyTextButton(value),
+        )
+    return InlineKeyboardButton(s(lang, "add_edit_btn"), callback_data="add_edit")
+
+
 def add_nav_buttons(
-    lang: str, *, show_back: bool = True, show_forward: bool = False
+    lang: str,
+    *,
+    show_back: bool = True,
+    show_forward: bool = False,
+    edit_value: str | None = None,
+    use_inline: bool = False,
 ) -> list[InlineKeyboardButton]:
     buttons: list[InlineKeyboardButton] = []
     if show_back:
         buttons.append(
             InlineKeyboardButton(s(lang, "add_back_btn"), callback_data="add_back")
         )
+    if edit_value:
+        buttons.append(add_edit_button(lang, edit_value, use_inline=use_inline))
     if show_forward:
         buttons.append(
             InlineKeyboardButton(
@@ -126,10 +151,21 @@ def add_nav_buttons(
 
 
 def add_nav_keyboard(
-    lang: str, *, show_back: bool = True, show_forward: bool = False
+    lang: str,
+    *,
+    show_back: bool = True,
+    show_forward: bool = False,
+    edit_value: str | None = None,
+    use_inline: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    row = add_nav_buttons(lang, show_back=show_back, show_forward=show_forward)
+    row = add_nav_buttons(
+        lang,
+        show_back=show_back,
+        show_forward=show_forward,
+        edit_value=edit_value,
+        use_inline=use_inline,
+    )
     if row:
         rows.append(row)
     rows.append([cancel_button(lang)])

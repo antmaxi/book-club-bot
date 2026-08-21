@@ -24,10 +24,11 @@ from bookclub.config import (
 from bookclub.db import db_add_book, db_get_book, find_similar_book_titles
 from bookclub.handlers.add_flow import (
     add_next_state,
-    add_prompt_markup,
     build_add_prompt_text,
     continue_add,
+    markup_for_add,
     send_add_prompt,
+    typed_add_text,
 )
 from bookclub.i18n import PM, get_lang, tr
 from bookclub.llm import (
@@ -209,18 +210,17 @@ async def advance_after_title(
 
 
 async def add_author(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["new_book"]["author"] = update.message.text.strip()
+    ctx.user_data["new_book"]["author"] = typed_add_text(update, ctx)
     return await continue_add(update, ctx, ADDING_AUTHOR)
 
 
 async def add_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    lang = get_lang(ctx)
+    text = typed_add_text(update, ctx)
     nb = ctx.user_data["new_book"]
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_pages')}\n\n{build_add_prompt_text(ctx, ADDING_PAGES, nb)}",
-            reply_markup=add_prompt_markup(lang, ADDING_PAGES, nb),
+            reply_markup=markup_for_add(ctx, ADDING_PAGES, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_PAGES
@@ -238,13 +238,12 @@ async def add_fiction_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def add_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    lang = get_lang(ctx)
+    text = typed_add_text(update, ctx)
     nb = ctx.user_data["new_book"]
     if not is_valid_url(text):
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_review')}\n\n{build_add_prompt_text(ctx, ADDING_REVIEW, nb)}",
-            reply_markup=add_prompt_markup(lang, ADDING_REVIEW, nb),
+            reply_markup=markup_for_add(ctx, ADDING_REVIEW, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_REVIEW
@@ -275,8 +274,8 @@ async def add_original_language_cb(
             build_add_prompt_text(
                 ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
             ),
-            reply_markup=add_prompt_markup(
-                get_lang(ctx),
+            reply_markup=markup_for_add(
+                ctx,
                 ADDING_ORIGINAL_LANGUAGE_OTHER,
                 ctx.user_data["new_book"],
             ),
@@ -293,15 +292,14 @@ async def add_original_language_cb(
 async def add_original_language_other(
     update: Update, ctx: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    text = update.message.text.strip() if update.message and update.message.text else ""
+    text = typed_add_text(update, ctx)
     if not text:
-        lang = get_lang(ctx)
         await update.message.reply_text(
             build_add_prompt_text(
                 ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
             ),
-            reply_markup=add_prompt_markup(
-                lang, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
+            reply_markup=markup_for_add(
+                ctx, ADDING_ORIGINAL_LANGUAGE_OTHER, ctx.user_data["new_book"]
             ),
             parse_mode=PM,
         )
@@ -312,8 +310,7 @@ async def add_original_language_other(
 
 
 async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip() if update.message and update.message.text else ""
-    lang = get_lang(ctx)
+    text = typed_add_text(update, ctx)
     nb = ctx.user_data["new_book"]
     try:
         year = parse_optional_creation_year(text)
@@ -321,7 +318,7 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(
             f"{tr(ctx, 'invalid_creation_year')}\n\n"
             f"{build_add_prompt_text(ctx, ADDING_CREATION_YEAR, nb)}",
-            reply_markup=add_prompt_markup(lang, ADDING_CREATION_YEAR, nb),
+            reply_markup=markup_for_add(ctx, ADDING_CREATION_YEAR, nb),
             parse_mode=PM,
         )
         ctx.user_data["add_state"] = ADDING_CREATION_YEAR
@@ -332,7 +329,6 @@ async def add_creation_year(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
 async def add_language_level_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    lang = get_lang(ctx)
     _, action, *rest = query.data.split(":")
     selected: set[str] = ctx.user_data["new_book"].setdefault("language_levels", set())
     if action == "toggle":
@@ -346,8 +342,8 @@ async def add_language_level_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
             build_add_prompt_text(
                 ctx, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]
             ),
-            reply_markup=add_prompt_markup(
-                lang, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]
+            reply_markup=markup_for_add(
+                ctx, ADDING_LANGUAGE_LEVEL, ctx.user_data["new_book"]
             ),
             parse_mode=PM,
         )
@@ -425,6 +421,6 @@ async def complete_new_book(
 
 
 async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip() if update.message and update.message.text else ""
+    text = typed_add_text(update, ctx)
     desc = "" if text == "/skip" else text
     return await complete_new_book(update, ctx, description=desc)

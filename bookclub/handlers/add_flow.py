@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from telegram import InlineKeyboardMarkup, Update
+from telegram import (
+    ForceReply,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 from bookclub.cefr import format_language_levels, language_levels_display
@@ -29,6 +35,18 @@ from bookclub.ui import (
     h,
     original_language_keyboard,
 )
+
+_TEXT_EDIT_STATES = frozenset(
+    {
+        ADDING_AUTHOR,
+        ADDING_PAGES,
+        ADDING_REVIEW,
+        ADDING_ORIGINAL_LANGUAGE_OTHER,
+        ADDING_CREATION_YEAR,
+        ADDING_DESCRIPTION,
+    }
+)
+_PRIVATE_INLINE_CHATS = frozenset({None, "sender", "private"})
 
 _ADD_STEP_ORDER = (
     ADDING_TITLE,
@@ -203,6 +221,66 @@ def note_user_edit(ctx: ContextTypes.DEFAULT_TYPE, state: int) -> None:
         filled.discard(key)
 
 
+def raw_add_value(nb: dict, state: int) -> str | None:
+    if state == ADDING_AUTHOR:
+        v = nb.get("author")
+        return str(v) if v else None
+    if state == ADDING_PAGES:
+        v = nb.get("pages")
+        return str(v) if v is not None else None
+    if state == ADDING_REVIEW:
+        v = nb.get("review_link")
+        return str(v) if v else None
+    if state == ADDING_ORIGINAL_LANGUAGE_OTHER:
+        v = nb.get("original_language")
+        return str(v) if v else None
+    if state == ADDING_CREATION_YEAR:
+        v = nb.get("creation_year")
+        return str(v) if v is not None else None
+    if state == ADDING_DESCRIPTION:
+        v = nb.get("description")
+        return str(v) if v else None
+    return None
+
+
+def bot_supports_inline(ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    return getattr(getattr(ctx, "bot", None), "supports_inline_queries", False) is True
+
+
+def add_edit_value(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) -> str | None:
+    if state not in _TEXT_EDIT_STATES:
+        return None
+    if not _is_llm_suggestion(ctx, state):
+        return None
+    value = raw_add_value(nb, state)
+    return value or None
+
+
+def typed_add_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    """User-typed add-wizard text, without a leftover ``@bot`` inline prefix."""
+    text = (update.message.text or "").strip() if update.message else ""
+    username = getattr(getattr(ctx, "bot", None), "username", None)
+    if isinstance(username, str) and username:
+        prefix = f"@{username}"
+        if text.startswith(prefix):
+            text = text[len(prefix) :].lstrip()
+    return text
+
+
+def markup_for_add(
+    ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict | None = None
+) -> InlineKeyboardMarkup:
+    if nb is None:
+        nb = ctx.user_data.setdefault("new_book", {})
+    return add_prompt_markup(
+        get_lang(ctx),
+        state,
+        nb,
+        edit_value=add_edit_value(ctx, state, nb),
+        use_inline=bot_supports_inline(ctx),
+    )
+
+
 def add_field_is_set(nb: dict, state: int) -> bool:
     return _current_value_display(nb, state, "en") is not None
 
@@ -235,7 +313,14 @@ def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) 
     return "\n".join(parts)
 
 
-def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup:
+def add_prompt_markup(
+    lang: str,
+    state: int,
+    nb: dict,
+    *,
+    edit_value: str | None = None,
+    use_inline: bool = False,
+) -> InlineKeyboardMarkup:
     can_forward = add_field_is_set(nb, state)
     show_back = state != ADDING_TITLE
     if state == ADDING_TITLE:
@@ -267,7 +352,13 @@ def add_prompt_markup(lang: str, state: int, nb: dict) -> InlineKeyboardMarkup:
         ADDING_CREATION_YEAR,
         ADDING_DESCRIPTION,
     ):
-        return add_nav_keyboard(lang, show_back=show_back, show_forward=can_forward)
+        return add_nav_keyboard(
+            lang,
+            show_back=show_back,
+            show_forward=can_forward,
+            edit_value=edit_value,
+            use_inline=use_inline,
+        )
     return cancel_keyboard(lang)
 
 
@@ -280,8 +371,7 @@ async def send_add_prompt(
 ) -> int:
     nb = ctx.user_data.setdefault("new_book", {})
     text = build_add_prompt_text(ctx, state, nb)
-    lang = get_lang(ctx)
-    markup = add_prompt_markup(lang, state, nb)
+    markup = markup_for_add(ctx, state, nb)
     ctx.user_data["add_state"] = state
 
     query = update.callback_query
@@ -290,7 +380,9 @@ async def send_add_prompt(
     elif update.message:
         await update.message.reply_text(text, parse_mode=PM, reply_markup=markup)
     elif query and query.message:
-        await query.message.reply_text(text, parse_mode=PM, reply_markup=markup)
+        await query.message.reply_text(  # type: ignore[attr-defined]
+            text, parse_mode=PM, reply_markup=markup
+        )
     return state
 
 
@@ -345,3 +437,64 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if query:
         await query.answer()
     return await send_add_prompt(update, ctx, nxt, edit=bool(query))
+
+
+async def add_go_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    current = ctx.user_data.get("add_state")
+    if not isinstance(current, int):
+        return ADDING_TITLE
+    nb = ctx.user_data.setdefault("new_book", {})
+    value = add_edit_value(ctx, current, nb)
+    if not value:
+        return await _nav_alert(update, ctx, "add_edit_need_value", current)
+    query = update.callback_query
+    if query:
+        await query.answer()
+    lang = get_lang(ctx)
+    placeholder = s(lang, "add_edit_placeholder")
+    if len(placeholder) > ForceReply.MAX_INPUT_FIELD_PLACEHOLDER:
+        placeholder = placeholder[: ForceReply.MAX_INPUT_FIELD_PLACEHOLDER]
+    markup = ForceReply(input_field_placeholder=placeholder)
+    text = tr(ctx, "add_edit_prompt", value=h(value))
+    if query and query.message:
+        await query.message.reply_text(  # type: ignore[attr-defined]
+            text, parse_mode=PM, reply_markup=markup
+        )
+    elif update.message:
+        await update.message.reply_text(text, parse_mode=PM, reply_markup=markup)
+    return current
+
+
+async def add_edit_inline_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.inline_query
+    if query is None:
+        return
+    chat_type = getattr(query, "chat_type", None)
+    if chat_type is not None:
+        chat_type = str(chat_type)
+    state = ctx.user_data.get("add_state")
+    nb = ctx.user_data.get("new_book") or {}
+    in_private = chat_type in _PRIVATE_INLINE_CHATS
+    if (
+        not in_private
+        or not isinstance(state, int)
+        or state not in _TEXT_EDIT_STATES
+        or not isinstance(nb, dict)
+    ):
+        await query.answer([], cache_time=0, is_personal=True)
+        return
+    typed = (query.query or "").strip()
+    text = typed or raw_add_value(nb, state) or ""
+    if not text:
+        await query.answer([], cache_time=0, is_personal=True)
+        return
+    title = text.replace("\n", " ")
+    if len(title) > 64:
+        title = title[:61] + "..."
+    result = InlineQueryResultArticle(
+        id="add-edit",
+        title=title,
+        description=s(get_lang(ctx), "add_edit_inline_hint"),
+        input_message_content=InputTextMessageContent(text),
+    )
+    await query.answer([result], cache_time=0, is_personal=True)

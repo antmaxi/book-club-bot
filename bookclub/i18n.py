@@ -271,6 +271,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_no_btn": "✍️ I'll fill it in",
         "add_back_btn": "⬅️ Back",
         "add_forward_btn": "➡️ Forward",
+        "add_edit_btn": "✏️ Edit",
+        "add_edit_placeholder": "Edit the suggestion",
+        "add_edit_prompt": (
+            "✏️ Edit the suggestion and send it:\n\n<pre>{value}</pre>"
+        ),
+        "add_edit_need_value": "There's no suggestion to edit on this step.",
+        "add_edit_inline_hint": "Tap to send the edited value",
         "add_back_at_start": "You're already at the first step.",
         "add_forward_at_end": "This is the last step — send a description or /skip.",
         "add_forward_need_value": "This step has no saved answer yet. Fill it in first.",
@@ -280,7 +287,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_current_value": "Current: <i>{value}</i>",
         "add_suggested_value": "Suggested: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Tap Forward to keep this suggestion, or send a new value to change it.</i>"
+            "<i>Tap Forward to keep this suggestion, or Edit to put it in the "
+            "message field and change it.</i>"
         ),
         "ask_author": "{subtitle_icon} Who is the <b>{author}</b>?",
         "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
@@ -456,7 +464,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_suggesting": "⏳ Looking up details for <b>{title}</b>…",
         "add_ai_suggested": (
             "✅ Suggestions ready. Review each field — tap Forward to keep it, "
-            "or send a new value."
+            "or Edit to change it."
         ),
         "add_ai_suggest_failed": (
             "⚠️ Could not fetch suggestions. Fill in the fields yourself.\n\n"
@@ -539,6 +547,11 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_no_btn": "✍️ Заполню сам",
         "add_back_btn": "⬅️ Назад",
         "add_forward_btn": "➡️ Вперёд",
+        "add_edit_btn": "✏️ Изменить",
+        "add_edit_placeholder": "Измените подсказку",
+        "add_edit_prompt": ("✏️ Измените подсказку и отправьте:\n\n<pre>{value}</pre>"),
+        "add_edit_need_value": "На этом шаге нет подсказки для правки.",
+        "add_edit_inline_hint": "Нажмите, чтобы отправить изменённое значение",
         "add_back_at_start": "Вы уже на первом шаге.",
         "add_forward_at_end": "Это последний шаг — отправьте описание или /skip.",
         "add_forward_need_value": "На этом шаге ещё нет сохранённого ответа. Сначала заполните его.",
@@ -548,7 +561,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_current_value": "Сейчас: <i>{value}</i>",
         "add_suggested_value": "Предложение: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Нажмите «Вперёд», чтобы оставить это предложение, или отправьте новое значение, чтобы изменить его.</i>"
+            "<i>Нажмите «Вперёд», чтобы оставить это предложение, или «Изменить», "
+            "чтобы вставить его в поле ввода и поправить.</i>"
         ),
         "ask_author": "{subtitle_icon} Кто <b>{author}</b>?",
         "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
@@ -724,7 +738,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_suggesting": "⏳ Ищу данные для <b>{title}</b>…",
         "add_ai_suggested": (
             "✅ Подсказки готовы. Проверьте каждое поле — «Вперёд», чтобы оставить, "
-            "или отправьте своё значение."
+            "или «Изменить», чтобы поправить."
         ),
         "add_ai_suggest_failed": (
             "⚠️ Не удалось получить подсказки. Заполните поля вручную.\n\n"
@@ -809,6 +823,13 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_no_btn": "✍️ Selbst ausfüllen",
         "add_back_btn": "⬅️ Zurück",
         "add_forward_btn": "➡️ Weiter",
+        "add_edit_btn": "✏️ Bearbeiten",
+        "add_edit_placeholder": "Vorschlag bearbeiten",
+        "add_edit_prompt": (
+            "✏️ Bearbeite den Vorschlag und sende ihn:\n\n<pre>{value}</pre>"
+        ),
+        "add_edit_need_value": "Auf diesem Schritt gibt es keinen Vorschlag zum Bearbeiten.",
+        "add_edit_inline_hint": "Tippen, um den geänderten Wert zu senden",
         "add_back_at_start": "Du bist bereits beim ersten Schritt.",
         "add_forward_at_end": "Das ist der letzte Schritt — sende eine Beschreibung oder /skip.",
         "add_forward_need_value": "Dieser Schritt hat noch keine gespeicherte Antwort. Bitte zuerst ausfüllen.",
@@ -818,7 +839,8 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_current_value": "Aktuell: <i>{value}</i>",
         "add_suggested_value": "Vorschlag: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Tippe auf Weiter, um diesen Vorschlag zu behalten, oder sende einen neuen Wert, um ihn zu ändern.</i>"
+            "<i>Tippe auf Weiter, um diesen Vorschlag zu behalten, oder auf "
+            "Bearbeiten, um ihn ins Eingabefeld zu legen und zu ändern.</i>"
         ),
         "ask_author": "{subtitle_icon} Wer ist der <b>{author}</b>?",
         "ask_pages": "📄 Wie viele <b>Seiten</b> hat es? (Zahl eingeben)",
@@ -994,7 +1016,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_ai_suggesting": "⏳ Suche Angaben zu <b>{title}</b>…",
         "add_ai_suggested": (
             "✅ Vorschläge bereit. Prüfe jedes Feld — Weiter zum Behalten "
-            "oder einen neuen Wert senden."
+            "oder Bearbeiten zum Ändern."
         ),
         "add_ai_suggest_failed": (
             "⚠️ Vorschläge konnten nicht geladen werden. "

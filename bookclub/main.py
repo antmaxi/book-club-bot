@@ -9,6 +9,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
+    InlineQueryHandler,
     MessageHandler,
     PicklePersistence,
     TypeHandler,
@@ -65,7 +66,12 @@ from bookclub.handlers.add import (
     add_title_similar_cb,
     cmd_add,
 )
-from bookclub.handlers.add_flow import add_go_back, add_go_forward
+from bookclub.handlers.add_flow import (
+    add_edit_inline_query,
+    add_go_back,
+    add_go_edit,
+    add_go_forward,
+)
 from bookclub.handlers.admin import (
     admin_export_pick_cb,
     admin_hide_pick_cb,
@@ -118,6 +124,7 @@ _ADD_NAV_HANDLERS = [
     CallbackQueryHandler(add_go_back, pattern=r"^add_back$"),
     CommandHandler("forward", add_go_forward),
     CallbackQueryHandler(add_go_forward, pattern=r"^add_forward$"),
+    CallbackQueryHandler(add_go_edit, pattern=r"^add_edit$"),
 ]
 
 
@@ -352,6 +359,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
+    app.add_handler(InlineQueryHandler(add_edit_inline_query))
 
     # Catches anything the handlers above let escape, so a crash produces a
     # visible reply instead of silence.
