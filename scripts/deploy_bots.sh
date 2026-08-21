@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# deploy_bots.sh — update one or more book-club-bot instances on this server:
+# deploy_bots.sh — update one or more club-voting-bot instances on this server:
 # for each configured subfolder, fetch origin and skip repos that are already
 # up to date; otherwise check whether the bot has seen any non-admin activity
 # recently, confirm with the operator, then stop the containers, git pull, and

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent Cloud Agent install for book-club-bot.
+# Idempotent Cloud Agent install for club-voting-bot.
 # Creates a project virtualenv and installs runtime + dev dependencies.
 set -euo pipefail
 
@@ -19,4 +19,4 @@ python3 -m venv .venv
 # requirements-dev.txt pulls in requirements.txt plus ruff/black/mypy/pytest/pre-commit.
 .venv/bin/pip install -r requirements-dev.txt
 
-echo "book-club-bot dev environment ready. Activate with: source .venv/bin/activate"
+echo "club-voting-bot dev environment ready. Activate with: source .venv/bin/activate"

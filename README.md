@@ -1,7 +1,7 @@
 # 📚 Book Club Telegram Bot
 
 <p align="center">
-  <img src="docs/img/book-club-bot.jpg" alt="Book Club Telegram Bot" width="420">
+  <img src="docs/img/club-voting-bot.jpg" alt="Book Club Telegram Bot" width="420">
 </p>
 
 A Telegram bot (English / Russian / German) to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
@@ -82,8 +82,8 @@ When recording or viewing attendance, the bot shows each person’s Telegram dis
 ### Setup
 1. **Clone the repository:**
    ```bash
-   git clone <repository_url>
-   cd book-club-bot
+   git clone https://github.com/antmaxi/club-voting-bot.git
+   cd club-voting-bot
    ```
 
 2. **Configure environment variables:**
@@ -111,7 +111,7 @@ When recording or viewing attendance, the bot shows each person’s Telegram dis
    # LLM_REASONING_EFFORT="low"   # grok default in this bot; high needs ~2+ min
    # LLM_TIMEOUT_SECONDS="120"
    # Optional (server only): colon-separated paths for deploy_bots.sh / logs.sh
-   DEPLOY_REPOS="/root/book-club-bot:/root/philo-club-bot"
+   DEPLOY_REPOS="/root/club-voting-bot:/root/philo-club-bot"
    ```
    `CHAT_LANG` applies only to shared group posts (automatic new-book announcements, admin-posted voting reminders in the group, and the vote cards attached to them). Messages sent to individuals always follow that
    person's own `/settings` language.
@@ -177,14 +177,14 @@ If you want to run the backup from a **different Linux machine** (e.g., a dedica
 3.  **Ensure SSH Key-based authentication** is set up between the machines for automation.
 4.  **Run it:** `./remote_backup.sh [bot-name]`
 
-If you provide an argument, it will be used as the subfolder name on the remote server and included in the local filename. Defaults to `book-club-bot`.
+If you provide an argument, it will be used as the subfolder name on the remote server and included in the local filename. Defaults to `club-voting-bot`.
 
 ### Regular Backups (Recommended)
 Add a cron job to run the backup daily at 2:00 AM:
 1. Open crontab: `crontab -e`
 2. Add the following line (adjust the path to your bot directory):
    ```cron
-   0 2 * * * /bin/bash /path/to/remote_backup.sh >> /path/to/book-club-bot/logs/backup.log 2>&1
+   0 2 * * * /bin/bash /path/to/remote_backup.sh >> /path/to/club-voting-bot/logs/backup.log 2>&1
    ```
 
 ## 🚀 Deploying updates
@@ -204,7 +204,7 @@ counts as "in use", so testing the deploy yourself doesn't block the next run.
    absolute paths to each bot instance on this server (each folder needs its own
    `docker-compose.yml`, `.env`, and `data/`):
    ```env
-   DEPLOY_REPOS="/root/book-club-bot:/root/philo-club-bot"
+   DEPLOY_REPOS="/root/club-voting-bot:/root/philo-club-bot"
    ```
    `scripts/deploy_bots.sh` and `scripts/logs.sh` read this via `scripts/load_deploy_repos.sh`.
 2. Run it: `./scripts/deploy_bots.sh`

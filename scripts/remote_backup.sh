@@ -18,7 +18,7 @@
 REMOTE_USER="root"
 REMOTE_HOST="bot" # "your-bot-server-ip"
 REMOTE_BOT_BASE_DIR="/root"
-BOT_NAME="${1:-book-club-bot}"
+BOT_NAME="${1:-club-voting-bot}"
 REMOTE_BOT_DIR="${REMOTE_BOT_BASE_DIR}/${BOT_NAME}"
 REMOTE_DB_PATH="/app/data/bookclub.db"
 REMOTE_BACKUP_PATH="/app/data/bookclub_backup.db"

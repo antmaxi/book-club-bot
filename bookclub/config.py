@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 # ── Config ─────────────────────────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/book-club-bot")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "https://github.com/antmaxi/club-voting-bot")
 DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
 
 # Members of this chat are allowed to use the bot.

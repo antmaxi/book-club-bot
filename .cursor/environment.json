@@ -1,5 +1,5 @@
 {
-  "name": "book-club-bot",
+  "name": "club-voting-bot",
   "install": "bash .cursor/install.sh",
   "start": "bash .cursor/start.sh"
 }

@@ -9,7 +9,7 @@ DEPLOY_PROJECT_ROOT="$(cd "$_load_deploy_scripts_dir/.." && pwd)"
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-$DEPLOY_PROJECT_ROOT/.env}"
 
 # Colon-separated absolute paths, e.g.:
-#   DEPLOY_REPOS="/root/book-club-bot:/root/philo-club-bot"
+#   DEPLOY_REPOS="/root/club-voting-bot:/root/philo-club-bot"
 REPOS=()
 
 _load_deploy_repos_from_env() {
@@ -48,7 +48,7 @@ _load_deploy_repos_from_env() {
 
 if ! _load_deploy_repos_from_env "$DEPLOY_ENV_FILE"; then
     echo "deploy: set DEPLOY_REPOS in $DEPLOY_ENV_FILE (colon-separated instance paths)." >&2
-    echo "  Example: DEPLOY_REPOS=\"/root/book-club-bot:/root/philo-club-bot\"" >&2
+    echo "  Example: DEPLOY_REPOS=\"/root/club-voting-bot:/root/philo-club-bot\"" >&2
     exit 1
 fi
 

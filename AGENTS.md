@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI agents and new contributors working on book-club-bot — a single-process,
+Guidance for AI agents and new contributors working on club-voting-bot — a single-process,
 long-polling Telegram bot (Python 3.11 target). Implementation lives in the `bookclub/`
 package; `bookclub_bot.py` re-exports its public API. See `README.md` for the product
 overview and full feature/command list.

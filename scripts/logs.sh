@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# logs.sh — search and tail logs across every book-club-bot instance on this
+# logs.sh — search and tail logs across every club-voting-bot instance on this
 # server from one place, so you don't have to grep three separate files by hand
 # when something breaks.
 #
