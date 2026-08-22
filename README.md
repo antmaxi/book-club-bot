@@ -34,7 +34,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 - `/start` or `/help`: Welcome message and command list.
 - `/info`: About the bot and last update time.
 - `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand. **Save** keeps an unfinished draft; `/add` can continue a saved draft.
-- `/list`: See all undiscussed books (option to filter for unvoted only).
+- `/list_and_vote`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
 - `/settings`: Change your notification and language preferences.
 - `/edit`: Edit a book's details (limited to book owner or admins).
@@ -45,7 +45,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 ### Admin Commands
 - `/adminconsole`: Centralized panel for admins to:
   - **Mark discussed:** Mark a book as discussed and move it to the archive.
-  - **Hide books:** Temporarily hide books from the `/list` and `/top` without deleting them.
+  - **Hide books:** Temporarily hide books from the `/list_and_vote` and `/top` without deleting them.
   - **Send Reminders (DM):** Broadcast a voting reminder in private chat to opted-in users who have not voted yet — for the Top 5 or one selected book.
   - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
   - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 5-minute delay).
@@ -55,7 +55,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 
 ### Attendance-based vote counting
 
-In `/adminconsole`, **Vote counting** can be set to **attendance**. Rankings (`/list`, `/top`, book cards) then ignore votes from people whose running attendance surplus is 0. Everyone can still cast and change votes; only the tally used for ranking changes.
+In `/adminconsole`, **Vote counting** can be set to **attendance**. Rankings (`/list_and_vote`, `/top`, book cards) then ignore votes from people whose running attendance surplus is 0. Everyone can still cast and change votes; only the tally used for ranking changes.
 
 Surplus is precomputed at bot start (and whenever a meeting is recorded, or when the calendar date changes). Meetings are walked in date order for each person, **excluding discussions whose date is still in the future** (compared with today in the bot’s display timezone):
 

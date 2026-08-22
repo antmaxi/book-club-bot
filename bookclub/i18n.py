@@ -252,7 +252,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome": (
             "{card_icon} <b>Welcome to the {club_name}!</b>\n\n"
             "➕ /add — Add a {sg}\n"
-            "📋 /list — See all {pl}\n"
+            "📋 /list_and_vote — See all {pl}\n"
             "🏆 /top — Top rated {pl}\n"
             "⚙️ /settings — Settings\n"
             "ℹ️ /info — About the bot\n"
@@ -340,7 +340,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "similar_title_cancel_btn": "❌ No, cancel",
         "no_books": "📭 No {pl} yet. Use /add to add one!",
         "no_undiscussed": "📭 No undiscussed {pl} — use /discussed to see past {pl}.",
-        "no_votes": "No votes yet. Use /list to see {pl} and vote inline!",
+        "no_votes": "No votes yet. Use /list_and_vote to see {pl} and vote inline!",
         "no_books_edit": "📭 No {pl} to edit yet.",
         "no_books_delete": "📭 No {pl} to delete yet.",
         "cancelled": "❌ Cancelled.",
@@ -542,7 +542,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome": (
             "{card_icon} <b>Добро пожаловать в {club_name}!</b>\n\n"
             "➕ /add — Добавить {acc}\n"
-            "📋 /list — Список {gen_pl}\n"
+            "📋 /list_and_vote — Список {gen_pl}\n"
             "🏆 /top — Топ {gen_pl}\n"
             "⚙️ /settings — Настройки\n"
             "ℹ️ /info — О боте\n"
@@ -628,7 +628,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "similar_title_cancel_btn": "❌ Нет, отмена",
         "no_books": "📭 Пока нет {gen_pl}. Используйте /add, чтобы добавить!",
         "no_undiscussed": "📭 Необсуждённых {gen_pl} нет — используйте /discussed для просмотра архива.",
-        "no_votes": "Голосов пока нет. Используйте /list для голосования!",
+        "no_votes": "Голосов пока нет. Используйте /list_and_vote для голосования!",
         "no_books_edit": "📭 Нет {gen_pl} для редактирования.",
         "no_books_delete": "📭 Нет {gen_pl} для удаления.",
         "cancelled": "❌ Отменено.",
@@ -830,7 +830,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "welcome": (
             "{card_icon} <b>Willkommen beim {club_name}!</b>\n\n"
             "➕ /add — {acc} hinzufügen\n"
-            "📋 /list — Alle {pl} anzeigen\n"
+            "📋 /list_and_vote — Alle {pl} anzeigen\n"
             "🏆 /top — Bestbewertete {pl}\n"
             "⚙️ /settings — Einstellungen\n"
             "ℹ️ /info — Über den Bot\n"
@@ -920,7 +920,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "similar_title_cancel_btn": "❌ Nein, abbrechen",
         "no_books": "📭 Noch keine {pl}. Mit /add eines hinzufügen!",
         "no_undiscussed": "📭 Keine undiskutierten {pl} — mit /discussed vergangene {pl} anzeigen.",
-        "no_votes": "Noch keine Stimmen. Mit /list {pl} anzeigen und abstimmen!",
+        "no_votes": "Noch keine Stimmen. Mit /list_and_vote {pl} anzeigen und abstimmen!",
         "no_books_edit": "📭 Noch keine {pl} zum Bearbeiten.",
         "no_books_delete": "📭 Noch keine {pl} zum Löschen.",
         "cancelled": "❌ Abgebrochen.",
@@ -1176,7 +1176,7 @@ ENTITY_STRING_OVERLAYS: dict[str, dict[str, dict[str, TranslationValue]]] = {
 COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
     "en": [
         ("add", "➕ Add a {sg}"),
-        ("list", "📋 List {pl} & vote inline"),
+        ("list_and_vote", "📋 List {pl} & vote inline"),
         ("top", "🏆 Top rated {pl}"),
         ("settings", "⚙️ Settings"),
         ("discussed", "✅ {Pl} already discussed"),
@@ -1189,7 +1189,7 @@ COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
     ],
     "ru": [
         ("add", "➕ Добавить {acc}"),
-        ("list", "📋 Список {gen_pl} и голосование"),
+        ("list_and_vote", "📋 Список {gen_pl} и голосование"),
         ("top", "🏆 Топ {gen_pl}"),
         ("settings", "⚙️ Настройки"),
         ("discussed", "✅ Обсуждённые {pl}"),
@@ -1202,7 +1202,7 @@ COMMAND_SPECS: dict[str, list[tuple[str, str]]] = {
     ],
     "de": [
         ("add", "➕ {acc} hinzufügen"),
-        ("list", "📋 {Pl} auflisten & abstimmen"),
+        ("list_and_vote", "📋 {Pl} auflisten & abstimmen"),
         ("top", "🏆 Top-{Pl}"),
         ("settings", "⚙️ Einstellungen"),
         ("discussed", "✅ Bereits diskutierte {Pl}"),

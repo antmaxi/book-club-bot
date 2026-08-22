@@ -67,7 +67,7 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         self.update.effective_user.full_name = "Test User"
         self.update.effective_user.username = "testuser"
 
-        # Default: notifications off so /list doesn't show opt-in prompt
+        # Default: notifications off so /list_and_vote doesn't show opt-in prompt
         bot.db_set_user_setting(67890, "notify_new_books", 0)
 
     def tearDown(self):
@@ -342,7 +342,7 @@ class TestCommandsMenu(BotHandlerTestCase):
             self.assertEqual(cmds[-2:], ["help", "info"])
 
 
-# ── /list ──────────────────────────────────────────────────────────────────────
+# ── /list_and_vote ─────────────────────────────────────────────────────────────
 
 
 class TestList(BotHandlerTestCase):

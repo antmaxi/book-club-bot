@@ -367,7 +367,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("info", cmd_info))
-    app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("list_and_vote", cmd_list))
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("discussed", cmd_discussed))

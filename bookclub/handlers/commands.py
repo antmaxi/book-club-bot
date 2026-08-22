@@ -145,7 +145,7 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     notify = db_get_user_setting(user_id, "notify_new_books")
 
     # -1 means not set, we'll treat it as Off (0) for the UI if they just run /settings
-    # but the logic for /list will still trigger the opt-in if it's -1.
+    # but the logic for /list_and_vote will still trigger the opt-in if it's -1.
     await update.message.reply_text(
         _settings_text(ctx, notify),
         reply_markup=_settings_keyboard(ctx),
@@ -185,8 +185,8 @@ async def settings_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         db_set_user_setting(user_id, "notify_new_books", val)
         await query.answer(tr(ctx, "notify_optin_success"))
         # After choosing, we continue with the list if possible?
-        # Actually, the opt-in was triggered by /list.
-        # Let's just say "Settings saved" and let them run /list again or just finish.
+        # Actually, the opt-in was triggered by /list_and_vote.
+        # Let's just say "Settings saved" and let them run /list_and_vote again or just finish.
         # But the prompt said "ask... first time one runs list command".
         # Better to show the list after they choose.
         await list_choice_cb(update, ctx)

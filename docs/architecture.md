@@ -85,7 +85,7 @@ flowchart TB
 | Module | Role |
 |--------|------|
 | `bookclub/main.py` | Application wiring: conversation handlers, commands, callbacks, error handler. |
-| `bookclub/handlers/commands.py` | `/start`, `/help`, `/info`, `/list`, `/top`, `/settings`, `/discussed`. |
+| `bookclub/handlers/commands.py` | `/start`, `/help`, `/info`, `/list_and_vote`, `/top`, `/settings`, `/discussed`. |
 | `bookclub/handlers/add.py` | `/add` step handlers and AI-or-manual choice. |
 | `bookclub/handlers/add_flow.py` | Add-wizard step order, back/forward, prompts. |
 | `bookclub/handlers/admin.py` | `/adminconsole`: discussed, hide, reminders, meetings, export/import, vote-counting mode. |
@@ -138,7 +138,7 @@ sequenceDiagram
 `register_handlers()` order (after the gate):
 
 1. Conversations: `/add`, `/adminconsole`, `/edit`, `/delete` (each with `/cancel` fallback and `allow_reentry=True`).
-2. Commands: `/start`, `/help`, `/info`, `/list`, `/settings`, `/top`, `/discussed`.
+2. Commands: `/start`, `/help`, `/info`, `/list_and_vote`, `/settings`, `/top`, `/discussed`.
 3. Callbacks: list format, settings toggles, inline votes, score-explanation popup.
 4. Global `error_handler` so crashes produce a reply instead of silence.
 

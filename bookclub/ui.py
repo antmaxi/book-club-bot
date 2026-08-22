@@ -68,7 +68,7 @@ def format_user(book: BookLike) -> str:
 def h(text: str) -> str:
     # `"` must be escaped too: h() is used inside href="..." attributes, where a
     # raw quote breaks out of the attribute and makes Telegram reject the whole
-    # message — which would take down /list for everyone, not just the author.
+    # message — which would take down /list_and_vote for everyone, not just the author.
     return (
         str(text)
         .replace("&", "&amp;")

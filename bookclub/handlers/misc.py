@@ -23,7 +23,7 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-# ── /vote removed — voting now done inline in /list ──────────────────────────
+# ── /vote removed — voting now done inline in /list_and_vote ─────────────────
 
 
 async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

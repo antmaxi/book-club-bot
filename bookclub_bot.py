@@ -20,7 +20,7 @@ Features:
 Commands:
   /start / /help   - Welcome message and command overview
   /add             - Add a new book (optional AI help for the other fields)
-  /list            - List all undiscussed books (all or only unvoted)
+  /list_and_vote   - List all undiscussed books (all or only unvoted)
   /top             - View top-rated undiscussed books
   /settings        - Manage notification and language preferences
   /info            - Information about the bot and source code
