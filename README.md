@@ -1,7 +1,7 @@
-# 📚 Book Club Telegram Bot
+# 📚 Club Voting Bot
 
 <p align="center">
-  <img src="docs/img/club-voting-bot.jpg" alt="Book Club Telegram Bot" width="420">
+  <img src="docs/img/club-voting-bot.jpg" alt="Club Voting Bot" width="420">
 </p>
 
 A Telegram bot (English / Russian / German) to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
@@ -160,7 +160,9 @@ To move one entry between instances (e.g. after spinning up a new bot or merging
 
 3. **Run the bot using Docker:**
    ```bash
-   mkdir -p data
+   mkdir -p data logs
+   sudo chown -R 10001:10001 data logs
+   chmod 700 data logs
    docker compose up -d
    ```
 

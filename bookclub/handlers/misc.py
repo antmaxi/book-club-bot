@@ -1,14 +1,31 @@
 from __future__ import annotations
 
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
-from bookclub.db import db_cast_vote, db_get_user_vote, db_upsert_club_user
+from bookclub.db import db_book_is_votable, db_cast_vote, db_upsert_club_user
 from bookclub.domain import require_book
 from bookclub.i18n import PM, get_lang, s, tr, vote_label_text
 from bookclub.logging_setup import logger
 from bookclub.ui import book_card, score_keyboard
+
+
+def _score_markup_with_navigation(
+    query: object, book_id: int, lang: str, user_vote: int | None = None
+) -> InlineKeyboardMarkup:
+    rows = [
+        list(row) for row in score_keyboard(book_id, lang, user_vote).inline_keyboard
+    ]
+    message = getattr(query, "message", None)
+    markup = getattr(message, "reply_markup", None)
+    if markup:
+        for row in markup.inline_keyboard:
+            if any(
+                (button.callback_data or "").startswith("book_page:") for button in row
+            ):
+                rows.append(list(row))
+    return InlineKeyboardMarkup(rows)
 
 
 async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -48,11 +65,12 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     user_id = query.from_user.id
 
-    # Get the user's CURRENT vote BEFORE saving the new one
-    old_vote = db_get_user_vote(user_id, book_id)
+    if not db_book_is_votable(book_id):
+        await query.answer(tr(ctx, "voting_closed"), show_alert=True)
+        return
 
-    # Save vote to database (will INSERT or UPDATE — commits immediately)
-    db_cast_vote(user_id, book_id, score)
+    # The write returns the previous value, avoiding two extra vote lookups.
+    old_vote = db_cast_vote(user_id, book_id, score)
     db_upsert_club_user(
         query.from_user.id,
         query.from_user.full_name or "",
@@ -60,7 +78,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     book = require_book(book_id)
-    uv = db_get_user_vote(user_id, book_id)
+    uv = score
 
     chat = update.effective_chat
 
@@ -96,7 +114,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Build the message content with fresh statistics
         new_text = book_card(book, config.CHAT_LANG)
-        new_markup = score_keyboard(book_id, config.CHAT_LANG)
+        new_markup = _score_markup_with_navigation(query, book_id, config.CHAT_LANG)
 
         # Attempt to update — on race condition, fetch fresh data and retry once
         max_retries = 2
@@ -118,7 +136,9 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                         )
                         book = require_book(book_id)  # Fresh aggregates
                         new_text = book_card(book, config.CHAT_LANG)
-                        new_markup = score_keyboard(book_id, config.CHAT_LANG)
+                        new_markup = _score_markup_with_navigation(
+                            query, book_id, config.CHAT_LANG
+                        )
                     else:
                         # Final attempt failed — log but don't propagate error
                         logger.info(
@@ -136,7 +156,7 @@ async def vote_cast_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await query.edit_message_text(
             book_card(book, lang, user_vote=uv),
             parse_mode=PM,
-            reply_markup=score_keyboard(book_id, lang, uv),
+            reply_markup=_score_markup_with_navigation(query, book_id, lang, uv),
         )
     except BadRequest as e:
         if "Message is not modified" in str(e):

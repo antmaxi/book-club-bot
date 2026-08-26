@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from telegram import Bot, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import InlineKeyboardButtonLimit
+from telegram.error import RetryAfter
 from telegram.ext import ContextTypes, ConversationHandler
 
 import bookclub.config as config
@@ -421,16 +423,30 @@ async def _show_list_format_prompt(
 
 
 def books_keyboard(
-    books: Sequence[BookLike], prefix: str, cancel_label: str
+    books: Sequence[BookLike], prefix: str, cancel_label: str, *, page: int = 0
 ) -> InlineKeyboardMarkup:
+    page_size = config.PICKER_PAGE_SIZE
+    page = max(0, page)
+    start = page * page_size
     buttons = []
-    for b in books:
+    for b in books[start : start + page_size]:
         label = f"{b['title']} — {b['author']}"
         if len(label) > 48:
             label = label[:45] + "…"
         buttons.append(
             [InlineKeyboardButton(label, callback_data=f"{prefix}:{b['id']}")]
         )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}")
+        )
+    if start + page_size < len(books):
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}")
+        )
+    if nav:
+        buttons.append(nav)
     buttons.append(
         [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
     )
@@ -532,10 +548,13 @@ async def show_notify_books_picker(
 
 
 def meetings_keyboard(
-    meetings: Sequence[BookLike], prefix: str, cancel_label: str
+    meetings: Sequence[BookLike], prefix: str, cancel_label: str, *, page: int = 0
 ) -> InlineKeyboardMarkup:
+    page_size = config.PICKER_PAGE_SIZE
+    page = max(0, page)
+    start = page * page_size
     buttons = []
-    for m in meetings:
+    for m in meetings[start : start + page_size]:
         label = f"{m['meeting_date']} — {m['title']}"
         if m["attendee_count"]:
             label += f" ({m['attendee_count']})"
@@ -544,6 +563,17 @@ def meetings_keyboard(
         buttons.append(
             [InlineKeyboardButton(label, callback_data=f"{prefix}:{m['id']}")]
         )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"{prefix}:page:{page - 1}")
+        )
+    if start + page_size < len(meetings):
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"{prefix}:page:{page + 1}")
+        )
+    if nav:
+        buttons.append(nav)
     buttons.append(
         [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
     )
@@ -878,24 +908,41 @@ async def post_book_voting_to_group_chat(
     """Post a book card with inline vote buttons to the configured group chat."""
     if not config.ALLOWED_CHAT_ID:
         return False
-    try:
-        chat_lang = config.CHAT_LANG
-        text = tr(chat_lang, intro_key) + book_card(book, chat_lang)
-        await bot.send_message(
-            chat_id=config.ALLOWED_CHAT_ID,
-            text=text,
-            parse_mode=PM,
-            reply_markup=score_keyboard(book["id"], chat_lang),
-        )
-        return True
-    except Exception as e:
-        logger.warning(
-            "post_book_voting_to_group_chat: failed to post book %s to chat %s: %s",
-            book["id"],
-            config.ALLOWED_CHAT_ID,
-            e,
-        )
-        return False
+    chat_lang = config.CHAT_LANG
+    text = tr(chat_lang, intro_key) + book_card(book, chat_lang)
+    error: Exception | None = None
+    for attempt in range(2):
+        try:
+            await bot.send_message(
+                chat_id=config.ALLOWED_CHAT_ID,
+                text=text,
+                parse_mode=PM,
+                reply_markup=score_keyboard(book["id"], chat_lang),
+            )
+            return True
+        except RetryAfter as exc:
+            if attempt:
+                error = exc
+                break
+            retry_after = getattr(exc, "_retry_after", None)
+            if retry_after is None:
+                retry_after = exc.retry_after
+            delay = (
+                retry_after.total_seconds()
+                if isinstance(retry_after, timedelta)
+                else float(retry_after)
+            )
+            await asyncio.sleep(delay)
+        except Exception as exc:
+            error = exc
+            break
+    logger.warning(
+        "post_book_voting_to_group_chat: failed to post book %s to chat %s: %s",
+        book["id"],
+        config.ALLOWED_CHAT_ID,
+        error,
+    )
+    return False
 
 
 def score_keyboard(

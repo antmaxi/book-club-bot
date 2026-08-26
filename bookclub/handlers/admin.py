@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -32,9 +32,10 @@ from bookclub.db import (
     db_get_admin_setting,
     db_get_book,
     db_get_books,
+    db_get_books_metadata,
     db_get_meeting,
     db_get_meeting_attendee_rows,
-    db_get_user_vote,
+    db_get_users_missing_votes,
     db_get_users_with_setting,
     db_import_book,
     db_list_meetings,
@@ -49,12 +50,14 @@ from bookclub.db import (
 )
 from bookclub.domain import is_admin, require_book
 from bookclub.i18n import PM, get_lang, s, tr
-from bookclub.logging_setup import logger
-from bookclub.notifications import schedule_new_book_notifications
+from bookclub.notifications import (
+    enqueue_vote_reminder_job,
+    schedule_new_book_notifications,
+)
+from bookclub.types import BookLike
 from bookclub.ui import (
     _meeting_attendee_ids,
     _show_meeting_attendee_picker,
-    book_card,
     books_keyboard,
     books_top_n,
     cancel_button,
@@ -64,9 +67,7 @@ from bookclub.ui import (
     h,
     meetings_keyboard,
     parse_date,
-    post_book_voting_to_group_chat,
     refresh_missing_club_user_names,
-    score_keyboard,
     show_notify_books_picker,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
@@ -83,6 +84,46 @@ async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     if is_admin(update.effective_user.id):
         return False
     await update.callback_query.answer(tr(ctx, "admin_only"), show_alert=True)
+    return True
+
+
+async def _render_book_picker_page(
+    query: Any,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    books: Sequence[BookLike],
+    *,
+    prefix: str,
+    prompt_key: str,
+) -> bool:
+    parts = query.data.split(":")
+    if len(parts) != 3 or parts[1] != "page":
+        return False
+    await query.edit_message_text(
+        tr(ctx, prompt_key),
+        reply_markup=books_keyboard(
+            books, prefix, tr(ctx, "cancel_btn"), page=int(parts[2])
+        ),
+        parse_mode=PM,
+    )
+    return True
+
+
+async def _render_meeting_picker_page(
+    query: Any, ctx: ContextTypes.DEFAULT_TYPE, meetings: Sequence[BookLike]
+) -> bool:
+    parts = query.data.split(":")
+    if len(parts) != 3 or parts[1] != "page":
+        return False
+    await query.edit_message_text(
+        tr(ctx, "choose_meeting_view"),
+        reply_markup=meetings_keyboard(
+            meetings,
+            "admin_meeting_view",
+            tr(ctx, "cancel_btn"),
+            page=int(parts[2]),
+        ),
+        parse_mode=PM,
+    )
     return True
 
 
@@ -226,7 +267,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "mark_back":
         return await cmd_admin_console(update, ctx)
     elif data == "mark_new":
-        books = db_get_books(discussed=False, include_hidden=True)
+        books = db_get_books_metadata(discussed=False, include_hidden=True)
         if not books:
             await query.edit_message_text(tr(ctx, "no_unmark"), parse_mode=PM)
             return ConversationHandler.END
@@ -238,7 +279,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ADMIN_MARK_CHOOSE
     elif data == "mark_edit":
-        books = db_get_books(discussed=True, include_hidden=True)
+        books = db_get_books_metadata(discussed=True, include_hidden=True)
         if not books:
             await query.edit_message_text(
                 tr(ctx, "no_discussed_to_edit_date"), parse_mode=PM
@@ -254,7 +295,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "hide":
         books = [
             b
-            for b in db_get_books(discussed=False, include_hidden=True)
+            for b in db_get_books_metadata(discussed=False, include_hidden=True)
             if not b["hidden"]
         ]
         if not books:
@@ -325,8 +366,8 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         db_set_admin_setting(VOTES_USE_ATTENDANCE_KEY, 1 - current)
         return await cmd_admin_console(update, ctx)
     elif data == "export":
-        all_books = db_get_books(discussed=False, include_hidden=True) + list(
-            db_get_books(discussed=True, include_hidden=True)
+        all_books = db_get_books_metadata(discussed=False, include_hidden=True) + list(
+            db_get_books_metadata(discussed=True, include_hidden=True)
         )
         if not all_books:
             await query.edit_message_text(tr(ctx, "no_books"), parse_mode=PM)
@@ -346,7 +387,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ADMIN_IMPORT_WAIT
     elif data == "meeting_create":
-        books = db_get_books(discussed=True, include_hidden=True)
+        books = db_get_books_metadata(discussed=True, include_hidden=True)
         if not books:
             await query.edit_message_text(
                 tr(ctx, "no_discussed_for_meeting"), parse_mode=PM
@@ -390,40 +431,17 @@ async def admin_notify_top_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     top_books = books_top_n(books)
 
     user_ids = db_get_users_with_setting("notify_new_books", 1)
-    notified_count = 0
+    book_ids = [int(book["id"]) for book in top_books]
+    eligible_users = db_get_users_missing_votes(user_ids, book_ids)
+    scheduled = bool(eligible_users) and enqueue_vote_reminder_job(
+        ctx.job_queue,
+        book_ids,
+        user_ids=eligible_users,
+    )
 
-    for user_id in user_ids:
-        # For each user, find which of the top books they HAVEN'T voted for
-        unvoted_tops = []
-        for b in top_books:
-            if db_get_user_vote(user_id, b["id"]) is None:
-                unvoted_tops.append(b)
-
-        if not unvoted_tops:
-            continue
-
-        # Send reminder to this user
-        user_data = ctx.application.user_data.get(user_id, {})
-        user_lang = user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
-        text = tr(user_lang, "vote_reminder_msg")
-
-        # We'll send the reminder text and then the book cards
-        try:
-            await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
-            for b in unvoted_tops:
-                await ctx.bot.send_message(
-                    chat_id=user_id,
-                    text=book_card(b, user_lang),
-                    parse_mode=PM,
-                    reply_markup=score_keyboard(b["id"], user_lang),
-                )
-            notified_count += 1
-        except Exception as e:
-            logger.warning(f"admin_notify_top_cb: failed to notify user {user_id}: {e}")
-
-    if notified_count > 0:
+    if eligible_users and scheduled:
         await query.edit_message_text(
-            tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+            tr(ctx, "admin_notify_confirm", count=len(eligible_users)), parse_mode=PM
         )
     else:
         await query.edit_message_text(tr(ctx, "admin_notify_no_users"), parse_mode=PM)
@@ -521,18 +539,13 @@ async def _admin_notify_books_pick_cb(
                     tr(ctx, "admin_notify_chat_no_chat"), parse_mode=PM
                 )
                 return ConversationHandler.END
-            posted = 0
-            for book_id in selected_ids:
-                book = db_get_book(book_id)
-                if not book:
-                    continue
-                if await post_book_voting_to_group_chat(
-                    ctx.bot, book, intro_key="vote_reminder_chat"
-                ):
-                    posted += 1
-            if posted > 0:
+            scheduled = enqueue_vote_reminder_job(
+                ctx.job_queue, selected_ids, to_chat=True
+            )
+            if scheduled:
                 await query.edit_message_text(
-                    tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
+                    tr(ctx, "admin_notify_chat_confirm", count=len(selected_ids)),
+                    parse_mode=PM,
                 )
             else:
                 await query.edit_message_text(
@@ -541,41 +554,16 @@ async def _admin_notify_books_pick_cb(
             return ConversationHandler.END
 
         user_ids = db_get_users_with_setting("notify_new_books", 1)
-        notified_count = 0
-        for user_id in user_ids:
-            unvoted = []
-            for book_id in selected_ids:
-                if db_get_user_vote(user_id, book_id) is None:
-                    book = db_get_book(book_id)
-                    if book:
-                        unvoted.append(book)
-            if not unvoted:
-                continue
-            user_data = ctx.application.user_data.get(user_id, {})
-            user_lang = (
-                user_data.get("lang", "ru") if isinstance(user_data, dict) else "ru"
-            )
-            try:
-                text = tr(user_lang, "vote_reminder_msg")
-                await ctx.bot.send_message(chat_id=user_id, text=text, parse_mode=PM)
-                for book in unvoted:
-                    await ctx.bot.send_message(
-                        chat_id=user_id,
-                        text=book_card(book, user_lang),
-                        parse_mode=PM,
-                        reply_markup=score_keyboard(book["id"], user_lang),
-                    )
-                notified_count += 1
-            except Exception as e:
-                logger.warning(
-                    "_admin_notify_books_pick_cb: failed to notify user %s: %s",
-                    user_id,
-                    e,
-                )
-
-        if notified_count > 0:
+        eligible_users = db_get_users_missing_votes(user_ids, selected_ids)
+        scheduled = bool(eligible_users) and enqueue_vote_reminder_job(
+            ctx.job_queue,
+            selected_ids,
+            user_ids=eligible_users,
+        )
+        if eligible_users and scheduled:
             await query.edit_message_text(
-                tr(ctx, "admin_notify_confirm", count=notified_count), parse_mode=PM
+                tr(ctx, "admin_notify_confirm", count=len(eligible_users)),
+                parse_mode=PM,
             )
         else:
             await query.edit_message_text(
@@ -605,16 +593,14 @@ async def admin_notify_chat_top_cb(
         return ConversationHandler.END
 
     top_books = books_top_n(books)
-    posted = 0
-    for b in top_books:
-        if await post_book_voting_to_group_chat(
-            ctx.bot, b, intro_key="vote_reminder_chat"
-        ):
-            posted += 1
-
-    if posted > 0:
+    scheduled = enqueue_vote_reminder_job(
+        ctx.job_queue,
+        [int(book["id"]) for book in top_books],
+        to_chat=True,
+    )
+    if scheduled:
         await query.edit_message_text(
-            tr(ctx, "admin_notify_chat_confirm", count=posted), parse_mode=PM
+            tr(ctx, "admin_notify_chat_confirm", count=len(top_books)), parse_mode=PM
         )
     else:
         await query.edit_message_text(
@@ -630,6 +616,14 @@ async def admin_mark_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        db_get_books_metadata(discussed=False, include_hidden=True),
+        prefix="admin_mark_pick",
+        prompt_key="choose_mark",
+    ):
+        return ADMIN_MARK_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -652,6 +646,14 @@ async def admin_mark_edit_pick_cb(
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        db_get_books_metadata(discussed=True, include_hidden=True),
+        prefix="admin_mark_edit_pick",
+        prompt_key="choose_edit_discuss_date",
+    ):
+        return ADMIN_MARK_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -730,6 +732,14 @@ async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        db_get_books_metadata(discussed=True, include_hidden=True),
+        prefix="admin_meeting_book",
+        prompt_key="choose_meeting_book",
+    ):
+        return ADMIN_MEETING_BOOK
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -863,6 +873,8 @@ async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_meeting_picker_page(query, ctx, db_list_meetings()):
+        return ADMIN_MEETINGS_VIEW
     _, meeting_id = query.data.split(":", 1)
     if meeting_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -901,6 +913,19 @@ async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    visible_books = [
+        book
+        for book in db_get_books_metadata(discussed=False, include_hidden=True)
+        if not book["hidden"]
+    ]
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        visible_books,
+        prefix="admin_hide_pick",
+        prompt_key="choose_hide",
+    ):
+        return ADMIN_HIDE_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -922,15 +947,15 @@ def _admin_hidden_books() -> list[sqlite3.Row]:
     for discussed in (False, True):
         hidden.extend(
             b
-            for b in db_get_books(discussed=discussed, include_hidden=True)
+            for b in db_get_books_metadata(discussed=discussed, include_hidden=True)
             if b["hidden"]
         )
     return hidden
 
 
-def _admin_all_books():
-    return list(db_get_books(discussed=False, include_hidden=True)) + list(
-        db_get_books(discussed=True, include_hidden=True)
+def _admin_all_books() -> list[sqlite3.Row]:
+    return list(db_get_books_metadata(discussed=False, include_hidden=True)) + list(
+        db_get_books_metadata(discussed=True, include_hidden=True)
     )
 
 
@@ -940,6 +965,14 @@ async def admin_unhide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        _admin_hidden_books(),
+        prefix="admin_unhide_pick",
+        prompt_key="choose_unhide",
+    ):
+        return ADMIN_UNHIDE_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -962,6 +995,14 @@ async def admin_export_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    if await _render_book_picker_page(
+        query,
+        ctx,
+        _admin_all_books(),
+        prefix="admin_export_pick",
+        prompt_key="choose_export",
+    ):
+        return ADMIN_EXPORT_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))

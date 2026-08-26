@@ -267,6 +267,9 @@ async def apply_llm_suggestions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     if add_next_state(ADDING_TITLE) is None:
         ctx.user_data["llm_suggestions_applied"] = True
         return
+    user = update.effective_user
+    if user is None:
+        return
     title = str(ctx.user_data.get("new_book", {}).get("title") or "")
     await _send_add_status(
         update,

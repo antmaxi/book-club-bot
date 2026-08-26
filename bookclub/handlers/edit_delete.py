@@ -16,7 +16,12 @@ from bookclub.config import (
     EDITING_FIELD,
     entry_field_enabled,
 )
-from bookclub.db import db_delete_book, db_get_book, db_get_books, db_update_book_field
+from bookclub.db import (
+    db_delete_book,
+    db_get_book,
+    db_get_books_metadata,
+    db_update_book_field,
+)
 from bookclub.domain import can_modify, require_book
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import (
@@ -169,7 +174,9 @@ async def _ask_edit_field(
 async def cmd_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     uname = update.effective_user.username
-    all_books = db_get_books(discussed=False) + list(db_get_books(discussed=True))
+    all_books = db_get_books_metadata(discussed=False) + list(
+        db_get_books_metadata(discussed=True)
+    )
     books = [b for b in all_books if can_modify(user_id, b, uname)]
     if not books:
         await update.message.reply_text(tr(ctx, "no_own_books"), parse_mode=PM)
@@ -185,6 +192,23 @@ async def edit_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    parts = query.data.split(":")
+    if len(parts) == 3 and parts[1] == "page":
+        user = query.from_user
+        all_books = db_get_books_metadata(discussed=False) + list(
+            db_get_books_metadata(discussed=True)
+        )
+        books = [book for book in all_books if can_modify(user.id, book, user.username)]
+        await query.edit_message_text(
+            tr(ctx, "choose_edit"),
+            reply_markup=books_keyboard(
+                books,
+                "edit_pick",
+                tr(ctx, "cancel_btn"),
+                page=int(parts[2]),
+            ),
+        )
+        return EDITING_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
@@ -394,7 +418,9 @@ async def edit_value_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 # ── /delete ────────────────────────────────────────────────────────────────────
 async def cmd_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    all_books = db_get_books(discussed=False) + list(db_get_books(discussed=True))
+    all_books = db_get_books_metadata(discussed=False) + list(
+        db_get_books_metadata(discussed=True)
+    )
     books = [b for b in all_books if can_modify(user_id, b)]
     if not books:
         await update.message.reply_text(tr(ctx, "no_own_books"), parse_mode=PM)
@@ -410,6 +436,22 @@ async def delete_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
+    parts = query.data.split(":")
+    if len(parts) == 3 and parts[1] == "page":
+        all_books = db_get_books_metadata(discussed=False) + list(
+            db_get_books_metadata(discussed=True)
+        )
+        books = [book for book in all_books if can_modify(query.from_user.id, book)]
+        await query.edit_message_text(
+            tr(ctx, "choose_delete"),
+            reply_markup=books_keyboard(
+                books,
+                "del_pick",
+                tr(ctx, "cancel_btn"),
+                page=int(parts[2]),
+            ),
+        )
+        return DELETING_CHOOSE
     _, book_id = query.data.split(":", 1)
     if book_id == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))

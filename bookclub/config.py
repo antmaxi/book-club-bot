@@ -11,6 +11,7 @@ GITHUB_REPO = os.environ.get(
     "GITHUB_REPO", "https://github.com/antmaxi/club-voting-bot"
 )
 DB_PATH = os.environ.get("DB_PATH", "bookclub.db")
+ACTIVITY_PATH = os.environ.get("ACTIVITY_PATH", "last_activity.json")
 
 # Members of this chat are allowed to use the bot.
 # Set via environment variable: export ALLOWED_CHAT_ID="-1001234567890"
@@ -183,13 +184,13 @@ def _positive_float_env(name: str, default: float) -> float:
 
 
 # OpenAI-compatible Chat Completions API for /add field suggestions.
-# LLM_API_KEY, XAI_API_KEY, OPENAI_API_KEY, or CURSOR_API_KEY (first non-empty wins).
+# Use an explicit provider credential; unrelated IDE credentials are never reused.
 _OPENAI_CHAT_BASE = "https://api.openai.com/v1"
 _XAI_CHAT_BASE = "https://api.x.ai/v1"
 
 
 def resolve_llm_api_key() -> str:
-    return _first_env("LLM_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY", "CURSOR_API_KEY")
+    return _first_env("LLM_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY")
 
 
 def resolve_llm_api_base(key: str = "") -> str:
@@ -209,6 +210,16 @@ def resolve_llm_api_base(key: str = "") -> str:
             )
         return _XAI_CHAT_BASE
     if raw:
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("LLM_API_BASE must be an absolute HTTP(S) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("LLM_API_BASE must not contain credentials")
+        if parsed.scheme != "https" and parsed.hostname not in {
+            "localhost",
+            "127.0.0.1",
+        }:
+            raise ValueError("LLM_API_BASE must use HTTPS except for localhost")
         return raw
     return _OPENAI_CHAT_BASE
 
@@ -293,6 +304,7 @@ DELETING_CHOOSE = 10
 
 MEETING_ATTENDEES_PAGE_SIZE = 7
 NOTIFY_BOOKS_PAGE_SIZE = 8
+PICKER_PAGE_SIZE = 12
 
 LOG_FILE = os.environ.get("LOG_FILE", "logs/bookclub_bot.log")
 

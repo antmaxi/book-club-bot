@@ -82,7 +82,9 @@ def _make_instance(parent: Path, name: str, *, with_log: bool = False) -> Path:
 
 
 class TestLoadDeployRepos(unittest.TestCase):
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_parses_double_quoted_deploy_repos(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"
@@ -91,7 +93,9 @@ class TestLoadDeployRepos(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(proc.stdout.splitlines(), ["/data/a", "/data/b"])
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_parses_single_quoted_and_export_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"
@@ -100,7 +104,9 @@ class TestLoadDeployRepos(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(proc.stdout.splitlines(), ["/x", "/y"])
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_repos_alias_and_last_line_wins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"
@@ -113,7 +119,9 @@ class TestLoadDeployRepos(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(proc.stdout.splitlines(), ["/winner"])
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_missing_deploy_repos_exits_with_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"
@@ -122,7 +130,9 @@ class TestLoadDeployRepos(unittest.TestCase):
             self.assertEqual(proc.returncode, 1)
             self.assertIn("DEPLOY_REPOS", proc.stderr)
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_missing_env_file_exits_with_message(self) -> None:
         env_file = Path("/nonexistent/path/.env")
         proc = _source_repos(env_file)
@@ -195,7 +205,9 @@ class TestDeployBotsScript(unittest.TestCase):
                 proc.stdout.index("remote commit two"),
             )
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_check_only_skips_missing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -209,9 +221,7 @@ class TestDeployBotsScript(unittest.TestCase):
 
 
 class TestLogsScript(unittest.TestCase):
-    def _run_logs(
-        self, env_file: Path, *args: str
-    ) -> subprocess.CompletedProcess[str]:
+    def _run_logs(self, env_file: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["DEPLOY_ENV_FILE"] = str(env_file)
         return subprocess.run(
@@ -223,7 +233,9 @@ class TestLogsScript(unittest.TestCase):
             check=False,
         )
 
-    @unittest.skipUnless(SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)")
+    @unittest.skipUnless(
+        SCRIPTS_AVAILABLE, "deploy scripts not present (mount scripts/)"
+    )
     def test_help_exits_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"

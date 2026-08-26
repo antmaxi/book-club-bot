@@ -5,17 +5,29 @@ Tests Telegram command/callback handlers using mocked Update + Context.
 No real Telegram API calls are made.
 """
 
+import json
 import os
 import sqlite3
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from telegram import Bot, Chat, ForceReply, Message, MessageEntity, Update, User
-from telegram.error import BadRequest, NetworkError
-from telegram.ext import ConversationHandler, InlineQueryHandler
+from telegram import (
+    Bot,
+    Chat,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    MessageEntity,
+    Update,
+    User,
+)
+from telegram.error import BadRequest, NetworkError, RetryAfter
+from telegram.ext import ApplicationHandlerStop, ConversationHandler, InlineQueryHandler
 
 import bookclub.config as cfg
+import bookclub.membership as membership
 import bookclub_bot as bot
 from bookclub.handlers.add_flow import (
     add_edit_inline_query,
@@ -26,6 +38,7 @@ from bookclub.handlers.add_flow import (
     send_add_prompt,
     typed_add_text,
 )
+from bookclub.notifications import vote_reminder_job
 
 # ── Base test class with shared setUp ─────────────────────────────────────────
 
@@ -46,10 +59,14 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         bot.ALLOWED_CHAT_ID = None
         self._orig_llm_key = cfg.LLM_API_KEY
         cfg.LLM_API_KEY = ""
+        self._orig_activity_path = cfg.ACTIVITY_PATH
+        cfg.ACTIVITY_PATH = f"{self.DB_FILE}.activity.json"
 
         # The membership cache is module-global; a verdict cached by one test
         # would otherwise leak into the next.
         bot._membership_cache.clear()
+        membership._club_user_profiles.clear()
+        membership._last_activity_write = None
 
         self.update = MagicMock(spec=Update)
         self.update.callback_query = None  # Explicitly set to None by default
@@ -74,8 +91,15 @@ class BotHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         cfg.ALLOWED_CHAT_ID = self._orig_chat_id
         bot.ALLOWED_CHAT_ID = self._orig_chat_id
         cfg.LLM_API_KEY = self._orig_llm_key
-        if os.path.exists(self.DB_FILE):
-            os.remove(self.DB_FILE)
+        cfg.ACTIVITY_PATH = self._orig_activity_path
+        for path in (
+            self.DB_FILE,
+            f"{self.DB_FILE}-wal",
+            f"{self.DB_FILE}-shm",
+            f"{self.DB_FILE}.activity.json",
+        ):
+            if os.path.exists(path):
+                os.remove(path)
 
     def _callback_query(self, data, user_id=None):
         """Return a mock callback query with the given data."""
@@ -368,9 +392,9 @@ class TestList(BotHandlerTestCase):
         q = self._callback_query("list:all:full")
         await bot.list_choice_cb(self.update, self.ctx)
         q.answer.assert_called_once()
-        q.delete_message.assert_called_once()
-        self.ctx.bot.send_message.assert_called_once()
-        self.assertIn("Book 1", self.ctx.bot.send_message.call_args[1]["text"])
+        q.delete_message.assert_not_called()
+        q.edit_message_text.assert_called_once()
+        self.assertIn("Book 1", q.edit_message_text.call_args[0][0])
 
     async def test_list_choice_unvoted_excludes_voted_book(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
@@ -394,7 +418,43 @@ class TestList(BotHandlerTestCase):
         self._add_book("Beta")
         q = self._callback_query("list:all:full")
         await bot.list_choice_cb(self.update, self.ctx)
-        self.assertEqual(self.ctx.bot.send_message.call_count, 2)
+        self.ctx.bot.send_message.assert_not_called()
+        markup = q.edit_message_text.call_args.kwargs["reply_markup"]
+        callbacks = [
+            button.callback_data
+            for row in markup.inline_keyboard
+            for button in row
+            if button.callback_data
+        ]
+        self.assertTrue(
+            any(
+                callback.startswith("book_page:") and callback.endswith(":1")
+                for callback in callbacks
+            )
+        )
+
+    async def test_full_card_pagination_keeps_initial_order_after_vote(self):
+        bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
+        first = self._add_book("Alpha")
+        self._add_book("Beta")
+        q = self._callback_query("list:all:full")
+        await bot.list_choice_cb(self.update, self.ctx)
+        markup = q.edit_message_text.call_args.kwargs["reply_markup"]
+        next_callback = next(
+            button.callback_data
+            for row in markup.inline_keyboard
+            for button in row
+            if (button.callback_data or "").startswith("book_page:")
+            and (button.callback_data or "").endswith(":1")
+        )
+
+        bot.db_cast_vote(self.update.effective_user.id, first, -1)
+        q = self._callback_query(next_callback)
+        await bot.book_page_cb(self.update, self.ctx)
+
+        text = q.edit_message_text.call_args.args[0]
+        self.assertIn("Beta", text)
+        self.assertNotIn("Alpha", text)
 
     async def test_list_choice_compact_single_message(self):
         bot.db_set_user_setting(self.update.effective_user.id, "notify_new_books", 0)
@@ -1423,6 +1483,19 @@ class TestMembershipGate(BotHandlerTestCase):
         result = await bot._check_membership(self.update, self.ctx)
         self.assertTrue(result)
 
+    async def test_allowed_non_admin_activity_sidecar_is_private_and_throttled(self):
+        cfg.ALLOWED_CHAT_ID = None
+        self.update.message.left_chat_member = None
+        self.update.message.new_chat_members = []
+        with patch.object(cfg, "ADMIN_IDS", []):
+            await bot.membership_gate(self.update, self.ctx)
+            first_mtime = os.stat(cfg.ACTIVITY_PATH).st_mtime_ns
+            self.assertEqual(os.stat(cfg.ACTIVITY_PATH).st_mode & 0o777, 0o600)
+            await bot.membership_gate(self.update, self.ctx)
+        self.assertEqual(os.stat(cfg.ACTIVITY_PATH).st_mtime_ns, first_mtime)
+        with open(cfg.ACTIVITY_PATH, encoding="utf-8") as activity_file:
+            self.assertIn("last_non_admin_activity", json.load(activity_file))
+
     async def test_gate_allows_admin_without_api_call(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
         old = cfg.ADMIN_IDS[:]
@@ -1437,13 +1510,25 @@ class TestMembershipGate(BotHandlerTestCase):
 
     async def test_gate_allows_member_status(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
-        for status in ("member", "administrator", "creator", "restricted"):
+        for status in ("member", "administrator", "creator"):
             bot._membership_cache.clear()  # else only the first status is tested
             member = MagicMock()
             member.status = status
             self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
             result = await bot._check_membership(self.update, self.ctx)
             self.assertTrue(result, f"Status '{status}' should be allowed")
+
+    async def test_gate_allows_restricted_current_member(self):
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        member = MagicMock(status="restricted", is_member=True)
+        self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
+        self.assertTrue(await bot._check_membership(self.update, self.ctx))
+
+    async def test_gate_blocks_restricted_former_member(self):
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        member = MagicMock(status="restricted", is_member=False)
+        self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
+        self.assertFalse(await bot._check_membership(self.update, self.ctx))
 
     async def test_gate_blocks_non_member(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
@@ -1455,14 +1540,35 @@ class TestMembershipGate(BotHandlerTestCase):
             result = await bot._check_membership(self.update, self.ctx)
             self.assertFalse(result, f"Status '{status}' should be blocked")
 
-    async def test_gate_allows_on_chat_not_found(self):
-        """If the bot cannot access ALLOWED_CHAT_ID, do not lock out real members."""
+    async def test_blocked_user_does_not_record_activity_or_profile(self):
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        self.update.message.left_chat_member = None
+        self.update.message.new_chat_members = []
+        member = MagicMock(status="left")
+        self.ctx.bot.get_chat_member = AsyncMock(return_value=member)
+        with (
+            patch.object(cfg, "ADMIN_IDS", []),
+            patch("bookclub.membership._record_non_admin_activity") as record,
+            patch("bookclub.membership._upsert_club_user_if_changed") as upsert,
+            self.assertRaises(ApplicationHandlerStop),
+        ):
+            await bot.membership_gate(self.update, self.ctx)
+        record.assert_not_called()
+        upsert.assert_not_called()
+
+    async def test_gate_fails_closed_on_chat_not_found(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
         self.ctx.bot.get_chat_member = AsyncMock(
             side_effect=BadRequest("Chat not found")
         )
         result = await bot._check_membership(self.update, self.ctx)
-        self.assertTrue(result)
+        self.assertFalse(result)
+
+    async def test_gate_fails_closed_on_network_error(self):
+        cfg.ALLOWED_CHAT_ID = -1001111111111
+        self.ctx.bot.get_chat_member = AsyncMock(side_effect=NetworkError("timeout"))
+        result = await bot._check_membership(self.update, self.ctx)
+        self.assertFalse(result)
 
     async def test_gate_blocks_on_unknown_api_exception(self):
         cfg.ALLOWED_CHAT_ID = -1001111111111
@@ -1767,7 +1873,7 @@ class TestAdminConsole(BotHandlerTestCase):
         self.assertEqual(book["discussed_at"], "2026-06-15")
         self.assertIn("updated to", self.message.reply_text.call_args[0][0])
 
-    async def test_admin_notify_top_sends_reminders(self):
+    async def test_admin_notify_top_queues_reminders(self):
         # 1. Setup books
         bid1 = self._add_book("Top Book 1")
         bid2 = self._add_book("Top Book 2")
@@ -1782,10 +1888,11 @@ class TestAdminConsole(BotHandlerTestCase):
         state = await bot.admin_notify_top_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
-        # Check if bot.send_message was called for the user
-        # 1 message for reminder text + 2 messages for books = 3 messages
-        # Our mock bot is self.ctx.bot
-        self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
+        self.ctx.bot.send_message.assert_not_called()
+        self.ctx.job_queue.run_once.assert_called_once()
+        job_data = self.ctx.job_queue.run_once.call_args.kwargs["data"]
+        self.assertEqual(set(job_data["book_ids"]), {bid1, bid2})
+        self.assertEqual(job_data["user_ids"], [user_id])
 
         # Verify confirm message to admin
         q.edit_message_text.assert_called_once()
@@ -1812,7 +1919,7 @@ class TestAdminConsole(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         self.assertIn("No users to notify", q.edit_message_text.call_args[0][0])
 
-    async def test_admin_notify_pick_sends_reminders(self):
+    async def test_admin_notify_pick_queues_reminders(self):
         bid = self._add_book("Target Book")
         user_id = 12345
         bot.db_set_user_setting(user_id, "notify_new_books", 1)
@@ -1822,9 +1929,39 @@ class TestAdminConsole(BotHandlerTestCase):
         state = await bot.admin_notify_pick_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
-        self.assertGreaterEqual(self.ctx.bot.send_message.call_count, 1)
+        self.ctx.bot.send_message.assert_not_called()
+        self.ctx.job_queue.run_once.assert_called_once()
         q.edit_message_text.assert_called_once()
         self.assertIn("reminder sent", q.edit_message_text.call_args[0][0])
+
+    async def test_queued_vote_reminder_sends_in_background_job(self):
+        bid = self._add_book("Queued Book")
+        job_ctx = MagicMock()
+        job_ctx.job.data = {
+            "book_ids": [bid],
+            "user_ids": [12345],
+            "to_chat": False,
+        }
+        job_ctx.bot = AsyncMock()
+        job_ctx.application.user_data = {}
+        await vote_reminder_job(job_ctx)
+        self.assertEqual(job_ctx.bot.send_message.call_count, 2)
+
+    async def test_queued_group_reminder_retries_flood_wait(self):
+        bid = self._add_book("Queued Group Book")
+        cfg.ALLOWED_CHAT_ID = -100123
+        job_ctx = MagicMock()
+        job_ctx.job.data = {
+            "book_ids": [bid],
+            "user_ids": None,
+            "to_chat": True,
+        }
+        job_ctx.bot = AsyncMock()
+        job_ctx.bot.send_message.side_effect = [RetryAfter(timedelta(seconds=1)), None]
+        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+            await vote_reminder_job(job_ctx)
+        self.assertEqual(job_ctx.bot.send_message.call_count, 2)
+        self.assertIn(call(1.0), sleep.await_args_list)
 
     async def test_admin_notify_pick_toggle_updates_selection(self):
         bid = self._add_book("Toggle Book")
@@ -1835,7 +1972,7 @@ class TestAdminConsole(BotHandlerTestCase):
         q.edit_message_text.assert_called_once()
         self.assertIn("Selected", q.edit_message_text.call_args[0][0])
 
-    async def test_admin_notify_chat_top_posts_to_group(self):
+    async def test_admin_notify_chat_top_queues_group_posts(self):
         bid1 = self._add_book("Chat Top 1")
         bid2 = self._add_book("Chat Top 2")
         cfg.ALLOWED_CHAT_ID = -100123
@@ -1845,16 +1982,16 @@ class TestAdminConsole(BotHandlerTestCase):
             state = await bot.admin_notify_chat_top_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
-        self.assertEqual(self.ctx.bot.send_message.call_count, 2)
-        for call in self.ctx.bot.send_message.call_args_list:
-            self.assertEqual(call.kwargs["chat_id"], -100123)
-            self.assertIn("Voting reminder", call.kwargs["text"])
-            self.assertIsNotNone(call.kwargs.get("reply_markup"))
+        self.ctx.bot.send_message.assert_not_called()
+        self.ctx.job_queue.run_once.assert_called_once()
+        data = self.ctx.job_queue.run_once.call_args.kwargs["data"]
+        self.assertEqual(set(data["book_ids"]), {bid1, bid2})
+        self.assertTrue(data["to_chat"])
 
         q.edit_message_text.assert_called_once()
         self.assertIn("group chat", q.edit_message_text.call_args[0][0])
 
-    async def test_admin_notify_chat_pick_posts_to_group(self):
+    async def test_admin_notify_chat_pick_queues_group_post(self):
         bid = self._add_book("Chat Pick Book")
         cfg.ALLOWED_CHAT_ID = -100123
         self.ctx.user_data["notify_book_ids"] = {bid}
@@ -1864,11 +2001,11 @@ class TestAdminConsole(BotHandlerTestCase):
             state = await bot.admin_notify_chat_pick_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
-        self.ctx.bot.send_message.assert_called_once()
-        kwargs = self.ctx.bot.send_message.call_args.kwargs
-        self.assertEqual(kwargs["chat_id"], -100123)
-        self.assertIn("Voting reminder", kwargs["text"])
-        self.assertIsNotNone(kwargs.get("reply_markup"))
+        self.ctx.bot.send_message.assert_not_called()
+        self.ctx.job_queue.run_once.assert_called_once()
+        data = self.ctx.job_queue.run_once.call_args.kwargs["data"]
+        self.assertEqual(data["book_ids"], [bid])
+        self.assertTrue(data["to_chat"])
 
     async def test_admin_notify_chat_no_allowed_chat_id(self):
         cfg.ALLOWED_CHAT_ID = None
@@ -2277,12 +2414,35 @@ class TestGroupVoteCard(BotHandlerTestCase):
         text = q.edit_message_text.call_args[0][0]
         self.assertIn("Your current vote", text)
 
+    async def test_pagination_session_is_preserved_after_voting(self):
+        bid = self._add_book()
+        query = self._vote_in("private", bid)
+        query.message = MagicMock()
+        query.message.reply_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("▶️", callback_data="book_page:deadbeef:1")]]
+        )
+        await bot.vote_cast_cb(self.update, self.ctx)
+        markup = query.edit_message_text.call_args.kwargs["reply_markup"]
+        callbacks = [
+            button.callback_data for row in markup.inline_keyboard for button in row
+        ]
+        self.assertIn("book_page:deadbeef:1", callbacks)
+
     async def test_out_of_range_score_is_ignored(self):
         """Crafted callback data must not raise a KeyError inside the handler."""
         bid = self._add_book()
         self._vote_in("supergroup", bid, score=7)
         await bot.vote_cast_cb(self.update, self.ctx)
         self.assertIsNone(bot.db_get_user_vote(self.update.effective_user.id, bid))
+
+    async def test_discussed_book_rejects_forged_vote_callback(self):
+        bid = self._add_book()
+        bot.db_mark_discussed(bid, "2026-01-01")
+        query = self._vote_in("private", bid)
+        await bot.vote_cast_cb(self.update, self.ctx)
+        self.assertIsNone(bot.db_get_user_vote(self.update.effective_user.id, bid))
+        query.answer.assert_called_once()
+        self.assertTrue(query.answer.call_args.kwargs["show_alert"])
 
     async def test_vote_is_recorded_in_both_chat_types(self):
         for chat_type in ("private", "supergroup"):

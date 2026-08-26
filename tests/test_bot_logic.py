@@ -58,8 +58,9 @@ class TestDatabase(unittest.TestCase):
         bot.init_db()
 
     def tearDown(self):
-        if os.path.exists(self.db_file):
-            os.remove(self.db_file)
+        for path in (self.db_file, f"{self.db_file}-wal", f"{self.db_file}-shm"):
+            if os.path.exists(path):
+                os.remove(path)
 
     # -- Schema --
 
@@ -250,6 +251,37 @@ class TestDatabase(unittest.TestCase):
     def test_db_get_user_vote_no_vote(self):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
         self.assertIsNone(bot.db_get_user_vote(99, book_id))
+
+    def test_db_get_user_votes_batches_selected_books(self):
+        first = bot.db_add_book("B1", "A", 10, True, "", "", 1, "u")
+        second = bot.db_add_book("B2", "A", 10, True, "", "", 1, "u")
+        bot.db_cast_vote(7, first, 1)
+        self.assertEqual(bot.db_get_user_votes(7, [first, second]), {first: 1})
+
+    def test_db_get_users_missing_votes_batches_users_and_books(self):
+        first = bot.db_add_book("First", "A", 10, True, "", "", 1, "u")
+        second = bot.db_add_book("Second", "A", 10, True, "", "", 1, "u")
+        bot.db_cast_vote(7, first, 1)
+        bot.db_cast_vote(8, first, 1)
+        bot.db_cast_vote(8, second, 0)
+
+        self.assertEqual(bot.db_get_users_missing_votes([7, 8], [first, second]), [7])
+        self.assertEqual(
+            bot.db_get_voted_pairs([7, 8], [first, second]),
+            {(7, first), (8, first), (8, second)},
+        )
+
+    def test_init_db_creates_hot_path_indexes(self):
+        with sqlite3.connect(bot.DB_PATH) as conn:
+            indexes = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                )
+            }
+        self.assertIn("idx_votes_book_id", indexes)
+        self.assertIn("idx_books_state", indexes)
+        self.assertIn("idx_user_settings_lookup", indexes)
 
     def test_db_vote_aggregates(self):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
@@ -729,6 +761,18 @@ class TestDatabase(unittest.TestCase):
 
 
 class TestUtils(unittest.TestCase):
+    def test_books_keyboard_paginates_large_catalog(self):
+        books = [
+            make_book(id=index, title=f"Book {index}", author="Author")
+            for index in range(120)
+        ]
+        markup = bot.books_keyboard(books, "pick", "Cancel")
+        buttons = [button for row in markup.inline_keyboard for button in row]
+        self.assertLessEqual(len(buttons), cfg.PICKER_PAGE_SIZE + 2)
+        self.assertIn(
+            "pick:page:1",
+            [button.callback_data for button in buttons],
+        )
 
     # -- is_valid_url --
 
@@ -1089,17 +1133,17 @@ class TestUtils(unittest.TestCase):
         finally:
             cfg.ADMIN_IDS = old
 
-    def test_can_modify_imported_book_matching_username(self):
+    def test_can_modify_imported_book_by_matching_username(self):
         book = make_book()
         book["added_by"] = bot.IMPORTED_USER_ID
         book["added_by_username"] = "alice"
-        self.assertTrue(bot.can_modify(0, book, username="alice"))
+        self.assertTrue(bot.can_modify(123, book, username="alice"))
 
-    def test_can_modify_imported_book_username_case_insensitive(self):
+    def test_can_modify_imported_book_by_case_insensitive_username(self):
         book = make_book()
         book["added_by"] = bot.IMPORTED_USER_ID
         book["added_by_username"] = "Alice"
-        self.assertTrue(bot.can_modify(0, book, username="alice"))
+        self.assertTrue(bot.can_modify(123, book, username="alice"))
 
     def test_can_modify_imported_book_wrong_username(self):
         book = make_book()

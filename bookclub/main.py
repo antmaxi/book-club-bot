@@ -97,6 +97,7 @@ from bookclub.handlers.admin import (
     cmd_admin_console,
 )
 from bookclub.handlers.commands import (
+    book_page_cb,
     cmd_discussed,
     cmd_help,
     cmd_info,
@@ -373,6 +374,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("discussed", cmd_discussed))
 
     app.add_handler(CallbackQueryHandler(list_choice_cb, pattern=r"^list:"))
+    app.add_handler(CallbackQueryHandler(book_page_cb, pattern=r"^book_page:"))
     app.add_handler(CallbackQueryHandler(settings_choice_cb, pattern=r"^settings:"))
     app.add_handler(CallbackQueryHandler(vote_cast_cb, pattern=r"^vote_cast:"))
     app.add_handler(CallbackQueryHandler(score_calc_cb, pattern=r"^score_calc_info$"))
@@ -427,4 +429,6 @@ def main() -> None:
 
     logger.info("Club entity: %s", CLUB_ENTITY)
     logger.info("Bot is running...")
-    app.run_polling()
+    # Ignore update categories for which this bot has no handlers. This keeps
+    # reactions and other unrelated chat traffic off the membership/DB hot path.
+    app.run_polling(allowed_updates=["message", "callback_query", "inline_query"])

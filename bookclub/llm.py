@@ -7,6 +7,7 @@ import re
 import urllib.error
 import urllib.request
 from typing import Any
+from urllib.parse import urlparse
 
 import bookclub.config as config
 from bookclub.cefr import CEFR_LEVELS, parse_language_levels
@@ -76,8 +77,8 @@ class LlmRequestError(Exception):
 
     def __init__(self, detail: str, *, kind: str = "request") -> None:
         self.kind = kind if kind in LLM_ERROR_KINDS else "request"
-        self.detail = detail
-        super().__init__(detail)
+        self.detail = redact_llm_secrets(detail)
+        super().__init__(self.detail)
 
     def __str__(self) -> str:
         return f"{self.kind}: {self.detail}"
@@ -166,17 +167,38 @@ def chat_completion(messages: list[dict[str, str]]) -> str:
     return content
 
 
-_SECRET_RE = re.compile(r"(xai-|sk-or-|sk-|crsr_)[A-Za-z0-9_\-]+")
+_SECRET_RE = re.compile(r"(xai-|sk-or-|sk-|crsr_|gsk_)[A-Za-z0-9_\-]+")
+_BEARER_RE = re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+")
+_QUERY_SECRET_RE = re.compile(r"(?i)([?&](?:api_key|token|access_token)=)[^&#\s]+")
+
+
+def redact_llm_secrets(text: str) -> str:
+    """Remove provider credentials before text reaches users, logs, or alerts."""
+    redacted = str(text)
+    if config.LLM_API_KEY:
+        redacted = redacted.replace(config.LLM_API_KEY, "[redacted]")
+    redacted = _SECRET_RE.sub("[redacted]", redacted)
+    redacted = _BEARER_RE.sub(r"\1[redacted]", redacted)
+    redacted = _QUERY_SECRET_RE.sub(r"\1[redacted]", redacted)
+    return " ".join(redacted.split())[:800]
+
+
+def _provider_origin() -> str:
+    parsed = urlparse(config.LLM_API_BASE)
+    return (
+        f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else "[invalid provider]"
+    )
 
 
 def _log_suggestion_failure(kind: str, title: str, detail: str) -> None:
+    safe_title = redact_llm_secrets(title)[:200]
     logger.error(
         "LLM book suggestions failed [%s] for %r via %s (%s): %s",
         kind,
-        title,
-        config.LLM_MODEL,
-        config.LLM_API_BASE,
-        detail,
+        safe_title,
+        redact_llm_secrets(config.LLM_MODEL),
+        redact_llm_secrets(_provider_origin()),
+        redact_llm_secrets(detail),
     )
 
 
@@ -250,8 +272,7 @@ def _http_error_message(code: int, body: str) -> str:
 
 def ui_llm_error(detail: str) -> str:
     """Short snippet of a provider error for Telegram (escape with h())."""
-    text = _SECRET_RE.sub(lambda m: m.group(1).rstrip("-_") + "-…", detail)
-    text = " ".join(text.split())
+    text = redact_llm_secrets(detail)
     if len(text) > 180:
         text = text[:177] + "..."
     return text

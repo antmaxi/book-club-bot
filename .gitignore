@@ -2,6 +2,7 @@
 /set-up.txt
 .env
 bookclub.db
+/last_activity.json
 # No .gitkeep needed: the bot creates this directory itself on startup.
 # (A negated !/logs/.gitkeep would not work anyway — git never descends into
 # an excluded directory, so a rule for a file inside it can never re-include it.)

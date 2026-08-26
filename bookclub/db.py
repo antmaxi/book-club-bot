@@ -17,7 +17,12 @@ _CREATION_YEAR_MAX = 2100
 
 
 def init_db() -> None:
+    global _votes_use_attendance_cache
+    _votes_use_attendance_cache = None
     with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS books (
@@ -116,6 +121,15 @@ def init_db() -> None:
         """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_add_drafts_user ON add_drafts(user_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_votes_book_id ON votes(book_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_books_state "
+            "ON books(discussed, hidden, added_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_settings_lookup "
+            "ON user_settings(setting_key, setting_val, user_id)"
         )
         conn.execute("""
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
@@ -320,6 +334,7 @@ def db_insert_seed_book(
 # timezone) are ignored until that date. With no past meetings recorded,
 # every vote still counts (otherwise the list would go empty).
 VOTES_USE_ATTENDANCE_KEY = "votes_use_attendance"
+_votes_use_attendance_cache: bool | None = None
 
 # user_id → surplus after the last meeting on or before _attendance_as_of.
 # Rebuilt at startup, whenever a meeting is recorded, and when the calendar
@@ -335,7 +350,12 @@ def club_today_date() -> str:
 
 
 def db_votes_use_attendance() -> bool:
-    return db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0) == 1
+    global _votes_use_attendance_cache
+    if _votes_use_attendance_cache is None:
+        _votes_use_attendance_cache = (
+            db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0) == 1
+        )
+    return _votes_use_attendance_cache
 
 
 def db_rebuild_attendance_surplus() -> None:
@@ -458,6 +478,22 @@ def db_get_books(
         ).fetchall()
 
 
+def db_get_books_metadata(
+    discussed: bool = False, *, include_hidden: bool = False
+) -> list[sqlite3.Row]:
+    """Return book rows without vote aggregation for picker/list metadata."""
+    where = "WHERE discussed = ?"
+    params: list[int] = [1 if discussed else 0]
+    if not include_hidden:
+        where += " AND hidden = 0"
+    order = "discussed_at DESC" if discussed else "added_at DESC"
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            f"SELECT * FROM books {where} ORDER BY {order}", tuple(params)
+        ).fetchall()
+
+
 def db_get_book(book_id: int) -> sqlite3.Row | None:
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -466,6 +502,15 @@ def db_get_book(book_id: int) -> sqlite3.Row | None:
             sqlite3.Row | None,
             conn.execute(_books_query("WHERE b.id = ?"), (book_id,)).fetchone(),
         )
+
+
+def db_book_is_votable(book_id: int) -> bool:
+    """Return whether a book exists and still accepts votes."""
+    with sqlite3.connect(config.DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT discussed, hidden FROM books WHERE id=?", (book_id,)
+        ).fetchone()
+    return bool(row is not None and not row[0] and not row[1])
 
 
 TITLE_SIMILARITY_THRESHOLD = 0.5
@@ -490,15 +535,13 @@ def find_similar_book_titles(
     min_ratio: float = TITLE_SIMILARITY_THRESHOLD,
 ) -> list[tuple[int, str, float]]:
     """Return existing books whose titles share enough words with new_title."""
-    by_id: dict[int, sqlite3.Row] = {}
-    for discussed in (False, True):
-        for book in db_get_books(discussed=discussed, include_hidden=True):
-            by_id[int(book["id"])] = book
+    with sqlite3.connect(config.DB_PATH) as conn:
+        rows = conn.execute("SELECT id, title FROM books").fetchall()
     matches: list[tuple[int, str, float]] = []
-    for book in by_id.values():
-        ratio = title_word_similarity_ratio(new_title, str(book["title"]))
+    for book_id, title in rows:
+        ratio = title_word_similarity_ratio(new_title, str(title))
         if ratio >= min_ratio:
-            matches.append((int(book["id"]), str(book["title"]), ratio))
+            matches.append((int(book_id), str(title), ratio))
     matches.sort(key=lambda m: (-m[2], m[1].casefold()))
     return matches
 
@@ -919,16 +962,21 @@ def db_import_book(book_data: Mapping[str, Any]) -> int:
         return int(cur.lastrowid)
 
 
-def db_cast_vote(user_id: int, book_id: int, score: int) -> None:
-    """score: -1 = don't want, 0 = don't care, 1 = want to read"""
+def db_cast_vote(user_id: int, book_id: int, score: int) -> int | None:
+    """Store a vote and return its previous value, if any."""
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
+        previous = conn.execute(
+            "SELECT score FROM votes WHERE user_id=? AND book_id=?",
+            (user_id, book_id),
+        ).fetchone()
         conn.execute(
             "INSERT INTO votes (user_id,book_id,score) VALUES (?,?,?) "
             "ON CONFLICT(user_id,book_id) DO UPDATE SET score=excluded.score",
             (user_id, book_id, score),
         )
         conn.commit()
+        return int(previous[0]) if previous else None
 
 
 def db_get_user_vote(user_id: int, book_id: int) -> int | None:
@@ -937,6 +985,62 @@ def db_get_user_vote(user_id: int, book_id: int) -> int | None:
             "SELECT score FROM votes WHERE user_id=? AND book_id=?", (user_id, book_id)
         ).fetchone()
         return row[0] if row else None
+
+
+def db_get_user_votes(user_id: int, book_ids: Sequence[int]) -> dict[int, int]:
+    """Load one user's votes for a set of books in a single query."""
+    ids = [int(book_id) for book_id in book_ids]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    with sqlite3.connect(config.DB_PATH) as conn:
+        rows = conn.execute(
+            f"SELECT book_id, score FROM votes "
+            f"WHERE user_id=? AND book_id IN ({placeholders})",
+            (user_id, *ids),
+        ).fetchall()
+    return {int(book_id): int(score) for book_id, score in rows}
+
+
+def db_get_voted_pairs(
+    user_ids: Sequence[int], book_ids: Sequence[int]
+) -> set[tuple[int, int]]:
+    """Load existing (user, book) vote pairs in bounded batched queries."""
+    users = [int(user_id) for user_id in user_ids]
+    books = [int(book_id) for book_id in book_ids]
+    if not users or not books:
+        return set()
+    pairs: set[tuple[int, int]] = set()
+    chunk_size = 450
+    with sqlite3.connect(config.DB_PATH) as conn:
+        for user_start in range(0, len(users), chunk_size):
+            user_chunk = users[user_start : user_start + chunk_size]
+            user_placeholders = ",".join("?" for _ in user_chunk)
+            for book_start in range(0, len(books), chunk_size):
+                book_chunk = books[book_start : book_start + chunk_size]
+                book_placeholders = ",".join("?" for _ in book_chunk)
+                rows = conn.execute(
+                    f"SELECT user_id, book_id FROM votes "
+                    f"WHERE user_id IN ({user_placeholders}) "
+                    f"AND book_id IN ({book_placeholders})",
+                    (*user_chunk, *book_chunk),
+                ).fetchall()
+                pairs.update((int(user_id), int(book_id)) for user_id, book_id in rows)
+    return pairs
+
+
+def db_get_users_missing_votes(
+    user_ids: Sequence[int], book_ids: Sequence[int]
+) -> list[int]:
+    """Return users missing at least one selected-book vote."""
+    users = [int(user_id) for user_id in user_ids]
+    books = [int(book_id) for book_id in book_ids]
+    voted = db_get_voted_pairs(users, books)
+    return [
+        user_id
+        for user_id in users
+        if any((user_id, book_id) not in voted for book_id in books)
+    ]
 
 
 def db_get_user_setting(user_id: int, key: str, default: int = -1) -> int:
@@ -975,4 +1079,7 @@ def db_get_admin_setting(key: str, default: int = 0) -> int:
 
 
 def db_set_admin_setting(key: str, value: int) -> None:
+    global _votes_use_attendance_cache
     db_set_user_setting(ADMIN_USER_ID, key, value)
+    if key == VOTES_USE_ATTENDANCE_KEY:
+        _votes_use_attendance_cache = value == 1

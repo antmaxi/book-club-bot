@@ -40,10 +40,10 @@ from bookclub import *  # noqa: F403
 from bookclub.config import _VALID_CLUB_ENTITIES, _club_entity_from_env  # noqa: F401
 from bookclub.logging_setup import (  # noqa: F401 — tests
     _ALERT_BUFFER_MAX,
-    _TelegramAlertHandler,
     _alert_buffer,
     _alert_dropped,
     _log_fmt,
+    _TelegramAlertHandler,
 )
 from bookclub.main import main
 from bookclub.membership import _check_membership, _membership_cache  # noqa: F401

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from telegram import (
@@ -15,6 +17,7 @@ from telegram.ext import ContextTypes
 
 import bookclub.config as config
 from bookclub.db import (
+    db_get_book,
     db_get_books,
     db_get_user_setting,
     db_get_user_vote,
@@ -33,6 +36,7 @@ from bookclub.i18n import (
     tr,
 )
 from bookclub.logging_setup import logger
+from bookclub.types import BookLike
 from bookclub.ui import (
     _parse_list_callback,
     _show_list_format_prompt,
@@ -57,6 +61,104 @@ def _build_commands() -> dict[str, list[BotCommand]]:
 COMMANDS = _build_commands()
 
 _ADMIN_MENU_COMMAND = "adminconsole"
+_BOOK_PAGE_SESSION_MAX = 5
+
+
+def _new_book_page_session(
+    ctx: ContextTypes.DEFAULT_TYPE, scope: str, books: Sequence[BookLike]
+) -> str:
+    sessions = ctx.user_data.setdefault("_book_page_sessions", {})
+    token = secrets.token_hex(4)
+    sessions[token] = {
+        "scope": scope,
+        "book_ids": [int(book["id"]) for book in books],
+    }
+    while len(sessions) > _BOOK_PAGE_SESSION_MAX:
+        sessions.pop(next(iter(sessions)))
+    return token
+
+
+def _book_page_markup(
+    session: str,
+    index: int,
+    total: int,
+    *,
+    book_id: int | None = None,
+    lang: str = "ru",
+    user_vote: int | None = None,
+) -> InlineKeyboardMarkup:
+    rows = (
+        [list(row) for row in score_keyboard(book_id, lang, user_vote).inline_keyboard]
+        if book_id is not None
+        else []
+    )
+    nav: list[InlineKeyboardButton] = []
+    if index > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=f"book_page:{session}:{index - 1}")
+        )
+    if index + 1 < total:
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=f"book_page:{session}:{index + 1}")
+        )
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(rows)
+
+
+async def book_page_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Render one card at a time so large catalogs do not block all updates."""
+    query = update.callback_query
+    await query.answer()
+    _, token, raw_index = query.data.split(":", 2)
+    sessions = ctx.user_data.get("_book_page_sessions", {})
+    session = sessions.get(token) if isinstance(sessions, dict) else None
+    if not isinstance(session, dict):
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return
+    scope = str(session.get("scope"))
+    book_ids = session.get("book_ids")
+    if not isinstance(book_ids, list) or not book_ids:
+        await query.edit_message_text(
+            tr(ctx, "no_discussed" if scope == "discussed" else "no_undiscussed"),
+            parse_mode=PM,
+        )
+        return
+    index = max(0, min(int(raw_index), len(book_ids) - 1))
+    book = db_get_book(int(book_ids[index]))
+    if book is None:
+        book_ids.pop(index)
+        if not book_ids:
+            await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+            return
+        index = min(index, len(book_ids) - 1)
+        book = db_get_book(int(book_ids[index]))
+    if book is None:
+        await query.edit_message_text(tr(ctx, "no_undiscussed"), parse_mode=PM)
+        return
+    lang = get_lang(ctx)
+    user_vote = (
+        None
+        if scope == "discussed"
+        else db_get_user_vote(query.from_user.id, int(book["id"]))
+    )
+    header = (
+        tr(ctx, "discussed_title")
+        if scope == "discussed"
+        else tr(ctx, "list_compact_title", count=len(book_ids))
+    )
+    await query.edit_message_text(
+        f"{header}\n\n{book_card(book, lang, user_vote=user_vote)}",
+        parse_mode=PM,
+        reply_markup=_book_page_markup(
+            token,
+            index,
+            len(book_ids),
+            book_id=None if scope == "discussed" else int(book["id"]),
+            lang=lang,
+            user_vote=user_vote,
+        ),
+    )
 
 
 def _settings_keyboard(ctx: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
@@ -274,6 +376,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     else:
         await query.answer()
         user_id = query.from_user.id
+        assert query.data is not None
         filter_choice, format_choice = _parse_list_callback(query.data)
 
     # Check for notification opt-in
@@ -330,18 +433,14 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                 raise
         return
 
-    # Delete the prompt message
-    try:
-        await query.delete_message()
-    except Exception as e:
-        if "Message to delete not found" in str(e):
-            pass
-        else:
-            raise
-
     chat_id = update.effective_chat.id
 
     if format_choice == "compact":
+        try:
+            await query.delete_message()
+        except Exception as e:
+            if "Message to delete not found" not in str(e):
+                raise
         header = tr(ctx, "list_compact_title", count=len(books))
         lines = [header] + [
             book_compact_line(i, book) for i, book in enumerate(books, 1)
@@ -349,19 +448,22 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         await send_chunked_html_messages(ctx.bot, chat_id, lines, joiner="\n")
         return
 
-    for book in books:
-        uv = db_get_user_vote(user_id, book["id"])
-        try:
-            await ctx.bot.send_message(
-                chat_id=chat_id,
-                text=book_card(book, lang, user_vote=uv),
-                parse_mode=PM,
-                reply_markup=score_keyboard(book["id"], lang, uv),
-            )
-        except Exception as e:
-            # Never let one malformed book (e.g. a bad review link) abort the
-            # whole list for the user.
-            logger.warning(f"list_choice_cb: failed to send book {book['id']}: {e}")
+    first = books[0]
+    session = _new_book_page_session(ctx, choice, books)
+    uv = db_get_user_vote(user_id, int(first["id"]))
+    await query.edit_message_text(
+        f"{tr(ctx, 'list_compact_title', count=len(books))}\n\n"
+        f"{book_card(first, lang, user_vote=uv)}",
+        parse_mode=PM,
+        reply_markup=_book_page_markup(
+            session,
+            0,
+            len(books),
+            book_id=int(first["id"]),
+            lang=lang,
+            user_vote=uv,
+        ),
+    )
 
 
 async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -370,14 +472,13 @@ async def cmd_discussed(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not books:
         await update.message.reply_text(tr(ctx, "no_discussed"), parse_mode=PM)
         return
-    text = tr(ctx, "discussed_title")
-    user_id = update.effective_user.id
-    await update.message.reply_text(text, parse_mode=PM)
-    for book in books:
-        uv = db_get_user_vote(user_id, book["id"])
-        await update.message.reply_text(
-            book_card(book, lang, user_vote=uv), parse_mode=PM
-        )
+    first = books[0]
+    session = _new_book_page_session(ctx, "discussed", books)
+    await update.message.reply_text(
+        f"{tr(ctx, 'discussed_title')}\n\n{book_card(first, lang)}",
+        parse_mode=PM,
+        reply_markup=_book_page_markup(session, 0, len(books)),
+    )
 
 
 async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

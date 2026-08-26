@@ -1,55 +1,93 @@
 from __future__ import annotations
 
+import json
+import os
+import tempfile
+from collections import OrderedDict
 from datetime import UTC, datetime
+from pathlib import Path
 
 from telegram import Update
-from telegram.error import BadRequest, Forbidden, NetworkError
+from telegram.error import NetworkError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 import bookclub.config as config
 from bookclub.db import db_upsert_club_user
 from bookclub.i18n import PM, get_lang, s, tr
-from bookclub.ui import h
 from bookclub.logging_setup import logger
+from bookclub.ui import h
 
 MEMBERSHIP_CACHE_TTL = 300  # seconds
-_membership_cache: dict[int, tuple[bool, datetime]] = {}
+MEMBERSHIP_CACHE_MAX = 4096
+ACTIVITY_WRITE_INTERVAL_SECONDS = 30
+_membership_cache: OrderedDict[int, tuple[bool, datetime]] = OrderedDict()
+_club_user_profiles: OrderedDict[int, tuple[str, str | None]] = OrderedDict()
+_last_activity_write: datetime | None = None
 
 
 def _membership_cache_evict(user_id: int) -> None:
     _membership_cache.pop(user_id, None)
 
 
-def _membership_fail_open_on_api_error(exc: BaseException) -> bool:
-    """True when the bot cannot verify membership due to chat/bot config, not the user."""
-    msg = str(exc).lower()
-    if isinstance(exc, NetworkError):
-        return True
-    if isinstance(exc, Forbidden):
-        # Bot removed from the allowed group — same class of misconfiguration.
-        return any(
-            needle in msg
-            for needle in ("kicked", "not a member", "chat not found", "forbidden")
+def _cache_membership(user_id: int, allowed: bool, checked_at: datetime) -> None:
+    _membership_cache[user_id] = (allowed, checked_at)
+    _membership_cache.move_to_end(user_id)
+    while len(_membership_cache) > MEMBERSHIP_CACHE_MAX:
+        _membership_cache.popitem(last=False)
+
+
+def _upsert_club_user_if_changed(
+    user_id: int, full_name: str, username: str | None
+) -> None:
+    profile = (full_name, username)
+    if _club_user_profiles.get(user_id) == profile:
+        _club_user_profiles.move_to_end(user_id)
+        return
+    db_upsert_club_user(user_id, full_name, username)
+    _club_user_profiles[user_id] = profile
+    _club_user_profiles.move_to_end(user_id)
+    while len(_club_user_profiles) > MEMBERSHIP_CACHE_MAX:
+        _club_user_profiles.popitem(last=False)
+
+
+def _record_non_admin_activity(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Persist a throttled, non-executable deployment-idle timestamp."""
+    global _last_activity_write
+
+    now = datetime.now(UTC)
+    if (
+        _last_activity_write is not None
+        and (now - _last_activity_write).total_seconds()
+        < ACTIVITY_WRITE_INTERVAL_SECONDS
+    ):
+        return
+
+    ctx.bot_data["last_non_admin_activity"] = now
+    activity_path = Path(config.ACTIVITY_PATH)
+    tmp_path: Path | None = None
+    try:
+        activity_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{activity_path.name}.",
+            suffix=".tmp",
+            dir=activity_path.parent,
+            text=True,
         )
-    if isinstance(exc, BadRequest):
-        return any(
-            needle in msg
-            for needle in (
-                "chat not found",
-                "chat_id_invalid",
-                "peer_id_invalid",
-                "group chat was deactivated",
-                "supergroup chat was deactivated",
-            )
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"last_non_admin_activity": now.isoformat()}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, activity_path)
+        _last_activity_write = now
+    except OSError as exc:
+        logger.warning(
+            "Could not persist activity timestamp to %s: %s", activity_path, exc
         )
-    return any(
-        needle in msg
-        for needle in (
-            "chat not found",
-            "chat_id_invalid",
-            "peer_id_invalid",
-        )
-    )
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -67,28 +105,26 @@ async def _check_membership(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> b
     if cached is not None:
         allowed, checked_at = cached
         if (datetime.now() - checked_at).total_seconds() < MEMBERSHIP_CACHE_TTL:
+            _membership_cache.move_to_end(user_id)
             return allowed
         _membership_cache_evict(user_id)
 
     try:
         member = await ctx.bot.get_chat_member(config.ALLOWED_CHAT_ID, user_id)
-        allowed = member.status in ("member", "administrator", "creator", "restricted")
-        _membership_cache[user_id] = (allowed, datetime.now())
+        allowed = member.status in ("member", "administrator", "creator") or (
+            member.status == "restricted"
+            and getattr(member, "is_member", False) is True
+        )
+        _cache_membership(user_id, allowed, datetime.now())
         return allowed
     except Exception as e:
-        # Don't cache failures — a transient API error shouldn't lock a real
-        # member out for the whole TTL.
-        logger.warning(f"Membership check failed for user {user_id}: {e}")
-        if _membership_fail_open_on_api_error(e):
-            logger.error(
-                "Membership gate bypassed for user %s: bot cannot access "
-                "ALLOWED_CHAT_ID=%s (%s). Re-add the bot to that chat or fix "
-                "ALLOWED_CHAT_ID in .env.",
-                user_id,
-                config.ALLOWED_CHAT_ID,
-                e,
-            )
-            return True
+        # Keep failures uncached so a recovered API can admit the user immediately.
+        logger.error(
+            "Membership check failed closed for user %s in ALLOWED_CHAT_ID=%s: %s",
+            user_id,
+            config.ALLOWED_CHAT_ID,
+            e,
+        )
         return False
 
 
@@ -107,18 +143,16 @@ async def membership_gate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             _membership_cache_evict(m.id)
         return
 
-    user_id = update.effective_user.id if update.effective_user else None
-    if user_id and user_id not in config.ADMIN_IDS:
-        ctx.bot_data["last_non_admin_activity"] = datetime.now(UTC)
-
-    if user_id and update.effective_user:
-        db_upsert_club_user(
-            user_id,
-            update.effective_user.full_name or "",
-            update.effective_user.username,
-        )
-
     if await _check_membership(update, ctx):
+        user_id = update.effective_user.id if update.effective_user else None
+        if user_id and user_id not in config.ADMIN_IDS:
+            _record_non_admin_activity(ctx)
+        if user_id and update.effective_user:
+            _upsert_club_user_if_changed(
+                user_id,
+                update.effective_user.full_name or "",
+                update.effective_user.username,
+            )
         return
     blocked_uid = update.effective_user.id if update.effective_user else None
     logger.info(
@@ -184,4 +218,3 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         # Never let the error handler itself raise — that loses the original error.
         logger.warning(f"Could not deliver error notice to user: {e}")
-

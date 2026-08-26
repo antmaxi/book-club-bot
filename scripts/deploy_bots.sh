@@ -6,12 +6,10 @@
 # recently, confirm with the operator, then stop the containers, git pull, and
 # bring them back up rebuilt.
 #
-# The idle check reads ctx.bot_data["last_non_admin_activity"], which
-# bookclub_bot.py's membership_gate() stamps on every update from a
-# non-admin user (regardless of ALLOWED_CHAT_ID). Admin activity — e.g. the
-# operator poking the bot to test the deploy — never counts as "in use", so
-# running this script yourself doesn't block itself on the next run. See
-# scripts/check_bot_idle.py for how the value is read.
+# The idle check reads data/last_activity.json, which membership_gate() updates
+# at most every 30 seconds for non-admin activity. Admin activity — e.g. the
+# operator testing a deploy — never counts as "in use", so running this script
+# does not block itself on the next run.
 #
 # Usage:
 #   ./deploy_bots.sh                    Interactive: prompt for every repo (decisions first, then parallel deploy)
@@ -143,10 +141,18 @@ print_repo_status() {
         return 1
     fi
 
-    local persistence_file="$repo/data/bot_persistence"
-    local status_line
+    local persistence_file="$repo/data/last_activity.json"
+    local status_line checker_rc
     status_line="$(python3 "$IDLE_CHECKER" "$persistence_file" "$IDLE_THRESHOLD_MINUTES")"
+    checker_rc=$?
     REPO_STATUS_WORD="${status_line%% *}"
+    case "${checker_rc}:${REPO_STATUS_WORD}" in
+        0:IDLE|1:ACTIVE|2:UNKNOWN) ;;
+        *)
+            status_line="UNKNOWN (idle checker returned inconsistent status)"
+            REPO_STATUS_WORD="UNKNOWN"
+            ;;
+    esac
 
     local running
     running="$(cd "$repo" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
@@ -198,6 +204,16 @@ decide_deploy() {
 deploy_repo() {
     local repo="$1"
     local name; name="$(basename "$repo")"
+
+    # Compose runs the bot as uid/gid 10001. Prepare only the two bind-mounted
+    # application directories.
+    mkdir -p -- "$repo/data" "$repo/logs"
+    if ! chown -R --no-dereference 10001:10001 -- "$repo/data" "$repo/logs" \
+        || ! chmod 700 -- "$repo/data" "$repo/logs"; then
+        log "[$name] FAILED — could not prepare non-root data/log permissions"
+        echo "failed|$name (permission preparation failed)" >"$DEPLOY_RESULT_DIR/$name"
+        return
+    fi
 
     log "[$name] Stopping containers..."
     if ! (cd "$repo" && docker compose stop) >>"$LOG_FILE" 2>&1; then

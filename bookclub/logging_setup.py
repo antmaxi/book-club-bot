@@ -8,8 +8,8 @@ from collections import deque
 
 from telegram.ext import Application
 
-from bookclub.config import ERROR_ALERTS, INSTANCE_NAME, LOG_FILE
 import bookclub.config as config
+from bookclub.config import LOG_FILE
 
 _log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -134,4 +134,3 @@ async def _drain_alert_queue(app: Application) -> None:
             # Reported via the ".alert" child so this failure is not itself
             # turned into an alert (which could not be delivered either).
             _alert_logger.warning(f"Could not deliver error alert: {e}")
-

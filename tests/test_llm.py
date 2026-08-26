@@ -15,6 +15,12 @@ from bookclub import llm
 
 
 class TestExtractJson(unittest.TestCase):
+    def test_log_redaction_removes_provider_and_bearer_secrets(self):
+        text = "sk-secret Authorization: Bearer crsr_token"
+        redacted = llm.redact_llm_secrets(text)
+        self.assertNotIn("sk-secret", redacted)
+        self.assertNotIn("crsr_token", redacted)
+
     def test_plain_object(self):
         self.assertEqual(llm.extract_json_object('{"author": "A"}'), {"author": "A"})
 
@@ -385,6 +391,30 @@ class TestApplySuggestions(unittest.TestCase):
 
 
 class TestResolveLlmSettings(unittest.TestCase):
+    def test_cursor_key_is_not_reused_as_provider_credential(self):
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_API_KEY": "",
+                "XAI_API_KEY": "",
+                "OPENAI_API_KEY": "",
+                "CURSOR_API_KEY": "crsr_should_not_leave_the_ide",
+            },
+            clear=False,
+        ):
+            self.assertEqual(cfg.resolve_llm_api_key(), "")
+
+    def test_rejects_insecure_remote_llm_base(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"LLM_API_BASE": "http://example.com/v1"},
+                clear=False,
+            ),
+            self.assertRaises(ValueError),
+        ):
+            cfg.resolve_llm_api_base("sk-test")
+
     def test_xai_key_infers_base_and_model(self):
         with patch.dict(
             os.environ,
@@ -446,7 +476,14 @@ class TestResolveLlmSettings(unittest.TestCase):
         )
         self.assertIn("401", text)
         self.assertNotIn("abc123SECRET", text)
-        self.assertIn("xai-…", text)
+        self.assertIn("[redacted]", text)
+
+    def test_ui_llm_error_redacts_exact_configured_key_and_bearer_token(self):
+        secret = "provider-secret-with-unrecognized-prefix"
+        with patch.object(cfg, "LLM_API_KEY", secret):
+            text = llm.ui_llm_error(f"Authorization: Bearer opaque-token key={secret}")
+        self.assertNotIn(secret, text)
+        self.assertNotIn("opaque-token", text)
 
 
 class TestLlmErrorKinds(unittest.TestCase):
