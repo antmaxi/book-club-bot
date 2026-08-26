@@ -2,6 +2,9 @@ services:
   bot:
     build: .
     init: true
+    # Bind-mounted ./data and ./logs are owned by the host user. Override
+    # BOT_UID/BOT_GID if that login is not 1000:1000.
+    user: "${BOT_UID:-1000}:${BOT_GID:-1000}"
     env_file:
       - .env
     environment:

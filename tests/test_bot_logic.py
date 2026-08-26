@@ -81,6 +81,26 @@ class TestDatabase(unittest.TestCase):
         """Calling init_db() twice should not raise."""
         bot.init_db()
 
+    @unittest.skipIf(os.geteuid() == 0, "root can write unwritable directories")
+    def test_init_db_exits_when_data_directory_is_not_writable(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = os.path.join(tmp, "data")
+            os.mkdir(db_dir)
+            os.chmod(db_dir, 0o555)
+            previous = cfg.DB_PATH
+            try:
+                cfg.DB_PATH = os.path.join(db_dir, "bookclub.db")
+                bot.DB_PATH = cfg.DB_PATH
+                with self.assertRaises(SystemExit) as caught:
+                    bot.init_db()
+                self.assertIn("Cannot write the database", str(caught.exception))
+            finally:
+                os.chmod(db_dir, 0o755)
+                cfg.DB_PATH = previous
+                bot.DB_PATH = previous
+
     # -- Add / Get book --
 
     def test_db_add_get_book(self):

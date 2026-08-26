@@ -161,9 +161,15 @@ To move one entry between instances (e.g. after spinning up a new bot or merging
 3. **Run the bot using Docker:**
    ```bash
    mkdir -p data logs
-   sudo chown -R 10001:10001 data logs
-   chmod 700 data logs
-   docker compose up -d
+   docker compose up -d --build
+   ```
+
+   Compose runs the container as uid `1000` by default so host-owned `data/` and `logs/` stay writable. If your login is not `1000:1000`, or those folders were previously chowned to `10001`, fix ownership once:
+
+   ```bash
+   export BOT_UID="$(id -u)" BOT_GID="$(id -g)"
+   sudo chown -R "$BOT_UID:$BOT_GID" data logs
+   docker compose up -d --build
    ```
 
 (if not yet installed before, install docker as in https://docs.docker.com/engine/install/ubuntu/)

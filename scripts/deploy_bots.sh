@@ -23,6 +23,8 @@
 set -uo pipefail
 
 IDLE_THRESHOLD_MINUTES=10
+BOT_UID="$(id -u)"
+BOT_GID="$(id -g)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IDLE_CHECKER="${SCRIPT_DIR}/check_bot_idle.py"
 LOG_FILE="${SCRIPT_DIR}/deploy_bots.log"
@@ -48,6 +50,12 @@ done
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG_FILE"
+}
+
+compose() {
+    local repo="$1"
+    shift
+    (cd "$repo" && BOT_UID="$BOT_UID" BOT_GID="$BOT_GID" docker compose "$@")
 }
 
 confirm() {
@@ -155,7 +163,7 @@ print_repo_status() {
     esac
 
     local running
-    running="$(cd "$repo" && docker compose ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
+    running="$(compose "$repo" ps --status running -q 2>/dev/null | wc -l | tr -d ' ')"
 
     local branch head_info
     branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
@@ -205,18 +213,18 @@ deploy_repo() {
     local repo="$1"
     local name; name="$(basename "$repo")"
 
-    # Compose runs the bot as uid/gid 10001. Prepare only the two bind-mounted
-    # application directories.
+    # Compose runs as the operator uid/gid so host bind mounts stay writable.
     mkdir -p -- "$repo/data" "$repo/logs"
-    if ! chown -R --no-dereference 10001:10001 -- "$repo/data" "$repo/logs" \
+    if ! chown -R --no-dereference "$BOT_UID:$BOT_GID" -- "$repo/data" "$repo/logs" \
         || ! chmod 700 -- "$repo/data" "$repo/logs"; then
-        log "[$name] FAILED — could not prepare non-root data/log permissions"
+        log "[$name] FAILED — could not make data/logs writable by uid $BOT_UID"
+        log "[$name] Try: sudo chown -R $BOT_UID:$BOT_GID -- $repo/data $repo/logs"
         echo "failed|$name (permission preparation failed)" >"$DEPLOY_RESULT_DIR/$name"
         return
     fi
 
     log "[$name] Stopping containers..."
-    if ! (cd "$repo" && docker compose stop) >>"$LOG_FILE" 2>&1; then
+    if ! compose "$repo" stop >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — docker compose stop failed"
         echo "failed|$name (stop failed)" >"$DEPLOY_RESULT_DIR/$name"
         return
@@ -225,13 +233,13 @@ deploy_repo() {
     log "[$name] Pulling latest code..."
     if ! git -C "$repo" pull >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — git pull failed, restarting previous containers"
-        (cd "$repo" && docker compose up -d) >>"$LOG_FILE" 2>&1
+        compose "$repo" up -d >>"$LOG_FILE" 2>&1
         echo "failed|$name (git pull failed)" >"$DEPLOY_RESULT_DIR/$name"
         return
     fi
 
     log "[$name] Rebuilding and starting containers..."
-    if ! (cd "$repo" && docker compose up -d --build) >>"$LOG_FILE" 2>&1; then
+    if ! compose "$repo" up -d --build >>"$LOG_FILE" 2>&1; then
         log "[$name] FAILED — docker compose up --build failed; bot may be DOWN, check manually"
         echo "failed|$name (rebuild failed — check manually)" >"$DEPLOY_RESULT_DIR/$name"
         return

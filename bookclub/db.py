@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -16,9 +17,30 @@ _CREATION_YEAR_MIN = 1000
 _CREATION_YEAR_MAX = 2100
 
 
+def _ensure_db_writable() -> None:
+    """Fail fast when the database directory is not writable (common in Docker)."""
+    db_path = os.path.abspath(config.DB_PATH)
+    parent = os.path.dirname(db_path) or "."
+    probe = os.path.join(parent, ".db_write_test")
+    try:
+        os.makedirs(parent, exist_ok=True)
+        with open(probe, "a", encoding="utf-8"):
+            pass
+        os.remove(probe)
+    except OSError as exc:
+        raise SystemExit(
+            f"Cannot write the database at {db_path}: {exc}\n"
+            "The data directory must be writable by the process user. "
+            "For Docker bind mounts, own the host folders:\n"
+            '  export BOT_UID="$(id -u)" BOT_GID="$(id -g)"\n'
+            '  sudo chown -R "$BOT_UID:$BOT_GID" data logs'
+        ) from exc
+
+
 def init_db() -> None:
     global _votes_use_attendance_cache
     _votes_use_attendance_cache = None
+    _ensure_db_writable()
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")

@@ -3,6 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+export BOT_UID="$(id -u)"
+export BOT_GID="$(id -g)"
 docker compose run --rm \
   -e PYTHONPATH=/app \
   -w /tmp \
