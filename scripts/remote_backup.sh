@@ -10,8 +10,8 @@
 #   ./remote_backup.sh [bot-name]
 #
 # Example:
-#   ./remote_backup.sh my-book-club
-#   (This will look for the bot in /root/my-book-club on the remote server)
+#   ./remote_backup.sh club-voting-bot
+#   (This will look for the bot in /root/club-voting-bot on the remote server)
 
 # --- Configuration ---
 # Details for the server where the bot is running

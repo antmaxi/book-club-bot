@@ -4,7 +4,7 @@
   <img src="docs/img/club-voting-bot.jpg" alt="Club Voting Bot" width="420">
 </p>
 
-A Telegram bot (English / Russian / German) to help book clubs manage their reading lists, vote on upcoming books, and track their reading history.
+A Telegram bot (English / Russian / German) for club voting: members add entries, vote on what to pick next, and track the archive. Default is a book bot; set `CLUB_ENTITY=film` for a film bot.
 
 How the code is structured: [Architecture](docs/architecture.md).
 
@@ -100,7 +100,7 @@ When recording or viewing attendance, the bot shows each person’s Telegram dis
    # ENTRY_FIELDS="author,pages,fiction,review,original_language,creation_year,description"
    ASK_LANGUAGE_LEVEL="1"     # Optional: also ask CEFR A1–C2 (adds language_levels to ENTRY_FIELDS)
    DISPLAY_UTC_OFFSET_HOURS="2"  # Optional: UTC offset for displayed times (default: 2 → UTC+2)
-   INSTANCE_NAME="book-club"  # Optional: Label prepended to error alerts (see "Logs & error alerts")
+   INSTANCE_NAME="book"       # Optional: Label prepended to error alerts (see "Logs & error alerts")
    ERROR_ALERTS="1"           # Optional: Forward ERROR-level logs to the main admin (default: on)
    # Optional: LLM for /add field suggestions (after the title).
    # OpenAI-compatible Chat Completions (OpenAI, xAI, OpenRouter, Groq, …).
@@ -146,7 +146,7 @@ Example: `ENTRY_FIELDS=author,description` asks only title, author, and descript
 
 Set `ASK_LANGUAGE_LEVEL=1` (or include `language_levels` in `ENTRY_FIELDS`) to prompt members to pick one or more CEFR levels (A1 through C2) via inline buttons when adding or editing an entry.
 
-You can run separate bot instances (different tokens, different `.env` files) for a book club and a film club on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
+You can run separate bot instances (different tokens, different `.env` files) for a book bot and a film bot on the same codebase. Additional entity kinds (e.g. podcasts, TV series, board games) can be added later by extending the overlay tables in `bookclub/i18n.py`.
 
 ### `/add` AI suggestions
 

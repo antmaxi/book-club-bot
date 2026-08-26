@@ -59,7 +59,7 @@ ENTITY_LEX: dict[str, dict[str, dict[str, str]]] = {
             "Sg": "Книга",
             "Pl": "Книги",
             "club_name": "Книжный клуб",
-            "bot_name": "Книжный клуб-бот",
+            "bot_name": "Бот книжного клуба",
             "card_icon": "📖",
             "subtitle_icon": "✍️",
             "list_icon": "📚",

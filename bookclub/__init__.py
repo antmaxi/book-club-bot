@@ -1,4 +1,4 @@
-"""Book club Telegram bot — package root (re-exported by bookclub_bot)."""
+"""Club Voting Bot — package root (re-exported by bookclub_bot)."""
 
 # This module intentionally defines the compatibility facade through imports.
 # ruff: noqa: F401

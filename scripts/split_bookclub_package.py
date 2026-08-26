@@ -498,7 +498,7 @@ from bookclub.notifications import recover_pending_new_book_notifications
 
 (HANDLERS / "__init__.py").write_text("", encoding="utf-8")
 (PKG / "__init__.py").write_text(
-    '''"""Book club Telegram bot — package root (re-exported by bookclub_bot)."""
+    '''"""Club Voting Bot — package root (re-exported by bookclub_bot)."""
 from bookclub.config import *  # noqa: F403
 from bookclub.db import *  # noqa: F403
 from bookclub.domain import *  # noqa: F403

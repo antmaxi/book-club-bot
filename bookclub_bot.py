@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Book Club Telegram Bot — EN/RU/DE
+Club Voting Bot — EN/RU/DE
 =========================================
 Fields per book:
   - title (always required)
