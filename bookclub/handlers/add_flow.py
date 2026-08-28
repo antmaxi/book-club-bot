@@ -43,6 +43,7 @@ from bookclub.ui import (
 
 _TEXT_EDIT_STATES = frozenset(
     {
+        ADDING_TITLE,
         ADDING_AUTHOR,
         ADDING_PAGES,
         ADDING_REVIEW,
@@ -302,6 +303,9 @@ def resume_add_state(saved: object) -> int:
 
 
 def raw_add_value(nb: dict, state: int) -> str | None:
+    if state == ADDING_TITLE:
+        v = nb.get("title")
+        return str(v) if v else None
     if state == ADDING_AUTHOR:
         v = nb.get("author")
         return str(v) if v else None
@@ -327,13 +331,11 @@ def bot_supports_inline(ctx: ContextTypes.DEFAULT_TYPE) -> bool:
     return getattr(getattr(ctx, "bot", None), "supports_inline_queries", False) is True
 
 
-def add_edit_value(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) -> str | None:
+def add_edit_value(state: int, nb: dict) -> str | None:
+    """Current text for Edit: own saved answer or AI suggestion."""
     if state not in _TEXT_EDIT_STATES:
         return None
-    if not _is_llm_suggestion(ctx, state):
-        return None
-    value = raw_add_value(nb, state)
-    return value or None
+    return raw_add_value(nb, state) or None
 
 
 def typed_add_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
@@ -356,7 +358,7 @@ def markup_for_add(
         get_lang(ctx),
         state,
         nb,
-        edit_value=add_edit_value(ctx, state, nb),
+        edit_value=add_edit_value(state, nb),
         use_inline=bot_supports_inline(ctx),
         show_save=bool(nb.get("title")),
         show_title_back=bool(ctx.user_data.get("add_from_start")),
@@ -384,12 +386,12 @@ def build_add_prompt_text(ctx: ContextTypes.DEFAULT_TYPE, state: int, nb: dict) 
     if current is not None:
         value_key = "add_suggested_value" if suggested else "add_current_value"
         parts.append(tr(ctx, value_key, value=h(current)))
-    if current is not None and state == ADDING_TITLE:
-        parts.append(tr(ctx, "add_forward_hint"))
-    elif suggested:
-        parts.append(tr(ctx, "add_suggested_hint"))
-    elif current is not None:
-        parts.append(tr(ctx, "add_nav_hint"))
+        if suggested:
+            parts.append(tr(ctx, "add_suggested_hint"))
+        elif state == ADDING_TITLE:
+            parts.append(tr(ctx, "add_forward_hint"))
+        else:
+            parts.append(tr(ctx, "add_nav_hint"))
     elif state != ADDING_TITLE:
         parts.append(tr(ctx, "add_back_hint"))
     return "\n".join(parts)
@@ -412,6 +414,8 @@ def add_prompt_markup(
             lang,
             show_back=show_title_back,
             show_forward=can_forward,
+            edit_value=edit_value,
+            use_inline=use_inline,
             show_save=show_save,
         )
     if state == ADDING_FICTION:
@@ -584,7 +588,7 @@ async def add_go_edit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not isinstance(current, int):
         return ADDING_TITLE
     nb = ctx.user_data.setdefault("new_book", {})
-    value = add_edit_value(ctx, current, nb)
+    value = add_edit_value(current, nb)
     if not value:
         return await _nav_alert(update, ctx, "add_edit_need_value", current)
     query = update.callback_query

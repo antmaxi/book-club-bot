@@ -284,23 +284,27 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_back_btn": "⬅️ Back",
         "add_forward_btn": "➡️ Forward",
         "add_edit_btn": "✏️ Edit",
-        "add_edit_placeholder": "Edit the suggestion",
-        "add_edit_prompt": (
-            "✏️ Edit the suggestion and send it:\n\n<pre>{value}</pre>"
-        ),
-        "add_edit_need_value": "There's no suggestion to edit on this step.",
+        "add_edit_placeholder": "Edit the current value",
+        "add_edit_prompt": ("✏️ Edit the value and send it:\n\n<pre>{value}</pre>"),
+        "add_edit_need_value": "There's no value to edit on this step.",
         "add_edit_inline_hint": "Tap to send the edited value",
         "add_back_at_start": "You're already at the first step.",
         "add_forward_at_end": "This is the last step — send a description or /skip.",
         "add_forward_need_value": "This step has no saved answer yet. Fill it in first.",
         "add_back_hint": "<i>Tap Back or send /back to change a previous answer.</i>",
-        "add_forward_hint": "<i>Tap Forward or send /forward to keep this answer.</i>",
-        "add_nav_hint": "<i>Tap Forward to keep this answer, or Back to change a previous one.</i>",
+        "add_forward_hint": (
+            "<i>Tap Forward or send /forward to keep this answer, or send a new "
+            "value to replace it. Edit puts it in the message field.</i>"
+        ),
+        "add_nav_hint": (
+            "<i>Tap Forward to keep this answer, or send a new value to replace "
+            "it. Edit puts it in the message field.</i>"
+        ),
         "add_current_value": "Current: <i>{value}</i>",
         "add_suggested_value": "Suggested: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Tap Forward to keep this suggestion, or Edit to put it in the "
-            "message field and change it.</i>"
+            "<i>Tap Forward to keep this suggestion, or send a new value to "
+            "replace it. Edit puts it in the message field.</i>"
         ),
         "ask_author": "{subtitle_icon} Who is the <b>{author}</b>?",
         "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
@@ -575,21 +579,29 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_back_btn": "⬅️ Назад",
         "add_forward_btn": "➡️ Вперёд",
         "add_edit_btn": "✏️ Изменить",
-        "add_edit_placeholder": "Измените подсказку",
-        "add_edit_prompt": ("✏️ Измените подсказку и отправьте:\n\n<pre>{value}</pre>"),
-        "add_edit_need_value": "На этом шаге нет подсказки для правки.",
+        "add_edit_placeholder": "Измените значение",
+        "add_edit_prompt": ("✏️ Измените значение и отправьте:\n\n<pre>{value}</pre>"),
+        "add_edit_need_value": "На этом шаге нет значения для правки.",
         "add_edit_inline_hint": "Нажмите, чтобы отправить изменённое значение",
         "add_back_at_start": "Вы уже на первом шаге.",
         "add_forward_at_end": "Это последний шаг — отправьте описание или /skip.",
         "add_forward_need_value": "На этом шаге ещё нет сохранённого ответа. Сначала заполните его.",
         "add_back_hint": "<i>Нажмите «Назад» или отправьте /back, чтобы изменить предыдущий ответ.</i>",
-        "add_forward_hint": "<i>Нажмите «Вперёд» или отправьте /forward, чтобы оставить этот ответ.</i>",
-        "add_nav_hint": "<i>Нажмите «Вперёд», чтобы оставить этот ответ, или «Назад», чтобы изменить предыдущий.</i>",
+        "add_forward_hint": (
+            "<i>Нажмите «Вперёд» или отправьте /forward, чтобы оставить этот ответ, "
+            "или отправьте новое значение, чтобы заменить его. «Изменить» вставит "
+            "его в поле ввода.</i>"
+        ),
+        "add_nav_hint": (
+            "<i>Нажмите «Вперёд», чтобы оставить этот ответ, или отправьте новое "
+            "значение, чтобы заменить его. «Изменить» вставит его в поле ввода.</i>"
+        ),
         "add_current_value": "Сейчас: <i>{value}</i>",
         "add_suggested_value": "Предложение: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Нажмите «Вперёд», чтобы оставить это предложение, или «Изменить», "
-            "чтобы вставить его в поле ввода и поправить.</i>"
+            "<i>Нажмите «Вперёд», чтобы оставить это предложение, или отправьте "
+            "новое значение, чтобы заменить его. «Изменить» вставит его в поле "
+            "ввода.</i>"
         ),
         "ask_author": "{subtitle_icon} Кто <b>{author}</b>?",
         "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
@@ -866,23 +878,32 @@ T: dict[str, dict[str, TranslationValue]] = {
         "add_back_btn": "⬅️ Zurück",
         "add_forward_btn": "➡️ Weiter",
         "add_edit_btn": "✏️ Bearbeiten",
-        "add_edit_placeholder": "Vorschlag bearbeiten",
+        "add_edit_placeholder": "Aktuellen Wert bearbeiten",
         "add_edit_prompt": (
-            "✏️ Bearbeite den Vorschlag und sende ihn:\n\n<pre>{value}</pre>"
+            "✏️ Bearbeite den Wert und sende ihn:\n\n<pre>{value}</pre>"
         ),
-        "add_edit_need_value": "Auf diesem Schritt gibt es keinen Vorschlag zum Bearbeiten.",
+        "add_edit_need_value": "Auf diesem Schritt gibt es keinen Wert zum Bearbeiten.",
         "add_edit_inline_hint": "Tippen, um den geänderten Wert zu senden",
         "add_back_at_start": "Du bist bereits beim ersten Schritt.",
         "add_forward_at_end": "Das ist der letzte Schritt — sende eine Beschreibung oder /skip.",
         "add_forward_need_value": "Dieser Schritt hat noch keine gespeicherte Antwort. Bitte zuerst ausfüllen.",
         "add_back_hint": "<i>Tippe auf Zurück oder sende /back, um eine vorherige Antwort zu ändern.</i>",
-        "add_forward_hint": "<i>Tippe auf Weiter oder sende /forward, um diese Antwort zu behalten.</i>",
-        "add_nav_hint": "<i>Tippe auf Weiter, um diese Antwort zu behalten, oder auf Zurück, um eine vorherige zu ändern.</i>",
+        "add_forward_hint": (
+            "<i>Tippe auf Weiter oder sende /forward, um diese Antwort zu behalten, "
+            "oder sende einen neuen Wert, um sie zu ersetzen. Bearbeiten legt ihn "
+            "ins Eingabefeld.</i>"
+        ),
+        "add_nav_hint": (
+            "<i>Tippe auf Weiter, um diese Antwort zu behalten, oder sende einen "
+            "neuen Wert, um sie zu ersetzen. Bearbeiten legt ihn ins "
+            "Eingabefeld.</i>"
+        ),
         "add_current_value": "Aktuell: <i>{value}</i>",
         "add_suggested_value": "Vorschlag: <i>{value}</i>",
         "add_suggested_hint": (
-            "<i>Tippe auf Weiter, um diesen Vorschlag zu behalten, oder auf "
-            "Bearbeiten, um ihn ins Eingabefeld zu legen und zu ändern.</i>"
+            "<i>Tippe auf Weiter, um diesen Vorschlag zu behalten, oder sende "
+            "einen neuen Wert, um ihn zu ersetzen. Bearbeiten legt ihn ins "
+            "Eingabefeld.</i>"
         ),
         "ask_author": "{subtitle_icon} Wer ist der <b>{author}</b>?",
         "ask_pages": "📄 Wie viele <b>Seiten</b> hat es? (Zahl eingeben)",

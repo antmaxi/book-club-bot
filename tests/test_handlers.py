@@ -818,6 +818,20 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertEqual(self.ctx.user_data["new_book"]["author"], "Jane Austen")
         self.assertEqual(state, bot.ADDING_PAGES)
 
+    async def test_add_author_typed_text_replaces_saved_value(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Old Author"}
+        self.message.text = "Jane Austen"
+        state = await bot.add_author(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["author"], "Jane Austen")
+        self.assertEqual(state, bot.ADDING_PAGES)
+
+    async def test_add_title_typed_text_replaces_saved_value(self):
+        self.ctx.user_data["new_book"] = {"title": "Old Title"}
+        self.message.text = "New Title"
+        state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(self.ctx.user_data["new_book"]["title"], "New Title")
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+
     async def test_add_pages_valid(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "A"}
         self.message.text = "320"
@@ -978,6 +992,15 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIn("add_forward", data)
         self.assertIn("add_save", data)
         self.assertIn(bot.CONV_CANCEL, data)
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("send a new value", text)
+        edit = next(
+            btn
+            for row in markup.inline_keyboard
+            for btn in row
+            if btn.copy_text is not None
+        )
+        self.assertEqual(edit.copy_text.text, "Author Name")
 
     async def test_add_prompt_shows_suggested_value_for_llm_fields(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo"}
@@ -986,6 +1009,7 @@ class TestAddConversation(BotHandlerTestCase):
         text = self.message.reply_text.call_args[0][0]
         self.assertIn("Suggested", text)
         self.assertIn("Leo", text)
+        self.assertIn("send a new value", text)
         self.assertIn("Edit", text)
 
     async def test_add_prompt_edit_copies_short_suggestion(self):
@@ -1024,8 +1048,8 @@ class TestAddConversation(BotHandlerTestCase):
         markup = self.message.reply_text.call_args[1]["reply_markup"]
         self.assertIn("add_edit", self._keyboard_callback_data(markup))
 
-    async def test_add_prompt_hides_edit_without_suggestion(self):
-        self.ctx.user_data["new_book"] = {"title": "T", "author": "Author Name"}
+    async def test_add_prompt_hides_edit_without_value(self):
+        self.ctx.user_data["new_book"] = {"title": "T"}
         await send_add_prompt(self.update, self.ctx, bot.ADDING_AUTHOR)
         markup = self.message.reply_text.call_args[1]["reply_markup"]
         self.assertFalse(
@@ -1037,6 +1061,20 @@ class TestAddConversation(BotHandlerTestCase):
                 for btn in row
             )
         )
+
+    async def test_add_prompt_title_edit_copies_saved_title(self):
+        self.ctx.user_data["new_book"] = {"title": "War and Peace"}
+        await send_add_prompt(self.update, self.ctx, bot.ADDING_TITLE)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        edit = next(
+            btn
+            for row in markup.inline_keyboard
+            for btn in row
+            if btn.copy_text is not None
+        )
+        self.assertEqual(edit.copy_text.text, "War and Peace")
+        text = self.message.reply_text.call_args[0][0]
+        self.assertIn("send a new", text)
 
     async def test_add_go_edit_sends_suggestion_for_reply(self):
         self.ctx.user_data["new_book"] = {"title": "T", "author": "Leo Tolstoy"}
@@ -1052,6 +1090,16 @@ class TestAddConversation(BotHandlerTestCase):
         self.assertIsInstance(
             q.message.reply_text.call_args[1]["reply_markup"], ForceReply
         )
+
+    async def test_add_go_edit_own_saved_value(self):
+        self.ctx.user_data["new_book"] = {"title": "T", "author": "Jane Austen"}
+        self.ctx.user_data["add_state"] = bot.ADDING_AUTHOR
+        q = self._callback_query("add_edit")
+        q.message = AsyncMock()
+        state = await add_go_edit(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_AUTHOR)
+        text = q.message.reply_text.call_args[0][0]
+        self.assertIn("Jane Austen", text)
 
     async def test_add_go_edit_without_suggestion_stays(self):
         self.ctx.user_data["new_book"] = {"title": "T"}
