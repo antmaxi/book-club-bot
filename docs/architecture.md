@@ -152,7 +152,7 @@ SQLite path: `DB_PATH` (default `bookclub.db`; in Docker `/app/data/bookclub.db`
 ```mermaid
 erDiagram
   books ||--o{ votes : "book_id"
-  books ||--o{ meetings : "book_id"
+  books ||--o| meetings : "book_id"
   meetings ||--o{ meeting_attendees : "meeting_id"
   club_users ||--o{ meeting_attendees : "user_id"
   club_users ||--o{ votes : "user_id"
@@ -194,7 +194,7 @@ erDiagram
   }
   meetings {
     int id PK
-    int book_id
+    int book_id UK
     text meeting_date
     int created_by
   }
@@ -208,12 +208,12 @@ Notes:
 
 - Vote `score` is `-1` / `0` / `1` (don't want / don't care / want). Rankings use the **sum**.
 - Admin flags (`post_new_books_to_chat`, `votes_use_attendance`) are rows in `user_settings` with `user_id = 0`.
-- Attendance surplus is an in-memory cache rebuilt at startup, when a meeting is recorded, and when the club calendar date changes. Future-dated meetings are ignored until that date.
+- Attendance surplus is an in-memory cache rebuilt at startup, when a meeting is recorded or deleted, and when the club calendar date changes. Future-dated meetings are ignored until that date. Each book has at most one meeting (`UNIQUE` on `meetings.book_id`); saving attendance again replaces the attendee list.
 - Pickle persistence holds conversation state and `bot_data["last_non_admin_activity"]` (used by `scripts/deploy_bots.sh` idle checks). It is not a second source of book data.
 
 ## Notable flows
 
-**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → review link (when enabled) → remaining `ENTRY_FIELDS`. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI looks up a real catalog URL (Wikipedia / Google Books / Open Library, then a fetched LLM candidate) and, after the user confirms it, reads the other fields — including page count / runtime — from that page. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
+**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → review link (when enabled) → remaining `ENTRY_FIELDS` → a full-entry preview where the user can go back to edit a field or confirm the add. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI looks up a real catalog URL (Wikipedia / Google Books / Open Library, then a fetched LLM candidate) and, after the user confirms it, reads the other fields — including page count / runtime — from that page. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
 
 **Voting:** inline buttons on cards (`vote_cast:`). Works in DM and in the group chat; the message is edited so everyone sees the new tally.
 

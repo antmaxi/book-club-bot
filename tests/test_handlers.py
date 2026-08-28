@@ -946,6 +946,10 @@ class TestAddConversation(BotHandlerTestCase):
         q = self._callback_query("add_forward")
         q.message = None
         state = await add_go_forward(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_CONFIRM)
+        self.assertEqual(bot.db_get_books(discussed=False), [])
+        self._callback_query("add_confirm")
+        state = await bot.add_confirm_cb(self.update, self.ctx)
         self.assertEqual(state, ConversationHandler.END)
         book = bot.db_get_books(discussed=False)[0]
         self.assertEqual(book["description"], "Kept description")
@@ -973,6 +977,12 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.text = "Title Only Book"
         self.ctx.job_queue = MagicMock()
         state = await bot.add_title(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_CONFIRM)
+        self.assertIn("new_book", self.ctx.user_data)
+        preview = self.message.reply_text.call_args[0][0]
+        self.assertIn("Title Only Book", preview)
+        self._callback_query("add_confirm")
+        state = await bot.add_confirm_cb(self.update, self.ctx)
         self.assertEqual(state, ConversationHandler.END)
         self.assertNotIn("new_book", self.ctx.user_data)
         reply = self.message.reply_text.call_args[0][0]
@@ -1181,6 +1191,9 @@ class TestAddConversation(BotHandlerTestCase):
         self.message.text = "Desc"
         self.ctx.job_queue = None
         await bot.add_description(self.update, self.ctx)
+        self.assertEqual(len(bot.db_list_add_drafts(uid)), 1)
+        self._callback_query("add_confirm")
+        await bot.add_confirm_cb(self.update, self.ctx)
         self.assertEqual(bot.db_list_add_drafts(uid), [])
 
     async def test_add_draft_delete_removes_row(self):
@@ -1401,8 +1414,20 @@ class TestAddConversation(BotHandlerTestCase):
 
         state = await bot.add_description(self.update, self.ctx)
 
+        self.assertEqual(state, bot.ADDING_CONFIRM)
+        self.ctx.job_queue.run_once.assert_not_called()
+        preview = self.message.reply_text.call_args[0][0]
+        self.assertIn("Review the entry", preview)
+        self.assertIn("Great book", preview)
+        markup = self.message.reply_text.call_args[1]["reply_markup"]
+        data = self._keyboard_callback_data(markup)
+        self.assertIn("add_confirm", data)
+        self.assertIn("add_back", data)
+
+        self._callback_query("add_confirm")
+        state = await bot.add_confirm_cb(self.update, self.ctx)
+
         self.assertEqual(state, ConversationHandler.END)
-        self.message.reply_text.assert_called_once()
         confirm = self.message.reply_text.call_args[0][0]
         self.assertIn("Book added", confirm)
         self.assertIn(bot.format_defaults("en")["minutes_phrase"], confirm)
@@ -1413,6 +1438,22 @@ class TestAddConversation(BotHandlerTestCase):
         book = bot.db_get_book(book_id)
         self.assertEqual(book["notify_adder_id"], self.update.effective_user.id)
         self.assertEqual(book["notify_sent"], 0)
+
+    async def test_add_back_from_confirm_returns_to_description(self):
+        self.ctx.user_data["new_book"] = {
+            "title": "T",
+            "author": "A",
+            "pages": 100,
+            "fiction": True,
+            "review_link": "http://x.com",
+            "description": "Kept",
+        }
+        self.ctx.user_data["add_state"] = bot.ADDING_CONFIRM
+        q = self._callback_query("add_back")
+        state = await bot.add_go_back(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_DESCRIPTION)
+        text = q.edit_message_text.call_args[0][0]
+        self.assertIn("Kept", text)
 
     async def test_add_description_no_job_queue(self):
         self.ctx.user_data["new_book"] = {
@@ -1426,6 +1467,9 @@ class TestAddConversation(BotHandlerTestCase):
         self.ctx.job_queue = None
 
         state = await bot.add_description(self.update, self.ctx)
+        self.assertEqual(state, bot.ADDING_CONFIRM)
+        self._callback_query("add_confirm")
+        state = await bot.add_confirm_cb(self.update, self.ctx)
 
         self.assertEqual(state, ConversationHandler.END)
         self.assertIn("Book added", self.message.reply_text.call_args[0][0])
@@ -1442,6 +1486,9 @@ class TestAddConversation(BotHandlerTestCase):
         self.ctx.job_queue = None
 
         await bot.add_description(self.update, self.ctx)
+        self.assertEqual(bot.db_get_books(discussed=False), [])
+        self._callback_query("add_confirm")
+        await bot.add_confirm_cb(self.update, self.ctx)
 
         # Book should be saved with empty description
         books = bot.db_get_books(discussed=False)
@@ -2319,10 +2366,14 @@ class TestAdminConsole(BotHandlerTestCase):
 
         q = self._callback_query(f"admin_meeting_view:{mid}")
         state = await bot.admin_meeting_view_cb(self.update, self.ctx)
-        self.assertEqual(state, ConversationHandler.END)
+        self.assertEqual(state, bot.ADMIN_MEETINGS_VIEW)
         body = q.edit_message_text.call_args[0][0]
         self.assertIn("Past Read", body)
         self.assertIn("Alice", body)
+        markup = q.edit_message_text.call_args[1]["reply_markup"]
+        data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+        self.assertIn(f"admin_meeting_view:edit:{mid}", data)
+        self.assertIn(f"admin_meeting_view:delete:{mid}", data)
 
     async def test_meeting_picker_shows_display_name_when_no_nick(self):
         bid = self._add_book("Discussed Book")
@@ -2403,6 +2454,69 @@ class TestAdminConsole(BotHandlerTestCase):
         texts = [c[0][0] for c in self.message.reply_text.call_args_list]
         self.assertTrue(any("No Nick User" in t for t in texts))
         self.assertFalse(any("55555" in t for t in texts))
+
+    async def test_admin_meeting_edit_keeps_existing_attendees(self):
+        bid = self._add_book("Discussed Book")
+        bot.db_mark_discussed(bid, "2026-03-01")
+        voter_id = 4242
+        extra = 4343
+        bot.db_upsert_club_user(voter_id, "Voter One", "voter1")
+        bot.db_upsert_club_user(extra, "Extra Person", "ex")
+        bot.db_cast_vote(voter_id, bid, 1)
+        bot.db_create_meeting(
+            bid, "2026-03-01", self.update.effective_user.id, [voter_id]
+        )
+
+        self._callback_query("admin:meeting_create")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self._callback_query(f"admin_meeting_book:{bid}")
+        state = await bot.admin_meeting_book_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
+        self.assertEqual(self.ctx.user_data["meeting_attendee_ids"], {voter_id})
+
+        self._callback_query(f"admin_meeting_att:toggle:{extra}:0")
+        await bot.admin_meeting_att_cb(self.update, self.ctx)
+        self._callback_query("admin_meeting_att:done")
+        state = await bot.admin_meeting_att_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        meetings = bot.db_list_meetings()
+        self.assertEqual(len(meetings), 1)
+        ids = sorted(
+            int(r["user_id"])
+            for r in bot.db_get_meeting_attendee_rows(meetings[0]["id"])
+        )
+        self.assertEqual(ids, [voter_id, extra])
+
+    async def test_admin_meeting_edit_from_view(self):
+        bid = self._add_book("Past Read")
+        bot.db_mark_discussed(bid, "2026-02-01")
+        uid = 7777
+        bot.db_upsert_club_user(uid, "Alice", "alice")
+        mid = bot.db_create_meeting(
+            bid, "2026-02-15", self.update.effective_user.id, [uid]
+        )
+        self._callback_query(f"admin_meeting_view:edit:{mid}")
+        state = await bot.admin_meeting_view_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETING_ATTENDEES)
+        self.assertEqual(self.ctx.user_data["meeting_attendee_ids"], {uid})
+
+    async def test_admin_meeting_delete_from_view(self):
+        bid = self._add_book("Past Read")
+        bot.db_mark_discussed(bid, "2026-02-01")
+        uid = 7777
+        bot.db_upsert_club_user(uid, "Alice", "alice")
+        mid = bot.db_create_meeting(
+            bid, "2026-02-15", self.update.effective_user.id, [uid]
+        )
+        q = self._callback_query(f"admin_meeting_view:delete:{mid}")
+        state = await bot.admin_meeting_view_cb(self.update, self.ctx)
+        self.assertEqual(state, bot.ADMIN_MEETINGS_VIEW)
+        body = q.edit_message_text.call_args[0][0]
+        self.assertIn("Delete the meeting", body)
+        q = self._callback_query(f"admin_meeting_view:delete_yes:{mid}")
+        state = await bot.admin_meeting_view_cb(self.update, self.ctx)
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertEqual(bot.db_list_meetings(), [])
 
 
 # ── Voting in a shared group message ──────────────────────────────────────────
@@ -2737,6 +2851,7 @@ class TestConversationWiring(unittest.TestCase):
         conv = self._states("add")
         self.assertIn(bot.ADDING_START, conv.states)
         self.assertIn(bot.ADDING_DRAFT_CHOOSE, conv.states)
+        self.assertIn(bot.ADDING_CONFIRM, conv.states)
         author = conv.states[bot.ADDING_AUTHOR]
         self.assertTrue(
             self._matches(author, "/save", is_command=True),

@@ -28,18 +28,20 @@ from bookclub.config import (
 from bookclub.db import (
     VOTES_USE_ATTENDANCE_KEY,
     book_to_export_payload,
-    db_create_meeting,
+    db_delete_meeting,
     db_get_admin_setting,
     db_get_book,
     db_get_books,
     db_get_books_metadata,
     db_get_meeting,
     db_get_meeting_attendee_rows,
+    db_get_meeting_for_book,
     db_get_users_missing_votes,
     db_get_users_with_setting,
     db_import_book,
     db_list_meetings,
     db_mark_discussed,
+    db_save_meeting,
     db_set_admin_setting,
     db_set_discussed_at,
     db_set_hidden,
@@ -65,6 +67,8 @@ from bookclub.ui import (
     fetch_telegram_user_profile,
     fmt_dt_utc,
     h,
+    meeting_delete_confirm_keyboard,
+    meeting_view_keyboard,
     meetings_keyboard,
     parse_date,
     refresh_missing_club_user_names,
@@ -85,6 +89,89 @@ async def _deny_non_admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         return False
     await update.callback_query.answer(tr(ctx, "admin_only"), show_alert=True)
     return True
+
+
+def _clear_meeting_ctx(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    ctx.user_data.pop("meeting_book_id", None)
+    ctx.user_data.pop("meeting_date", None)
+    ctx.user_data.pop("meeting_attendee_ids", None)
+    ctx.user_data.pop("meeting_id", None)
+    ctx.user_data.pop("meeting_attendee_page", None)
+
+
+def _meeting_detail_text(ctx: ContextTypes.DEFAULT_TYPE, meeting: BookLike) -> str:
+    rows = db_get_meeting_attendee_rows(int(meeting["id"]))
+    lines = []
+    for row in rows:
+        name = format_club_user_display(
+            int(row["user_id"]), row["full_name"], row["username"]
+        )
+        lines.append(tr(ctx, "meeting_attendee_line", name=h(name)))
+    body = "\n".join(lines) if lines else tr(ctx, "meeting_view_empty")
+    return (
+        tr(
+            ctx,
+            "meeting_view_title",
+            title=h(meeting["title"]),
+            date=h(meeting["meeting_date"]),
+            count=len(rows),
+        )
+        + body
+    )
+
+
+async def _show_meetings_picker(query: Any, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    meetings = db_list_meetings()
+    if not meetings:
+        await query.edit_message_text(tr(ctx, "no_meetings"), parse_mode=PM)
+        return ConversationHandler.END
+    await query.edit_message_text(
+        tr(ctx, "choose_meeting_view"),
+        reply_markup=meetings_keyboard(
+            meetings, "admin_meeting_view", tr(ctx, "cancel_btn")
+        ),
+        parse_mode=PM,
+    )
+    return ADMIN_MEETINGS_VIEW
+
+
+async def _show_meeting_detail(
+    query: Any, ctx: ContextTypes.DEFAULT_TYPE, meeting: BookLike
+) -> int:
+    rows = db_get_meeting_attendee_rows(int(meeting["id"]))
+    if await refresh_missing_club_user_names(ctx.bot, rows):
+        meeting = db_get_meeting(int(meeting["id"])) or meeting
+    await query.edit_message_text(
+        _meeting_detail_text(ctx, meeting),
+        parse_mode=PM,
+        reply_markup=meeting_view_keyboard(get_lang(ctx), int(meeting["id"])),
+    )
+    return ADMIN_MEETINGS_VIEW
+
+
+async def _start_meeting_attendee_edit(
+    query: Any, ctx: ContextTypes.DEFAULT_TYPE, book: BookLike
+) -> int:
+    book_id = int(book["id"])
+    existing = db_get_meeting_for_book(book_id)
+    discussed_at = (book["discussed_at"] or "").strip()
+    if existing:
+        ctx.user_data["meeting_id"] = int(existing["id"])
+        ctx.user_data["meeting_attendee_ids"] = {
+            int(r["user_id"]) for r in db_get_meeting_attendee_rows(int(existing["id"]))
+        }
+        ctx.user_data["meeting_date"] = discussed_at or existing["meeting_date"]
+    else:
+        ctx.user_data.pop("meeting_id", None)
+        ctx.user_data["meeting_attendee_ids"] = set()
+        if not discussed_at:
+            await query.edit_message_text(
+                tr(ctx, "meeting_no_discussed_date"), parse_mode=PM
+            )
+            return ConversationHandler.END
+        ctx.user_data["meeting_date"] = discussed_at
+    ctx.user_data["meeting_book_id"] = book_id
+    return await _show_meeting_attendee_picker(query, ctx, page=0, is_callback=True)
 
 
 async def _render_book_picker_page(
@@ -402,18 +489,7 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ADMIN_MEETING_BOOK
     elif data == "meetings_view":
-        meetings = db_list_meetings()
-        if not meetings:
-            await query.edit_message_text(tr(ctx, "no_meetings"), parse_mode=PM)
-            return ConversationHandler.END
-        await query.edit_message_text(
-            tr(ctx, "choose_meeting_view"),
-            reply_markup=meetings_keyboard(
-                meetings, "admin_meeting_view", tr(ctx, "cancel_btn")
-            ),
-            parse_mode=PM,
-        )
-        return ADMIN_MEETINGS_VIEW
+        return await _show_meetings_picker(query, ctx)
     return ConversationHandler.END
 
 
@@ -751,16 +827,7 @@ async def admin_meeting_book_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
             tr(ctx, "no_discussed_for_meeting"), parse_mode=PM
         )
         return ConversationHandler.END
-    ctx.user_data["meeting_book_id"] = book_id
-    ctx.user_data["meeting_attendee_ids"] = set()
-    discussed_at = (book["discussed_at"] or "").strip()
-    if not discussed_at:
-        await query.edit_message_text(
-            tr(ctx, "meeting_no_discussed_date"), parse_mode=PM
-        )
-        return ConversationHandler.END
-    ctx.user_data["meeting_date"] = discussed_at
-    return await _show_meeting_attendee_picker(query, ctx, page=0, is_callback=True)
+    return await _start_meeting_attendee_edit(query, ctx, book)
 
 
 async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -773,9 +840,7 @@ async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "cancel":
-        ctx.user_data.pop("meeting_book_id", None)
-        ctx.user_data.pop("meeting_date", None)
-        ctx.user_data.pop("meeting_attendee_ids", None)
+        _clear_meeting_ctx(ctx)
         await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
 
@@ -809,10 +874,12 @@ async def admin_meeting_att_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         book_id = ctx.user_data.pop("meeting_book_id", None)
         date_str = ctx.user_data.pop("meeting_date", None)
         attendee_ids = list(ctx.user_data.pop("meeting_attendee_ids", set()))
+        ctx.user_data.pop("meeting_id", None)
+        ctx.user_data.pop("meeting_attendee_page", None)
         if book_id is None or date_str is None:
             await query.edit_message_text(s(lang, "cancelled"))
             return ConversationHandler.END
-        db_create_meeting(
+        db_save_meeting(
             book_id,
             date_str,
             query.from_user.id,
@@ -873,38 +940,70 @@ async def admin_meeting_view_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     lang = get_lang(ctx)
-    if await _render_meeting_picker_page(query, ctx, db_list_meetings()):
-        return ADMIN_MEETINGS_VIEW
-    _, meeting_id = query.data.split(":", 1)
-    if meeting_id == "cancel":
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
         await query.edit_message_text(s(lang, "cancelled"))
         return ConversationHandler.END
-    meeting = db_get_meeting(int(meeting_id))
+    if action == "page":
+        if await _render_meeting_picker_page(query, ctx, db_list_meetings()):
+            return ADMIN_MEETINGS_VIEW
+        return ADMIN_MEETINGS_VIEW
+    if action == "list":
+        return await _show_meetings_picker(query, ctx)
+    if action in ("edit", "delete", "delete_yes") and len(parts) > 2:
+        try:
+            meeting_id = int(parts[2])
+        except ValueError:
+            await query.edit_message_text("Error: meeting not found.")
+            return ConversationHandler.END
+        meeting = db_get_meeting(meeting_id)
+        if not meeting:
+            await query.edit_message_text("Error: meeting not found.")
+            return ConversationHandler.END
+        if action == "edit":
+            book = db_get_book(int(meeting["book_id"]))
+            if not book:
+                await query.edit_message_text("Error: meeting not found.")
+                return ConversationHandler.END
+            return await _start_meeting_attendee_edit(query, ctx, book)
+        if action == "delete":
+            await query.edit_message_text(
+                tr(
+                    ctx,
+                    "meeting_delete_confirm",
+                    title=h(meeting["title"]),
+                    date=h(meeting["meeting_date"]),
+                ),
+                parse_mode=PM,
+                reply_markup=meeting_delete_confirm_keyboard(lang, meeting_id),
+            )
+            return ADMIN_MEETINGS_VIEW
+        db_delete_meeting(meeting_id)
+        remaining = db_list_meetings()
+        if not remaining:
+            await query.edit_message_text(tr(ctx, "meeting_deleted"), parse_mode=PM)
+            return ConversationHandler.END
+        await query.edit_message_text(
+            tr(ctx, "meeting_deleted") + "\n\n" + tr(ctx, "choose_meeting_view"),
+            reply_markup=meetings_keyboard(
+                remaining, "admin_meeting_view", tr(ctx, "cancel_btn")
+            ),
+            parse_mode=PM,
+        )
+        return ADMIN_MEETINGS_VIEW
+
+    try:
+        meeting_id = int(action)
+    except ValueError:
+        await query.edit_message_text("Error: meeting not found.")
+        return ConversationHandler.END
+    meeting = db_get_meeting(meeting_id)
     if not meeting:
         await query.edit_message_text("Error: meeting not found.")
         return ConversationHandler.END
-    rows = db_get_meeting_attendee_rows(meeting["id"])
-    if await refresh_missing_club_user_names(ctx.bot, rows):
-        rows = db_get_meeting_attendee_rows(meeting["id"])
-    lines = []
-    for row in rows:
-        name = format_club_user_display(
-            int(row["user_id"]), row["full_name"], row["username"]
-        )
-        lines.append(tr(ctx, "meeting_attendee_line", name=h(name)))
-    body = "\n".join(lines) if lines else tr(ctx, "meeting_view_empty")
-    await query.edit_message_text(
-        tr(
-            ctx,
-            "meeting_view_title",
-            title=h(meeting["title"]),
-            date=h(meeting["meeting_date"]),
-            count=len(rows),
-        )
-        + body,
-        parse_mode=PM,
-    )
-    return ConversationHandler.END
+    return await _show_meeting_detail(query, ctx, meeting)
 
 
 async def admin_hide_pick_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:

@@ -62,6 +62,10 @@ class TestDatabase(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
+    def _add_meeting(self, date, attendees, title=None):
+        book_id = bot.db_add_book(title or f"M-{date}", "A", 10, True, "", "", 1, "u")
+        return book_id, bot.db_create_meeting(book_id, date, 1, attendees)
+
     # -- Schema --
 
     def test_init_db_creates_tables(self):
@@ -327,15 +331,14 @@ class TestDatabase(unittest.TestCase):
     def test_attendance_mode_ignores_votes_when_surplus_below_one(self):
         """Include a voter iff running surplus (visit +1, miss −1, floor 0) is >= 1."""
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
         regular, skipper, half = 11, 22, 33
         bot.db_cast_vote(regular, book_id, 1)
         bot.db_cast_vote(skipper, book_id, 1)
         bot.db_cast_vote(half, book_id, -1)
 
-        bot.db_create_meeting(other, "2026-01-01", 1, [regular, skipper, half])
-        bot.db_create_meeting(other, "2026-01-02", 1, [regular])
-        bot.db_create_meeting(other, "2026-01-03", 1, [regular, skipper])
+        self._add_meeting("2026-01-01", [regular, skipper, half])
+        self._add_meeting("2026-01-02", [regular])
+        self._add_meeting("2026-01-03", [regular, skipper])
         # regular: +1, +1, +1 → 3
         # skipper: +1, −1, +1 → 1 (miss then return)
         # half: +1, −1, −1 → 0
@@ -358,11 +361,10 @@ class TestDatabase(unittest.TestCase):
 
     def test_attendance_mode_excludes_exact_half_attendance(self):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
         voter = 44
         bot.db_cast_vote(voter, book_id, 1)
-        bot.db_create_meeting(other, "2026-01-01", 1, [voter])
-        bot.db_create_meeting(other, "2026-01-02", 1, [])
+        self._add_meeting("2026-01-01", [voter])
+        self._add_meeting("2026-01-02", [])
         self.assertEqual(bot.db_attendance_surplus(voter), 0)
         bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
         book = bot.db_get_book(book_id)
@@ -372,13 +374,12 @@ class TestDatabase(unittest.TestCase):
     def test_attendance_surplus_clamped_so_return_visit_revives_vote(self):
         """Misses cannot drive surplus below 0, so one return visit restores voting."""
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
         returning = 55
         bot.db_cast_vote(returning, book_id, 1)
-        bot.db_create_meeting(other, "2026-01-01", 1, [])
-        bot.db_create_meeting(other, "2026-01-02", 1, [])
-        bot.db_create_meeting(other, "2026-01-03", 1, [])
-        bot.db_create_meeting(other, "2026-01-04", 1, [returning])
+        self._add_meeting("2026-01-01", [])
+        self._add_meeting("2026-01-02", [])
+        self._add_meeting("2026-01-03", [])
+        self._add_meeting("2026-01-04", [returning])
         self.assertEqual(bot.db_attendance_surplus(returning), 1)
 
         bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
@@ -409,12 +410,11 @@ class TestDatabase(unittest.TestCase):
     def test_future_meetings_are_ignored_in_attendance_surplus(self):
         """Discussions dated after today must not affect vote eligibility yet."""
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
         voter = 77
         bot.db_cast_vote(voter, book_id, 1)
         with patch("bookclub.db.club_today_date", return_value="2026-06-01"):
-            bot.db_create_meeting(other, "2026-06-01", 1, [voter])
-            bot.db_create_meeting(other, "2026-06-15", 1, [])  # future miss
+            self._add_meeting("2026-06-01", [voter])
+            self._add_meeting("2026-06-15", [])  # future miss
             self.assertEqual(bot.db_attendance_surplus(voter), 1)
             bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
             book = bot.db_get_book(book_id)
@@ -435,18 +435,85 @@ class TestDatabase(unittest.TestCase):
 
     def test_future_meeting_starts_counting_when_its_date_arrives(self):
         book_id = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
-        other = bot.db_add_book("Other", "A", 10, True, "", "", 1, "u")
         voter = 99
         bot.db_cast_vote(voter, book_id, 1)
         bot.db_set_admin_setting(bot.VOTES_USE_ATTENDANCE_KEY, 1)
         with patch("bookclub.db.club_today_date", return_value="2026-06-01"):
-            bot.db_create_meeting(other, "2026-06-01", 1, [voter])
-            bot.db_create_meeting(other, "2026-06-02", 1, [])
+            self._add_meeting("2026-06-01", [voter])
+            self._add_meeting("2026-06-02", [])
             self.assertEqual(bot.db_attendance_surplus(voter), 1)
             self.assertEqual(bot.db_get_book(book_id)["vote_count"], 1)
         with patch("bookclub.db.club_today_date", return_value="2026-06-02"):
             self.assertEqual(bot.db_attendance_surplus(voter), 0)
             self.assertEqual(bot.db_get_book(book_id)["vote_count"], 0)
+
+    def test_one_meeting_per_book(self):
+        bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_create_meeting(bid, "2026-01-01", 1, [11])
+        with self.assertRaises(sqlite3.IntegrityError):
+            bot.db_create_meeting(bid, "2026-01-02", 1, [12])
+
+    def test_save_meeting_updates_attendees_in_place(self):
+        bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_upsert_club_user(11, "Ann", None)
+        bot.db_upsert_club_user(22, "Bob", None)
+        mid1 = bot.db_save_meeting(bid, "2026-01-01", 1, [11])
+        mid2 = bot.db_save_meeting(bid, "2026-01-02", 1, [11, 22])
+        self.assertEqual(mid1, mid2)
+        self.assertEqual(len(bot.db_list_meetings()), 1)
+        self.assertEqual(bot.db_get_meeting(mid1)["meeting_date"], "2026-01-02")
+        ids = sorted(int(r["user_id"]) for r in bot.db_get_meeting_attendee_rows(mid1))
+        self.assertEqual(ids, [11, 22])
+
+    def test_delete_meeting_removes_attendees_and_rebuilds_surplus(self):
+        uid = 77
+        _bid, mid = self._add_meeting("2026-01-01", [uid])
+        self.assertEqual(bot.db_attendance_surplus(uid), 1)
+        self.assertTrue(bot.db_delete_meeting(mid))
+        self.assertEqual(bot.db_list_meetings(), [])
+        self.assertEqual(bot.db_attendance_surplus(uid), 0)
+
+    def test_init_db_merges_duplicate_meetings_per_book(self):
+        bid = bot.db_add_book("B", "A", 10, True, "", "", 1, "u")
+        bot.db_upsert_club_user(11, "Ann", None)
+        bot.db_upsert_club_user(22, "Bob", None)
+        mid1 = bot.db_create_meeting(bid, "2026-01-01", 1, [11])
+        with sqlite3.connect(bot.DB_PATH) as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_meetings_book_id")
+            cur = conn.execute(
+                "INSERT INTO meetings (book_id, meeting_date, created_at, created_by) "
+                "VALUES (?,?,?,?)",
+                (bid, "2026-01-02", "2026-01-02 00:00:00", 1),
+            )
+            extra = cur.lastrowid
+            conn.execute(
+                "INSERT INTO meeting_attendees (meeting_id, user_id) VALUES (?,?)",
+                (extra, 22),
+            )
+            conn.commit()
+        bot.init_db()
+        meetings = bot.db_list_meetings()
+        self.assertEqual(len(meetings), 1)
+        self.assertEqual(int(meetings[0]["id"]), mid1)
+        ids = sorted(int(r["user_id"]) for r in bot.db_get_meeting_attendee_rows(mid1))
+        self.assertEqual(ids, [11, 22])
+
+    def test_meeting_suggestions_sort_by_attendance_then_shown_name(self):
+        amy, zoe, carol = 101, 102, 103
+        bot.db_upsert_club_user(amy, "Amy A", "amy")
+        bot.db_upsert_club_user(zoe, "Zoe Z", "zoe")
+        bot.db_upsert_club_user(carol, "Carol C", None)
+        self._add_meeting("2026-01-01", [amy, zoe])
+        self._add_meeting("2026-01-02", [zoe])
+        target = bot.db_add_book("Target", "A", 10, True, "", "", 1, "u")
+        bot.db_cast_vote(carol, target, 1)
+        suggestions = bot.db_meeting_user_suggestions(target)
+        ids = [
+            int(r["user_id"])
+            for r in suggestions
+            if int(r["user_id"]) in {amy, zoe, carol}
+        ]
+        self.assertEqual(ids, [zoe, amy, carol])
 
     def test_format_club_user_display_prefers_shown_name_without_nick(self):
         self.assertEqual(
@@ -1343,6 +1410,11 @@ class TestEntryFields(unittest.TestCase):
 
     def test_add_previous_from_draft_choose_is_start(self):
         self.assertEqual(add_previous_state(bot.ADDING_DRAFT_CHOOSE), bot.ADDING_START)
+
+    def test_add_previous_from_confirm_is_last_field(self):
+        self.assertEqual(add_previous_state(bot.ADDING_CONFIRM), bot.ADDING_DESCRIPTION)
+        with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
+            self.assertEqual(add_previous_state(bot.ADDING_CONFIRM), bot.ADDING_TITLE)
 
     def test_entry_field_enabled_title_always(self):
         with patch.object(cfg, "ENTRY_FIELDS", frozenset()):

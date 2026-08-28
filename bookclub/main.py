@@ -19,6 +19,7 @@ from telegram.ext import (
 from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
+    ADDING_CONFIRM,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
     ADDING_DRAFT_CHOOSE,
@@ -55,6 +56,7 @@ from bookclub.db import init_db
 from bookclub.handlers.add import (
     add_ai_cb,
     add_author,
+    add_confirm_cb,
     add_creation_year,
     add_description,
     add_draft_cb,
@@ -208,6 +210,10 @@ def add_flow_states() -> dict[Any, list[Any]]:
         ADDING_DESCRIPTION: [
             CommandHandler("skip", add_description),
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_description),
+            *_ADD_NAV_HANDLERS,
+        ],
+        ADDING_CONFIRM: [
+            CallbackQueryHandler(add_confirm_cb, pattern=r"^add_confirm$"),
             *_ADD_NAV_HANDLERS,
         ],
     }

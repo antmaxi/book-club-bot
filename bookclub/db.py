@@ -153,6 +153,10 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_user_settings_lookup "
             "ON user_settings(setting_key, setting_val, user_id)"
         )
+        _dedupe_meetings_one_per_book(conn)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_book_id ON meetings(book_id)"
+        )
         conn.execute("""
             INSERT OR IGNORE INTO club_users (user_id, full_name, username, last_seen_at)
             SELECT DISTINCT user_id, '', NULL, datetime('now') FROM votes
@@ -176,6 +180,28 @@ def init_db() -> None:
         """)
         conn.commit()
     db_rebuild_attendance_surplus()
+
+
+def _dedupe_meetings_one_per_book(conn: sqlite3.Connection) -> None:
+    """Keep one meeting per book (lowest id); merge attendees from duplicates."""
+    dupes = conn.execute("""SELECT book_id FROM meetings
+           GROUP BY book_id HAVING COUNT(*) > 1""").fetchall()
+    for (book_id,) in dupes:
+        ids = [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT id FROM meetings WHERE book_id=? ORDER BY id ASC",
+                (book_id,),
+            )
+        ]
+        keep, extras = ids[0], ids[1:]
+        for extra in extras:
+            conn.execute(
+                """INSERT OR IGNORE INTO meeting_attendees (meeting_id, user_id)
+                   SELECT ?, user_id FROM meeting_attendees WHERE meeting_id=?""",
+                (keep, extra),
+            )
+            conn.execute("DELETE FROM meetings WHERE id=?", (extra,))
 
 
 ADD_DRAFTS_MAX = 20
@@ -716,18 +742,33 @@ def db_upsert_club_user(
 
 
 def db_meeting_user_suggestions(book_id: int) -> list[sqlite3.Row]:
-    """Users to suggest as attendees: voters on this book first, then other club users."""
+    """Users to suggest as attendees: most meetings first, then shown name."""
     with sqlite3.connect(config.DB_PATH) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        return conn.execute(
+        rows = conn.execute(
             """SELECT cu.user_id, cu.full_name, cu.username,
-                      CASE WHEN v.user_id IS NOT NULL THEN 1 ELSE 0 END AS voted
+                      CASE WHEN v.user_id IS NOT NULL THEN 1 ELSE 0 END AS voted,
+                      COALESCE(ac.attendance_count, 0) AS attendance_count
                FROM club_users cu
                LEFT JOIN votes v ON v.user_id = cu.user_id AND v.book_id = ?
-               ORDER BY voted DESC, cu.full_name COLLATE NOCASE, cu.user_id""",
+               LEFT JOIN (
+                   SELECT user_id, COUNT(*) AS attendance_count
+                   FROM meeting_attendees
+                   GROUP BY user_id
+               ) ac ON ac.user_id = cu.user_id""",
             (book_id,),
         ).fetchall()
+    return sorted(
+        rows,
+        key=lambda r: (
+            -int(r["attendance_count"]),
+            format_club_user_display(
+                int(r["user_id"]), r["full_name"], r["username"]
+            ).casefold(),
+            int(r["user_id"]),
+        ),
+    )
 
 
 def db_create_meeting(
@@ -757,6 +798,69 @@ def db_create_meeting(
         conn.commit()
     db_rebuild_attendance_surplus()
     return meeting_id
+
+
+def db_get_meeting_for_book(book_id: int) -> sqlite3.Row | None:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return cast(
+            sqlite3.Row | None,
+            conn.execute(
+                """SELECT m.*, b.title, b.author
+               FROM meetings m
+               JOIN books b ON b.id = m.book_id
+               WHERE m.book_id = ?""",
+                (book_id,),
+            ).fetchone(),
+        )
+
+
+def db_set_meeting_attendees(meeting_id: int, attendee_ids: Sequence[int]) -> None:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM meeting_attendees WHERE meeting_id=?", (meeting_id,))
+        for uid in attendee_ids:
+            if uid > 0:
+                conn.execute(
+                    "INSERT OR IGNORE INTO meeting_attendees (meeting_id, user_id) VALUES (?,?)",
+                    (meeting_id, uid),
+                )
+        conn.commit()
+    db_rebuild_attendance_surplus()
+
+
+def db_save_meeting(
+    book_id: int,
+    meeting_date: str,
+    created_by: int,
+    attendee_ids: Sequence[int],
+) -> int:
+    """Create the meeting for this book, or replace attendees if one already exists."""
+    existing = db_get_meeting_for_book(book_id)
+    if existing is None:
+        return db_create_meeting(book_id, meeting_date, created_by, attendee_ids)
+    meeting_id = int(existing["id"])
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "UPDATE meetings SET meeting_date=? WHERE id=?",
+            (meeting_date, meeting_id),
+        )
+        conn.commit()
+    db_set_meeting_attendees(meeting_id, attendee_ids)
+    return meeting_id
+
+
+def db_delete_meeting(meeting_id: int) -> bool:
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.execute("DELETE FROM meetings WHERE id=?", (meeting_id,))
+        conn.commit()
+        deleted = cur.rowcount > 0
+    if deleted:
+        db_rebuild_attendance_surplus()
+    return deleted
 
 
 def db_list_meetings() -> list[sqlite3.Row]:

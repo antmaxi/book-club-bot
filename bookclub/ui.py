@@ -128,6 +128,20 @@ def add_ai_choice_keyboard(
     )
 
 
+def add_confirm_keyboard(lang: str, *, show_save: bool = True) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "add_confirm_btn"), callback_data="add_confirm"
+                )
+            ],
+            add_nav_buttons(lang, show_back=True, show_forward=False),
+            *add_wizard_footer(lang, show_save=show_save),
+        ]
+    )
+
+
 def add_start_keyboard(
     lang: str, *, llm: bool, has_drafts: bool
 ) -> InlineKeyboardMarkup:
@@ -578,6 +592,60 @@ def meetings_keyboard(
         [InlineKeyboardButton(cancel_label, callback_data=f"{prefix}:cancel")]
     )
     return InlineKeyboardMarkup(buttons)
+
+
+def meeting_view_keyboard(lang: str, meeting_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "meeting_view_edit_btn"),
+                    callback_data=f"admin_meeting_view:edit:{meeting_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "meeting_view_delete_btn"),
+                    callback_data=f"admin_meeting_view:delete:{meeting_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "meeting_view_back_btn"),
+                    callback_data="admin_meeting_view:list",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "cancel_btn"), callback_data="admin_meeting_view:cancel"
+                )
+            ],
+        ]
+    )
+
+
+def meeting_delete_confirm_keyboard(lang: str, meeting_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    s(lang, "meeting_delete_yes_btn"),
+                    callback_data=f"admin_meeting_view:delete_yes:{meeting_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "meeting_view_back_btn"),
+                    callback_data=f"admin_meeting_view:{meeting_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    s(lang, "cancel_btn"), callback_data="admin_meeting_view:cancel"
+                )
+            ],
+        ]
+    )
 
 
 def _meeting_attendee_ids(ctx: ContextTypes.DEFAULT_TYPE) -> set[int]:

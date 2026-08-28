@@ -11,6 +11,7 @@ from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
     ADDING_CREATION_YEAR,
+    ADDING_DESCRIPTION,
     ADDING_DRAFT_CHOOSE,
     ADDING_FICTION,
     ADDING_LANGUAGE_LEVEL,
@@ -641,7 +642,17 @@ async def complete_new_book(
     return ConversationHandler.END
 
 
+async def add_confirm_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+    return await complete_new_book(update, ctx)
+
+
 async def add_description(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if ctx.user_data is None or "new_book" not in ctx.user_data:
+        return await complete_new_book(update, ctx)
     text = typed_add_text(update, ctx)
     desc = "" if text == "/skip" else text
-    return await complete_new_book(update, ctx, description=desc)
+    ctx.user_data["new_book"]["description"] = desc
+    return await continue_add(update, ctx, ADDING_DESCRIPTION)

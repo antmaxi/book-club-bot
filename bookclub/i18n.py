@@ -306,6 +306,11 @@ T: dict[str, dict[str, TranslationValue]] = {
             "<i>Tap Forward to keep this suggestion, or send a new value to "
             "replace it. Edit puts it in the message field.</i>"
         ),
+        "add_confirm_prompt": (
+            "📋 <b>Review the entry</b> before adding it. Go back to change a "
+            "field, or add it now:"
+        ),
+        "add_confirm_btn": "✅ Add",
         "ask_author": "{subtitle_icon} Who is the <b>{author}</b>?",
         "ask_pages": "📄 How many <b>pages</b> does it have? (enter a number)",
         "invalid_pages": "⚠️ Please enter a valid number of pages (e.g. 320):",
@@ -516,7 +521,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "import_entity_mismatch": "\n\n<i>Note: export was for “{exported}”, this bot uses “{local}”.</i>",
         "admin_meeting_create_btn": "📅 Record meeting attendance",
         "admin_meetings_view_btn": "👥 View meeting attendance",
-        "choose_meeting_book": "📅 Choose the <b>discussed</b> {sg} for this meeting:",
+        "choose_meeting_book": "📅 Choose the <b>discussed</b> {sg} to record or edit attendance:",
         "no_discussed_for_meeting": "📭 No discussed entries yet — mark one as discussed first.",
         "meeting_no_discussed_date": "⚠️ This entry has no discussion date — mark it as discussed with a date first.",
         "meeting_attendees_prompt": (
@@ -531,10 +536,19 @@ T: dict[str, dict[str, TranslationValue]] = {
         "meeting_attendee_added_id": "✅ Added {name}.",
         "meeting_saved": "✅ Meeting saved for <b>{title}</b> on {date} — <b>{count}</b> attendee(s).",
         "no_meetings": "📭 No meetings recorded yet.",
-        "choose_meeting_view": "👥 Choose a meeting to see who attended:",
+        "choose_meeting_view": "👥 Choose a meeting to see who attended (edit or delete):",
         "meeting_view_title": "👥 <b>{title}</b>\n📅 Meeting: {date}\n\n<b>Attendees ({count}):</b>\n",
         "meeting_view_empty": "<i>No attendees recorded.</i>",
         "meeting_attendee_line": "• {name}",
+        "meeting_view_edit_btn": "✏️ Edit attendance",
+        "meeting_view_delete_btn": "🗑 Delete meeting",
+        "meeting_view_back_btn": "◀️ Back to list",
+        "meeting_delete_confirm": (
+            "🗑 Delete the meeting for <b>{title}</b> on {date}?\n"
+            "Attendance for this meeting will be removed."
+        ),
+        "meeting_delete_yes_btn": "✅ Delete meeting",
+        "meeting_deleted": "✅ Meeting deleted.",
         "bot_name": "{bot_name}",
         "card_icon": "{card_icon}",
         "subtitle_icon": "{subtitle_icon}",
@@ -607,6 +621,11 @@ T: dict[str, dict[str, TranslationValue]] = {
             "новое значение, чтобы заменить его. «Изменить» вставит его в поле "
             "ввода.</i>"
         ),
+        "add_confirm_prompt": (
+            "📋 <b>Проверьте запись</b> перед добавлением. Вернитесь назад, "
+            "чтобы изменить поле, или добавьте её:"
+        ),
+        "add_confirm_btn": "✅ Добавить",
         "ask_author": "{subtitle_icon} Кто <b>{author}</b>?",
         "ask_pages": "📄 Сколько <b>страниц</b> в книге? (введите число)",
         "invalid_pages": "⚠️ Введите корректное число страниц (например, 320):",
@@ -817,7 +836,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "import_entity_mismatch": "\n\n<i>Экспорт для «{exported}», этот бот — «{local}».</i>",
         "admin_meeting_create_btn": "📅 Записать посещение встречи",
         "admin_meetings_view_btn": "👥 Кто был на встречах",
-        "choose_meeting_book": "📅 Выберите <b>обсуждённую</b> запись для этой встречи:",
+        "choose_meeting_book": "📅 Выберите <b>обсуждённую</b> запись, чтобы записать или изменить посещаемость:",
         "no_discussed_for_meeting": "📭 Пока нет обсуждённых записей — сначала отметьте обсуждение.",
         "meeting_no_discussed_date": "⚠️ У записи нет даты обсуждения — сначала отметьте обсуждение с датой.",
         "meeting_attendees_prompt": (
@@ -832,10 +851,19 @@ T: dict[str, dict[str, TranslationValue]] = {
         "meeting_attendee_added_id": "✅ Добавлен(а) {name}.",
         "meeting_saved": "✅ Встреча сохранена: <b>{title}</b>, {date} — <b>{count}</b> участник(ов).",
         "no_meetings": "📭 Встречи ещё не записывались.",
-        "choose_meeting_view": "👥 Выберите встречу, чтобы увидеть участников:",
+        "choose_meeting_view": "👥 Выберите встречу, чтобы увидеть участников (изменить или удалить):",
         "meeting_view_title": "👥 <b>{title}</b>\n📅 Встреча: {date}\n\n<b>Участники ({count}):</b>\n",
         "meeting_view_empty": "<i>Участники не указаны.</i>",
         "meeting_attendee_line": "• {name}",
+        "meeting_view_edit_btn": "✏️ Изменить посещаемость",
+        "meeting_view_delete_btn": "🗑 Удалить встречу",
+        "meeting_view_back_btn": "◀️ К списку",
+        "meeting_delete_confirm": (
+            "🗑 Удалить встречу для <b>{title}</b> ({date})?\n"
+            "Запись посещаемости этой встречи будет удалена."
+        ),
+        "meeting_delete_yes_btn": "✅ Удалить встречу",
+        "meeting_deleted": "✅ Встреча удалена.",
         "bot_name": "{bot_name}",
         "card_icon": "{card_icon}",
         "subtitle_icon": "{subtitle_icon}",
@@ -913,6 +941,11 @@ T: dict[str, dict[str, TranslationValue]] = {
             "einen neuen Wert, um ihn zu ersetzen. Bearbeiten legt ihn ins "
             "Eingabefeld.</i>"
         ),
+        "add_confirm_prompt": (
+            "📋 <b>Eintrag prüfen</b>, bevor er hinzugefügt wird. Zurück, um ein "
+            "Feld zu ändern, oder jetzt hinzufügen:"
+        ),
+        "add_confirm_btn": "✅ Hinzufügen",
         "ask_author": "{subtitle_icon} Wer ist der <b>{author}</b>?",
         "ask_pages": "📄 Wie viele <b>Seiten</b> hat es? (Zahl eingeben)",
         "invalid_pages": "⚠️ Bitte eine gültige Seitenzahl eingeben (z. B. 320):",
@@ -1126,7 +1159,7 @@ T: dict[str, dict[str, TranslationValue]] = {
         "import_entity_mismatch": "\n\n<i>Export war für „{exported}“, dieser Bot nutzt „{local}“.</i>",
         "admin_meeting_create_btn": "📅 Anwesenheit bei einem Treffen erfassen",
         "admin_meetings_view_btn": "👥 Treffen-Anwesenheit anzeigen",
-        "choose_meeting_book": "📅 Wähle den <b>diskutierten</b> Eintrag für dieses Treffen:",
+        "choose_meeting_book": "📅 Wähle den <b>diskutierten</b> Eintrag, um Anwesenheit zu erfassen oder zu ändern:",
         "no_discussed_for_meeting": "📭 Noch keine diskutierten Einträge — zuerst als diskutiert markieren.",
         "meeting_no_discussed_date": "⚠️ Dieser Eintrag hat kein Diskussionsdatum — zuerst mit Datum als diskutiert markieren.",
         "meeting_attendees_prompt": (
@@ -1141,10 +1174,19 @@ T: dict[str, dict[str, TranslationValue]] = {
         "meeting_attendee_added_id": "✅ {name} hinzugefügt.",
         "meeting_saved": "✅ Treffen gespeichert: <b>{title}</b>, {date} — <b>{count}</b> Teilnehmer.",
         "no_meetings": "📭 Es wurden noch keine Treffen erfasst.",
-        "choose_meeting_view": "👥 Wähle ein Treffen, um die Teilnehmer zu sehen:",
+        "choose_meeting_view": "👥 Wähle ein Treffen, um die Teilnehmer zu sehen (bearbeiten oder löschen):",
         "meeting_view_title": "👥 <b>{title}</b>\n📅 Treffen: {date}\n\n<b>Teilnehmer ({count}):</b>\n",
         "meeting_view_empty": "<i>Keine Teilnehmer erfasst.</i>",
         "meeting_attendee_line": "• {name}",
+        "meeting_view_edit_btn": "✏️ Anwesenheit bearbeiten",
+        "meeting_view_delete_btn": "🗑 Treffen löschen",
+        "meeting_view_back_btn": "◀️ Zurück zur Liste",
+        "meeting_delete_confirm": (
+            "🗑 Treffen für <b>{title}</b> am {date} löschen?\n"
+            "Die Anwesenheit für dieses Treffen wird entfernt."
+        ),
+        "meeting_delete_yes_btn": "✅ Treffen löschen",
+        "meeting_deleted": "✅ Treffen gelöscht.",
         "bot_name": "{bot_name}",
         "card_icon": "{card_icon}",
         "subtitle_icon": "{subtitle_icon}",

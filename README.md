@@ -33,7 +33,7 @@ How the code is structured: [Architecture](docs/architecture.md).
 ### User Commands
 - `/start` or `/help`: Welcome message and command list.
 - `/info`: About the bot and last update time.
-- `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand. **Save** keeps an unfinished draft; `/add` can continue a saved draft.
+- `/add`: Add a new book to the list. After the title you can fill the other fields with AI help or by hand. Before the book is saved, the bot shows the full entry so you can go back and edit a field. **Save** keeps an unfinished draft; `/add` can continue a saved draft.
 - `/list_and_vote`: See all undiscussed books (option to filter for unvoted only).
 - `/top`: See the highest-rated books.
 - `/settings`: Change your notification and language preferences.
@@ -50,7 +50,7 @@ How the code is structured: [Architecture](docs/architecture.md).
   - **Post reminders to group chat:** Post voting cards to `ALLOWED_CHAT_ID` on demand (Top 5 or one book), independent of the automatic new-book toggle.
   - **Chat Notifications:** Toggle whether newly added books are posted to the group chat automatically (after the usual 5-minute delay).
   - **Vote counting:** Switch between counting **all votes** and counting only votes from members with a positive **attendance surplus**. When attendance mode is on, the `/top` "How a score is calculated" popup includes this rule.
-  - **Meetings:** Record who attended a discussion. Attendance is what the surplus (below) is built from.
+  - **Meetings:** Record who attended a discussion — **one meeting per entry**. Recording again for the same book updates the attendee list (add/remove people) instead of starting over. The meeting list can edit attendance or delete the meeting. Attendance is what the surplus (below) is built from.
   - **Export / import (JSON):** Copy a single book to another bot instance — pick a book under **Export book (JSON)**, copy the message text, then on the target instance use **Import book (JSON)** and paste it in one message. Votes are not transferred; attribution (`added_by_name` / `@username`) is preserved so the original submitter can still edit on the new instance. Works for discussed or hidden books too.
 
 ### Attendance-based vote counting
@@ -64,9 +64,9 @@ Surplus is precomputed at bot start (and whenever a meeting is recorded, or when
 3. Missed that meeting: **−1**, but never below 0.
 4. That person’s votes count only if the final surplus is **at least 1**.
 
-You can record attendance for a scheduled future discussion; it does not affect rankings until that date. Skipping a long stretch of meetings parks the surplus at 0; coming back to one meeting restores it to 1 and voting ability with it. If no past meetings have been recorded yet, all votes still count.
+You can record attendance for a scheduled future discussion; it does not affect rankings until that date. Each discussed entry has at most one meeting: saving again updates who was there. Skipping a long stretch of meetings parks the surplus at 0; coming back to one meeting restores it to 1 and voting ability with it. If no past meetings have been recorded yet, all votes still count.
 
-When recording or viewing attendance, the bot shows each person’s Telegram display name (and `@username` when they have one). Numeric Telegram IDs appear only if the name cannot be resolved.
+When recording or viewing attendance, the bot shows each person’s Telegram display name (and `@username` when they have one), sorted by how many meetings they have attended, then by that shown name. Numeric Telegram IDs appear only if the name cannot be resolved.
 
 ## 🖼 Screenshots
 ![Top](docs/img/screenshots/2026-04-04_screenshot_top.png)
@@ -152,7 +152,7 @@ You can run separate bot instances (different tokens, different `.env` files) fo
 
 After you enter a title (and confirm if a similar title already exists), `/add` asks whether to fill the other enabled `ENTRY_FIELDS` with AI help or by hand — or, if you already have unfinished drafts, `/add` starts with **Use AI**, **I'll fill it in**, and **Continue a saved draft**. The review link is asked next (when enabled), before author, pages, and the rest.
 
-**Use AI** first looks up a real catalog/review URL (Wikipedia, Google Books, or Open Library; LLM guesses are fetched and dropped if the page is not about the title). You confirm or replace that link, then the bot reads the page and fills the other fields — including page count or runtime when the page lists it. It uses an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) for extraction. Tap **Forward** to keep a suggestion or a previously saved answer, or send a new value to replace it. **Edit** puts the current text in the message field so you can change it (then send). **I'll fill it in** is the original manual wizard. Tap **Save** (or `/save`) to keep progress; a later `/add` can resume that draft, including which fields are still AI suggestions (unless you edited them).
+**Use AI** first looks up a real catalog/review URL (Wikipedia, Google Books, or Open Library; LLM guesses are fetched and dropped if the page is not about the title). You confirm or replace that link, then the bot reads the page and fills the other fields — including page count or runtime when the page lists it. It uses an OpenAI-compatible Chat Completions API (`POST {LLM_API_BASE}/chat/completions`) for extraction. Tap **Forward** to keep a suggestion or a previously saved answer, or send a new value to replace it. **Edit** puts the current text in the message field so you can change it (then send). **I'll fill it in** is the original manual wizard. After the last field, the bot shows the full entry so you can go back to change a field or confirm the add. Tap **Save** (or `/save`) to keep progress; a later `/add` can resume that draft, including which fields are still AI suggestions (unless you edited them).
 
 If the bot has **inline mode** enabled in @BotFather (`/setinline`), **Edit** inserts the current value into the compose field. Otherwise it copies the text so you can paste and change it. Values longer than Telegram’s 256-character copy/inline limit open a reply prompt with the text ready to copy.
 

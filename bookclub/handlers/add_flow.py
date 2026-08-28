@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from telegram import (
@@ -15,6 +16,7 @@ from bookclub.cefr import format_language_levels, language_levels_display
 from bookclub.config import (
     ADDING_AI_CHOOSE,
     ADDING_AUTHOR,
+    ADDING_CONFIRM,
     ADDING_CREATION_YEAR,
     ADDING_DESCRIPTION,
     ADDING_DRAFT_CHOOSE,
@@ -33,7 +35,9 @@ from bookclub.db import db_update_add_draft
 from bookclub.i18n import PM, get_lang, s, tr
 from bookclub.original_languages import display_original_language
 from bookclub.ui import (
+    add_confirm_keyboard,
     add_nav_keyboard,
+    book_card,
     cancel_keyboard,
     cefr_levels_keyboard,
     fiction_keyboard,
@@ -101,6 +105,9 @@ def add_previous_state(current: int) -> int | None:
         return ADDING_START
     if current == ADDING_ORIGINAL_LANGUAGE_OTHER:
         return ADDING_ORIGINAL_LANGUAGE
+    if current == ADDING_CONFIRM:
+        enabled = enabled_add_states()
+        return enabled[-1] if enabled else ADDING_TITLE
     enabled = enabled_add_states()
     try:
         idx = enabled.index(current)
@@ -144,12 +151,78 @@ async def continue_add(
         await apply_llm_from_review_page(update, ctx)
     nxt = add_next_state(current)
     if nxt is None:
-        from bookclub.handlers.add import complete_new_book
-
-        return await complete_new_book(update, ctx)
+        return await show_add_confirm(update, ctx, edit=edit)
     if nxt == ADDING_LANGUAGE_LEVEL:
         ctx.user_data.setdefault("new_book", {}).setdefault("language_levels", set())
     return await send_add_prompt(update, ctx, nxt, edit=edit)
+
+
+def draft_book_like(nb: dict, user: Any) -> dict[str, Any]:
+    """Build a book-card mapping from the in-progress /add draft."""
+    levels_set = nb.get("language_levels")
+    if isinstance(levels_set, set):
+        language_levels = format_language_levels(levels_set)
+    elif isinstance(levels_set, str):
+        language_levels = levels_set
+    else:
+        language_levels = None
+    uid = 0
+    name = "unknown"
+    username = None
+    if user is not None:
+        uid = int(getattr(user, "id", 0) or 0)
+        raw_name = getattr(user, "full_name", None)
+        name = raw_name if isinstance(raw_name, str) and raw_name else "unknown"
+        raw_user = getattr(user, "username", None)
+        username = raw_user if isinstance(raw_user, str) and raw_user else None
+    return {
+        "title": nb.get("title") or "",
+        "author": nb.get("author") or "",
+        "pages": nb.get("pages") or 0,
+        "fiction": 1 if nb.get("fiction", True) else 0,
+        "review_link": nb.get("review_link") or "",
+        "description": nb.get("description") or "",
+        "hidden": 0,
+        "discussed": 0,
+        "discussed_at": None,
+        "added_by": uid,
+        "added_by_name": name,
+        "added_by_username": username,
+        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "original_language": nb.get("original_language") or None,
+        "creation_year": nb.get("creation_year"),
+        "language_levels": language_levels,
+        "votes_yes": 0,
+        "votes_meh": 0,
+        "votes_no": 0,
+        "vote_count": 0,
+        "avg_score": 0,
+    }
+
+
+async def show_add_confirm(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> int:
+    nb = ctx.user_data.setdefault("new_book", {})
+    ctx.user_data["add_state"] = ADDING_CONFIRM
+    persist_add_draft_if_saved(update, ctx)
+    lang = get_lang(ctx)
+    preview = book_card(draft_book_like(nb, update.effective_user), lang)
+    text = f"{tr(ctx, 'add_confirm_prompt')}\n\n{preview}"
+    markup = add_confirm_keyboard(lang, show_save=bool(nb.get("title")))
+    query = update.callback_query
+    if edit and query:
+        await query.edit_message_text(text, parse_mode=PM, reply_markup=markup)
+    elif update.message:
+        await update.message.reply_text(text, parse_mode=PM, reply_markup=markup)
+    elif query and query.message:
+        await query.message.reply_text(  # type: ignore[attr-defined]
+            text, parse_mode=PM, reply_markup=markup
+        )
+    return ADDING_CONFIRM
 
 
 def _prompt_key_for_state(state: int) -> str | None:
@@ -297,6 +370,7 @@ def resume_add_state(saved: object) -> int:
         ADDING_ORIGINAL_LANGUAGE_OTHER,
         ADDING_START,
         ADDING_DRAFT_CHOOSE,
+        ADDING_CONFIRM,
     }
     if saved in special:
         if saved in (ADDING_START, ADDING_DRAFT_CHOOSE, ADDING_TITLE_CONFIRM):
@@ -481,6 +555,8 @@ async def send_add_prompt(
     nb = ctx.user_data.setdefault("new_book", {})
     ctx.user_data["add_state"] = state
     persist_add_draft_if_saved(update, ctx)
+    if state == ADDING_CONFIRM:
+        return await show_add_confirm(update, ctx, edit=edit)
     text = build_add_prompt_text(ctx, state, nb)
     markup = markup_for_add(ctx, state, nb)
 
@@ -536,6 +612,12 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if current is None:
         return ADDING_TITLE
     query = update.callback_query
+    if current == ADDING_CONFIRM:
+        if query:
+            await query.answer()
+        from bookclub.handlers.add import complete_new_book
+
+        return await complete_new_book(update, ctx)
     if current == ADDING_AI_CHOOSE:
         if query:
             await query.answer()
@@ -557,9 +639,7 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             return await _nav_alert(update, ctx, "add_forward_at_end", current)
         if query:
             await query.answer()
-        from bookclub.handlers.add import complete_new_book
-
-        return await complete_new_book(update, ctx)
+        return await show_add_confirm(update, ctx, edit=bool(query))
     if query:
         await query.answer()
     return await send_add_prompt(update, ctx, nxt, edit=bool(query))
