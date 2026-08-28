@@ -21,6 +21,8 @@ from bookclub.config import (
     ADDING_START,
     ADDING_TITLE,
     ADDING_TITLE_CONFIRM,
+    ENTRY_FIELDS,
+    entry_field_enabled,
     llm_configured,
 )
 from bookclub.db import (
@@ -48,6 +50,8 @@ from bookclub.llm import (
     llm_error_kind_i18n_key,
     split_llm_error,
     suggest_book_fields,
+    suggest_fields_after_review,
+    suggest_review_link,
     ui_llm_error,
 )
 from bookclub.logging_setup import logger
@@ -83,6 +87,7 @@ def _clear_add_state(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     ctx.user_data.pop("admin_add", None)
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
+    ctx.user_data.pop("llm_extracted_review", None)
     ctx.user_data.pop("add_draft_id", None)
     ctx.user_data.pop("add_from_start", None)
 
@@ -122,6 +127,7 @@ async def add_start_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data.pop("add_draft_id", None)
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
+    ctx.user_data.pop("llm_extracted_review", None)
     ctx.user_data["llm_add"] = action == "ai"
     return await send_add_prompt(update, ctx, ADDING_TITLE, edit=True)
 
@@ -202,6 +208,7 @@ async def add_title(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data.setdefault("new_book", {})["title"] = title
     ctx.user_data.pop("llm_suggestions_applied", None)
     ctx.user_data.pop("llm_filled_keys", None)
+    ctx.user_data.pop("llm_extracted_review", None)
     lang = get_lang(ctx)
     similar = find_similar_book_titles(title)
     if similar:
@@ -271,33 +278,103 @@ async def apply_llm_suggestions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     if user is None:
         return
     title = str(ctx.user_data.get("new_book", {}).get("title") or "")
+    if entry_field_enabled("review"):
+        status_key = "add_ai_suggesting_review"
+    else:
+        status_key = "add_ai_suggesting"
     await _send_add_status(
         update,
-        tr(ctx, "add_ai_suggesting", title=h(title)),
+        tr(ctx, status_key, title=h(title)),
         edit=bool(update.callback_query),
     )
     lang = get_lang(ctx)
+    if entry_field_enabled("review"):
+        url, error = await asyncio.to_thread(suggest_review_link, title, lang=lang)
+        ctx.user_data["llm_suggestions_applied"] = True
+        if not await _report_llm_error(update, ctx, error):
+            return
+        nb = ctx.user_data.setdefault("new_book", {})
+        filled: set[str] = set()
+        if url:
+            filled = apply_suggestions_to_book(nb, {"review_link": url})
+        ctx.user_data["llm_filled_keys"] = filled
+        if filled:
+            await _send_add_status(update, tr(ctx, "add_ai_suggested"))
+        return
     suggestions, error = await asyncio.to_thread(suggest_book_fields, title, lang=lang)
     ctx.user_data["llm_suggestions_applied"] = True
-    if error == "not_configured":
-        await _send_add_status(update, tr(ctx, "add_ai_no_llm"))
-        return
-    if error:
-        kind, detail = split_llm_error(error)
-        kind_label = tr(ctx, llm_error_kind_i18n_key(kind))
-        detail_text = ui_llm_error(detail) or error
-        # Plain text: provider errors often contain <>&{} that break Telegram HTML
-        # and would drop this message, leaving only the generic warning.
-        await _send_add_status(
-            update,
-            tr(ctx, "add_ai_suggest_failed", kind=kind_label, error=detail_text),
-            parse_mode=None,
-        )
+    if not await _report_llm_error(update, ctx, error):
         return
     nb = ctx.user_data.setdefault("new_book", {})
     ctx.user_data["llm_filled_keys"] = apply_suggestions_to_book(nb, suggestions)
     if ctx.user_data["llm_filled_keys"]:
         await _send_add_status(update, tr(ctx, "add_ai_suggested"))
+
+
+async def apply_llm_from_review_page(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not ctx.user_data.get("llm_add"):
+        return
+    nb = ctx.user_data.setdefault("new_book", {})
+    url = str(nb.get("review_link") or "").strip()
+    if not url:
+        return
+    if ctx.user_data.get("llm_extracted_review") == url:
+        return
+    remaining = frozenset(
+        name for name in ENTRY_FIELDS if name != "review" and entry_field_enabled(name)
+    )
+    if not remaining:
+        ctx.user_data["llm_extracted_review"] = url
+        return
+    title = str(nb.get("title") or "")
+    await _send_add_status(
+        update,
+        tr(ctx, "add_ai_reading_review", title=h(title)),
+        edit=bool(update.callback_query),
+    )
+    lang = get_lang(ctx)
+    suggestions, error = await asyncio.to_thread(
+        suggest_fields_after_review,
+        title,
+        url,
+        lang=lang,
+        enabled_fields=remaining,
+    )
+    if not await _report_llm_error(update, ctx, error):
+        ctx.user_data["llm_extracted_review"] = url
+        return
+    already = ctx.user_data.get("llm_filled_keys")
+    filled_now = already if isinstance(already, set) else set()
+    preserve = {key for key in nb if key not in filled_now and key != "title"}
+    newly = apply_suggestions_to_book(nb, suggestions, preserve=preserve)
+    ctx.user_data["llm_filled_keys"] = (filled_now | newly) - preserve
+    ctx.user_data["llm_extracted_review"] = url
+    if newly:
+        await _send_add_status(update, tr(ctx, "add_ai_suggested"))
+
+
+async def _report_llm_error(
+    update: Update, ctx: ContextTypes.DEFAULT_TYPE, error: str | None
+) -> bool:
+    """Show a provider error and return False; True means keep going."""
+    if not error:
+        return True
+    if error == "not_configured":
+        await _send_add_status(update, tr(ctx, "add_ai_no_llm"))
+        return False
+    kind, detail = split_llm_error(error)
+    kind_label = tr(ctx, llm_error_kind_i18n_key(kind))
+    detail_text = ui_llm_error(detail) or error
+    # Plain text: provider errors often contain <>&{} that break Telegram HTML
+    # and would drop this message, leaving only the generic warning.
+    await _send_add_status(
+        update,
+        tr(ctx, "add_ai_suggest_failed", kind=kind_label, error=detail_text),
+        parse_mode=None,
+    )
+    return False
 
 
 async def ask_add_ai(

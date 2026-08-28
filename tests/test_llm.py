@@ -273,6 +273,58 @@ class TestSuggestBookFields(unittest.TestCase):
         self.assertIn("page count", messages[0]["content"])
 
 
+class TestSuggestReviewLink(unittest.TestCase):
+    def test_prefers_catalog_without_calling_llm(self):
+        wiki = "https://en.wikipedia.org/wiki/War_and_Peace"
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch("bookclub.llm.pick_catalog_review_url", return_value=wiki),
+            patch.object(llm, "chat_completion") as mocked,
+        ):
+            url, error = llm.suggest_review_link("War and Peace", lang="en")
+        self.assertEqual(url, wiki)
+        self.assertIsNone(error)
+        mocked.assert_not_called()
+
+    def test_drops_unverified_llm_url(self):
+        fake = "https://www.goodreads.com/book/show/999.War_and_Peace"
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch("bookclub.llm.pick_catalog_review_url", return_value=None),
+            patch.object(
+                llm, "chat_completion", return_value=json.dumps({"review_link": fake})
+            ),
+            patch(
+                "bookclub.llm.first_verified_review_url", return_value=None
+            ) as verify,
+        ):
+            url, error = llm.suggest_review_link("War and Peace", lang="en")
+        self.assertIsNone(url)
+        self.assertIsNone(error)
+        verify.assert_called_once()
+        self.assertEqual(verify.call_args[0][0], [fake])
+
+    def test_from_page_prompt_copies_count_from_excerpt(self):
+        with (
+            patch.object(cfg, "LLM_API_KEY", "sk-test"),
+            patch.object(llm, "chat_completion", return_value="{}") as mocked,
+        ):
+            llm.suggest_book_fields_from_page(
+                "War and Peace",
+                "Leo Tolstoy. 1225 pages.",
+                "https://en.wikipedia.org/wiki/War_and_Peace",
+                lang="en",
+                entity="book",
+                enabled_fields=frozenset({"pages", "author"}),
+            )
+        messages = mocked.call_args[0][0]
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("1225 pages", user)
+        self.assertIn("do not guess", system.casefold())
+        self.assertIn("page count", user)
+
+
 class TestChatCompletion(unittest.TestCase):
     def _response(self, payload: dict) -> MagicMock:
         resp = MagicMock()
@@ -388,6 +440,15 @@ class TestApplySuggestions(unittest.TestCase):
         self.assertEqual(nb["author"], "A")
         self.assertEqual(nb["title"], "T")
         self.assertEqual(filled, {"author", "pages"})
+
+    def test_preserve_skips_user_edited_keys(self):
+        nb = {"title": "T", "author": "Mine"}
+        filled = llm.apply_suggestions_to_book(
+            nb, {"author": "Leo", "pages": 10}, preserve={"author"}
+        )
+        self.assertEqual(nb["author"], "Mine")
+        self.assertEqual(nb["pages"], 10)
+        self.assertEqual(filled, {"pages"})
 
 
 class TestResolveLlmSettings(unittest.TestCase):

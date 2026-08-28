@@ -51,6 +51,7 @@ flowchart TB
     DOMAIN["domain<br/>can_modify, is_admin"]
     NOTIFY["notifications<br/>delayed new-book jobs"]
     LLM["llm<br/>field suggestions"]
+    REVIEW["review_page<br/>catalog URL + fetch"]
     CEFR["cefr"]
     LANGS["original_languages"]
   end
@@ -72,6 +73,7 @@ flowchart TB
   HANDLERS --> NOTIFY
   HANDLERS --> LLM
   HANDLERS --> DB
+  LLM --> REVIEW
   MEMBER --> DB
   LIFE --> NOTIFY
   UI --> I18N
@@ -99,6 +101,7 @@ flowchart TB
 | `bookclub/db.py` | SQLite access, ranking scores, attendance surplus cache. |
 | `bookclub/notifications.py` | 5-minute delayed new-book DMs and optional group posts. |
 | `bookclub/llm.py` | OpenAI-compatible Chat Completions for `/add` field guesses. |
+| `bookclub/review_page.py` | Catalog URL lookup and fetch/verify of review pages during `/add`. |
 | `bookclub/config.py` | Env (`BOT_TOKEN`, `ADMIN_IDS`, `ENTRY_FIELDS`, …) and conversation-state ints. |
 | `bookclub/logging_setup.py` | Rotating file log; coalesced ERROR alerts to the main admin. |
 
@@ -210,7 +213,7 @@ Notes:
 
 ## Notable flows
 
-**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → remaining `ENTRY_FIELDS`. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
+**`/add`:** optional start (AI vs manual vs continue a saved draft) → title → optional similar-title confirm → review link (when enabled) → remaining `ENTRY_FIELDS`. Unfinished adds can be saved to SQLite (`add_drafts`) and resumed later; AI-suggested fields stay marked unless the user edited them. AI looks up a real catalog URL (Wikipedia / Google Books / Open Library, then a fetched LLM candidate) and, after the user confirms it, reads the other fields — including page count / runtime — from that page. AI uses `bookclub.llm` only when an API key is configured. Text fields with a saved or suggested value include an **Edit** button; sending a new value replaces it. After insert, `notifications.schedule_new_book_notifications` writes `notify_after` and queues a JobQueue task (recovered on restart).
 
 **Voting:** inline buttons on cards (`vote_cast:`). Works in DM and in the group chat; the message is edited so everyone sees the new tally.
 

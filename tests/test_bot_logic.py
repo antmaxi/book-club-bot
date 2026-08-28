@@ -1333,6 +1333,11 @@ class TestEntryFields(unittest.TestCase):
         with patch.object(cfg, "ENTRY_FIELDS", frozenset()):
             self.assertIsNone(add_next_state(bot.ADDING_TITLE))
 
+    def test_add_next_review_comes_after_title(self):
+        self.assertEqual(add_next_state(bot.ADDING_TITLE), bot.ADDING_REVIEW)
+        self.assertEqual(add_next_state(bot.ADDING_REVIEW), bot.ADDING_AUTHOR)
+        self.assertEqual(add_previous_state(bot.ADDING_AUTHOR), bot.ADDING_REVIEW)
+
     def test_add_previous_from_ai_choose_is_title(self):
         self.assertEqual(add_previous_state(bot.ADDING_AI_CHOOSE), bot.ADDING_TITLE)
 

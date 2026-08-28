@@ -56,10 +56,10 @@ _PRIVATE_INLINE_CHATS = frozenset({None, "sender", "private"})
 
 _ADD_STEP_ORDER = (
     ADDING_TITLE,
+    ADDING_REVIEW,
     ADDING_AUTHOR,
     ADDING_PAGES,
     ADDING_FICTION,
-    ADDING_REVIEW,
     ADDING_ORIGINAL_LANGUAGE,
     ADDING_CREATION_YEAR,
     ADDING_LANGUAGE_LEVEL,
@@ -138,6 +138,10 @@ async def continue_add(
     edit: bool = False,
 ) -> int:
     note_user_edit(ctx, current)
+    if current == ADDING_REVIEW:
+        from bookclub.handlers.add import apply_llm_from_review_page
+
+        await apply_llm_from_review_page(update, ctx)
     nxt = add_next_state(current)
     if nxt is None:
         from bookclub.handlers.add import complete_new_book
@@ -242,6 +246,7 @@ def serialize_add_draft(ctx: ContextTypes.DEFAULT_TYPE) -> dict[str, Any]:
         "admin_add": ctx.user_data.get("admin_add"),
         "llm_suggestions_applied": ctx.user_data.get("llm_suggestions_applied"),
         "llm_filled_keys": sorted(filled) if isinstance(filled, set) else [],
+        "llm_extracted_review": ctx.user_data.get("llm_extracted_review"),
         "add_from_start": bool(ctx.user_data.get("add_from_start")),
     }
 
@@ -264,6 +269,9 @@ def apply_add_draft(
     )
     ctx.user_data["add_draft_id"] = draft_id
     ctx.user_data["add_from_start"] = True
+    extracted = payload.get("llm_extracted_review")
+    if extracted:
+        ctx.user_data["llm_extracted_review"] = extracted
 
 
 def persist_add_draft_if_saved(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -539,6 +547,10 @@ async def add_go_forward(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if not add_field_is_set(nb, current):
         return await _nav_alert(update, ctx, "add_forward_need_value", current)
+    if current == ADDING_REVIEW:
+        from bookclub.handlers.add import apply_llm_from_review_page
+
+        await apply_llm_from_review_page(update, ctx)
     nxt = add_next_state(current)
     if nxt is None:
         if current == ADDING_DESCRIPTION and not add_field_is_set(nb, current):

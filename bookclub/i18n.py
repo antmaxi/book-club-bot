@@ -479,6 +479,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_export_btn": "📤 Export {sg} (JSON)",
         "admin_import_btn": "📥 Import {sg} (JSON)",
         "add_ai_suggesting": "⏳ Looking up details for <b>{title}</b>…",
+        "add_ai_suggesting_review": ("⏳ Looking up a review page for <b>{title}</b>…"),
+        "add_ai_reading_review": (
+            "⏳ Reading the review page to fill in the other fields…"
+        ),
         "add_ai_suggested": (
             "✅ Suggestions ready. Review each field — tap Forward to keep it, "
             "or Edit to change it."
@@ -776,6 +780,10 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_export_btn": "📤 Экспорт {gen_sg} (JSON)",
         "admin_import_btn": "📥 Импорт {gen_sg} (JSON)",
         "add_ai_suggesting": "⏳ Ищу данные для <b>{title}</b>…",
+        "add_ai_suggesting_review": "⏳ Ищу страницу рецензии для <b>{title}</b>…",
+        "add_ai_reading_review": (
+            "⏳ Читаю страницу рецензии, чтобы заполнить остальные поля…"
+        ),
         "add_ai_suggested": (
             "✅ Подсказки готовы. Проверьте каждое поле — «Вперёд», чтобы оставить, "
             "или «Изменить», чтобы поправить."
@@ -1078,6 +1086,12 @@ T: dict[str, dict[str, TranslationValue]] = {
         "admin_export_btn": "📤 {sg} exportieren (JSON)",
         "admin_import_btn": "📥 {sg} importieren (JSON)",
         "add_ai_suggesting": "⏳ Suche Angaben zu <b>{title}</b>…",
+        "add_ai_suggesting_review": (
+            "⏳ Suche eine Rezensionsseite zu <b>{title}</b>…"
+        ),
+        "add_ai_reading_review": (
+            "⏳ Lese die Rezensionsseite, um die übrigen Felder zu füllen…"
+        ),
         "add_ai_suggested": (
             "✅ Vorschläge bereit. Prüfe jedes Feld — Weiter zum Behalten "
             "oder Bearbeiten zum Ändern."

@@ -18,6 +18,11 @@ from bookclub.original_languages import (
     STORED_ORIGINAL_LANGUAGE,
     original_language_code_for_stored,
 )
+from bookclub.review_page import (
+    fetch_review_text,
+    first_verified_review_url,
+    pick_catalog_review_url,
+)
 from bookclub.ui import is_valid_url
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -106,6 +111,111 @@ def suggest_book_fields(
     try:
         content = chat_completion(
             _suggestion_messages(title, lang=lang, entity=club_entity, wanted=wanted)
+        )
+        raw = extract_json_object(content)
+        return normalize_suggestions(raw, enabled=frozenset(wanted)), None
+    except LlmRequestError as e:
+        _log_suggestion_failure(e.kind, title, e.detail)
+        return {}, str(e)
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        _log_suggestion_failure("unusable_json", title, str(e))
+        return {}, f"unusable_json: {e}"
+
+
+def suggest_review_link(
+    title: str,
+    *,
+    lang: str,
+    entity: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Return (verified catalog URL or None, error or None).
+
+    Prefers live catalog search (Wikipedia / Google Books / Open Library)
+    over model-invented IDs. LLM candidates are fetched and dropped when
+    the page text is not about ``title``.
+    """
+    club_entity = entity or CLUB_ENTITY
+    catalog = pick_catalog_review_url(title, lang=lang, entity=club_entity)
+    if catalog:
+        return catalog, None
+    if not config.llm_configured():
+        return None, "not_configured"
+    try:
+        content = chat_completion(
+            _review_link_messages(title, lang=lang, entity=club_entity)
+        )
+        raw = extract_json_object(content)
+        candidates = _review_link_candidates(raw)
+    except LlmRequestError as e:
+        _log_suggestion_failure(e.kind, title, e.detail)
+        return None, str(e)
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        _log_suggestion_failure("unusable_json", title, str(e))
+        return None, f"unusable_json: {e}"
+    verified = first_verified_review_url(candidates, title)
+    return verified, None
+
+
+def suggest_fields_after_review(
+    title: str,
+    review_url: str,
+    *,
+    lang: str,
+    entity: str | None = None,
+    enabled_fields: frozenset[str] | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """Fill remaining /add fields from the confirmed review page when possible."""
+    enabled = enabled_fields if enabled_fields is not None else ENTRY_FIELDS
+    wanted = [
+        name for name in OPTIONAL_ENTRY_FIELDS if name in enabled and name != "review"
+    ]
+    if not wanted:
+        return {}, None
+    club_entity = entity or CLUB_ENTITY
+    fetched = fetch_review_text(review_url)
+    if fetched is not None:
+        _final, page_text = fetched
+        return suggest_book_fields_from_page(
+            title,
+            page_text,
+            review_url,
+            lang=lang,
+            entity=club_entity,
+            enabled_fields=frozenset(wanted),
+        )
+    return suggest_book_fields(
+        title, lang=lang, entity=club_entity, enabled_fields=frozenset(wanted)
+    )
+
+
+def suggest_book_fields_from_page(
+    title: str,
+    page_text: str,
+    review_url: str,
+    *,
+    lang: str,
+    entity: str | None = None,
+    enabled_fields: frozenset[str] | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    if not config.llm_configured():
+        return {}, "not_configured"
+    enabled = enabled_fields if enabled_fields is not None else ENTRY_FIELDS
+    wanted = [
+        name for name in OPTIONAL_ENTRY_FIELDS if name in enabled and name != "review"
+    ]
+    if not wanted:
+        return {}, None
+    club_entity = entity or CLUB_ENTITY
+    try:
+        content = chat_completion(
+            _page_suggestion_messages(
+                title,
+                page_text,
+                review_url,
+                lang=lang,
+                entity=club_entity,
+                wanted=wanted,
+            )
         )
         raw = extract_json_object(content)
         return normalize_suggestions(raw, enabled=frozenset(wanted)), None
@@ -322,6 +432,9 @@ def normalize_suggestions(
             out["fiction"] = fiction
     if "review" in enabled:
         link = raw.get("review_link") or raw.get("review") or raw.get("url")
+        if not isinstance(link, str):
+            links = _review_link_candidates(raw)
+            link = links[0] if links else None
         if isinstance(link, str) and is_valid_url(link.strip()):
             out["review_link"] = link.strip()
     if "original_language" in enabled:
@@ -395,11 +508,21 @@ def normalize_original_language(raw: str) -> str:
 
 
 def apply_suggestions_to_book(
-    nb: dict[str, Any], suggestions: dict[str, Any]
+    nb: dict[str, Any],
+    suggestions: dict[str, Any],
+    *,
+    preserve: set[str] | None = None,
 ) -> set[str]:
-    """Copy suggestion keys into the in-progress book; return keys that were set."""
+    """Copy suggestion keys into the in-progress book; return keys that were set.
+
+    Keys in ``preserve`` that already have a value in ``nb`` are left unchanged
+    (used so a later review-page pass does not overwrite a user edit).
+    """
     filled: set[str] = set()
+    keep = preserve or set()
     for key, value in suggestions.items():
+        if key in keep and key in nb:
+            continue
         nb[key] = value
         filled.add(key)
     return filled
@@ -420,8 +543,10 @@ def _suggestion_messages(
             ),
             "fiction": "true for a feature film, false for a documentary",
             "review": (
-                "review_link: a real http(s) URL of a catalog or review page "
-                "(IMDb, Kinopoisk, or Letterboxd), or omit if unsure"
+                "review_link: omit unless you can give a URL you are sure exists. "
+                "Prefer a Wikipedia article for this title. Never invent catalog "
+                "IDs (IMDb, Kinopoisk, or Letterboxd). A plausible slug is not "
+                "enough — omit if you cannot verify the page"
             ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
@@ -442,8 +567,10 @@ def _suggestion_messages(
             ),
             "fiction": "true for fiction, false for non-fiction",
             "review": (
-                "review_link: a real http(s) URL of a catalog or review page "
-                "(Goodreads or LitRes), or omit if unsure"
+                "review_link: omit unless you can give a URL you are sure exists. "
+                "Prefer a Wikipedia article for this title. Never invent catalog "
+                "IDs (Goodreads, LitRes numeric paths). A plausible slug is not "
+                "enough — omit if you cannot verify the page"
             ),
             "original_language": (
                 "original_language: English name such as English, Russian, German, "
@@ -492,6 +619,135 @@ def _suggestion_messages(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def _field_help(lang: str, entity: str) -> dict[str, str]:
+    desc_lang = _DESC_LANG.get(lang, "English")
+    if entity == "film":
+        return {
+            "author": "director (full name)",
+            "pages": (
+                "runtime in minutes (integer); copy the number printed on the "
+                "given catalog/review page (IMDb, Kinopoisk, or Letterboxd usually "
+                "mention it), and omit if that page does not list it"
+            ),
+            "fiction": "true for a feature film, false for a documentary",
+            "original_language": (
+                "original_language: English name such as English, Russian, German, "
+                "French, Spanish, Italian, Chinese, Japanese, or another language name"
+            ),
+            "creation_year": "creation_year: 4-digit release year",
+            "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
+            "description": f"description: 2–4 sentences in {desc_lang}",
+        }
+    return {
+        "author": "author (full name)",
+        "pages": (
+            "page count (integer); copy the number printed on the given "
+            "catalog/review page (Goodreads or LitRes usually mention it), "
+            "and omit if that page does not list it"
+        ),
+        "fiction": "true for fiction, false for non-fiction",
+        "original_language": (
+            "original_language: English name such as English, Russian, German, "
+            "French, Spanish, Italian, Chinese, Japanese, or another language name"
+        ),
+        "creation_year": "creation_year: 4-digit publication year",
+        "language_levels": "language_levels: JSON array of CEFR codes from A1–C2",
+        "description": f"description: 2–4 sentences in {desc_lang}",
+    }
+
+
+def _review_link_messages(
+    title: str, *, lang: str, entity: str
+) -> list[dict[str, str]]:
+    if entity == "film":
+        kind = "film"
+        catalogs = "Wikipedia, IMDb, Kinopoisk, or Letterboxd"
+        invented = "IMDb, Kinopoisk, or Letterboxd numeric IDs"
+    else:
+        kind = "book"
+        catalogs = "Wikipedia, Goodreads, or LitRes"
+        invented = "Goodreads or LitRes numeric IDs"
+    system = (
+        "You suggest catalog URLs only when you are sure the page exists and is "
+        "about this title. Reply with a single JSON object and no other text. "
+        "Never invent catalog IDs. A relevant slug is not enough. Prefer Wikipedia. "
+        "Omit the field if unsure."
+    )
+    user = (
+        f"Suggest a catalog or review page for this {kind} titled {title!r}.\n"
+        f"Preferred sites: {catalogs}.\n"
+        "JSON keys:\n"
+        "- review_links: JSON array of up to 3 http(s) URLs, best first; or\n"
+        "- review_link: a single http(s) URL\n"
+        f"Do not invent {invented}. Do not include the title."
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def _page_suggestion_messages(
+    title: str,
+    page_text: str,
+    review_url: str,
+    *,
+    lang: str,
+    entity: str,
+    wanted: list[str],
+) -> list[dict[str, str]]:
+    kind = "film" if entity == "film" else "book"
+    field_help = _field_help(lang, entity)
+    lines = [field_help[name] for name in wanted if name in field_help]
+    if entity == "film":
+        copy_hint = "Copy runtime from this page text when it lists it; do not guess."
+    else:
+        copy_hint = (
+            "Copy page count from this page text when it lists it; do not guess."
+        )
+    excerpt = page_text.strip()
+    if len(excerpt) > 12_000:
+        excerpt = excerpt[:12_000]
+    system = (
+        "You extract bibliographic facts from the supplied catalog/review page. "
+        "Reply with a single JSON object and no other text. "
+        "Omit a field when the page does not support it. "
+        "Do not invent review URLs or numeric IDs. " + copy_hint
+    )
+    user = (
+        f"Extract metadata for this {kind} titled {title!r}.\n"
+        f"Confirmed review_link: {review_url}\n"
+        "JSON keys and meaning:\n- "
+        + "\n- ".join(lines)
+        + "\nDo not include the title or review_link.\n"
+        "Page text:\n"
+        f"{excerpt}"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def _review_link_candidates(raw: dict[str, Any]) -> list[str]:
+    values: list[Any] = []
+    links = raw.get("review_links")
+    if isinstance(links, list):
+        values.extend(links)
+    for key in ("review_link", "review", "url"):
+        values.append(raw.get(key))
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        url = value.strip()
+        if url and url not in seen and is_valid_url(url):
+            seen.add(url)
+            out.append(url)
+    return out
 
 
 def _message_content(parsed: Any) -> str:
