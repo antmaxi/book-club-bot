@@ -72,6 +72,7 @@ from bookclub.ui import (
     meetings_keyboard,
     parse_date,
     refresh_missing_club_user_names,
+    send_compact_book_list,
     show_notify_books_picker,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
@@ -451,7 +452,14 @@ async def admin_menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     elif data == "toggle_votes":
         current = db_get_admin_setting(VOTES_USE_ATTENDANCE_KEY, 0)
         db_set_admin_setting(VOTES_USE_ATTENDANCE_KEY, 1 - current)
-        return await cmd_admin_console(update, ctx)
+        state = await cmd_admin_console(update, ctx)
+        await send_compact_book_list(
+            ctx.bot,
+            update.effective_chat.id,
+            db_get_books(discussed=False),
+            ctx,
+        )
+        return state
     elif data == "export":
         all_books = db_get_books_metadata(discussed=False, include_hidden=True) + list(
             db_get_books_metadata(discussed=True, include_hidden=True)

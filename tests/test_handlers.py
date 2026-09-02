@@ -2243,6 +2243,51 @@ class TestAdminConsole(BotHandlerTestCase):
         await bot.admin_menu_cb(self.update, self.ctx)
         self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 0)
 
+    async def test_admin_toggle_votes_sends_compact_list_to_admin_chat(self):
+        alpha_id = bot.db_add_book(
+            "Alpha", "Author A", 100, True, "", "", 1, "u", creation_year=2001
+        )
+        bot.db_add_book("Beta", "Author B", 100, True, "", "", 1, "u")
+        bot.db_cast_vote(1001, alpha_id, 1)
+        bot.db_cast_vote(1002, alpha_id, 1)
+
+        self._callback_query("admin:toggle_votes")
+        await bot.admin_menu_cb(self.update, self.ctx)
+
+        self.ctx.bot.send_message.assert_called_once()
+        kwargs = self.ctx.bot.send_message.call_args[1]
+        self.assertEqual(kwargs["chat_id"], self.update.effective_chat.id)
+        text = kwargs["text"]
+        self.assertIn("Alpha", text)
+        self.assertIn("Author A", text)
+        self.assertIn("(2001)", text)
+        self.assertIn("Beta", text)
+        self.assertIn("<b>2</b> <b>Alpha</b>", text)
+        self.assertIn("<b>0</b> <b>Beta</b>", text)
+
+    async def test_admin_toggle_votes_compact_list_uses_new_counting_mode(self):
+        book_id = self._add_book("Alpha")
+        regular, skipper = 11, 22
+        bot.db_cast_vote(regular, book_id, 1)
+        bot.db_cast_vote(skipper, book_id, 1)
+        discussed_id = self._add_book("Discussed")
+        bot.db_mark_discussed(discussed_id, "2026-01-01")
+        bot.db_create_meeting(discussed_id, "2026-01-01", 1, [regular])
+
+        self._callback_query("admin:toggle_votes")
+        await bot.admin_menu_cb(self.update, self.ctx)
+
+        text = self.ctx.bot.send_message.call_args[1]["text"]
+        self.assertEqual(bot.db_get_admin_setting("votes_use_attendance"), 1)
+        self.assertIn("<b>1</b> <b>Alpha</b>", text)
+        self.assertNotIn("<b>2</b> <b>Alpha</b>", text)
+        self.assertNotIn("Discussed", text)
+
+    async def test_admin_toggle_votes_skips_compact_list_when_no_books(self):
+        self._callback_query("admin:toggle_votes")
+        await bot.admin_menu_cb(self.update, self.ctx)
+        self.ctx.bot.send_message.assert_not_called()
+
     async def test_notify_new_book_job_posts_to_chat_when_enabled(self):
         bid = self._add_book("Chatty Book")
         cfg.ALLOWED_CHAT_ID = -100123

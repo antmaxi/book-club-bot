@@ -1132,6 +1132,16 @@ class TestUtils(unittest.TestCase):
         self.assertIn("X &amp; Y", line)
         self.assertNotIn("<B>", line)
 
+    def test_compact_book_list_lines_matches_list_header_and_rows(self):
+        books = [
+            make_book(title="Dune", author="Herbert", avg_score=2, creation_year=1965),
+            make_book(title="Beta", author="Anon", avg_score=0),
+        ]
+        lines = bot.compact_book_list_lines(books, "en")
+        self.assertEqual(lines[0], bot.tr("en", "list_compact_title", count=2))
+        self.assertEqual(lines[1], bot.book_compact_line(1, books[0]))
+        self.assertEqual(lines[2], bot.book_compact_line(2, books[1]))
+
     # -- book_card --
 
     def test_book_card_contains_title_and_author(self):
