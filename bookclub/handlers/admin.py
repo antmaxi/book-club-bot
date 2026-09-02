@@ -72,8 +72,8 @@ from bookclub.ui import (
     meetings_keyboard,
     parse_date,
     refresh_missing_club_user_names,
-    show_notify_books_picker,
     send_compact_book_list,
+    show_notify_books_picker,
     similar_title_confirm_keyboard,
     similar_title_warning_matches_text,
 )
