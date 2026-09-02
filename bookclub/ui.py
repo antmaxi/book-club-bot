@@ -370,6 +370,14 @@ def book_compact_line(index: int, book: BookLike) -> str:
     )
 
 
+def compact_book_list_lines(
+    books: Sequence[BookLike], ctx_or_lang: ContextTypes.DEFAULT_TYPE | str
+) -> list[str]:
+    """Header + compact lines, matching /list_and_vote compact format."""
+    header = tr(ctx_or_lang, "list_compact_title", count=len(books))
+    return [header] + [book_compact_line(i, book) for i, book in enumerate(books, 1)]
+
+
 TELEGRAM_MESSAGE_MAX = 4000
 
 
@@ -397,6 +405,20 @@ async def send_chunked_html_messages(
             chunk = candidate
     if chunk:
         await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=PM)
+
+
+async def send_compact_book_list(
+    bot: Bot,
+    chat_id: int,
+    books: Sequence[BookLike],
+    ctx_or_lang: ContextTypes.DEFAULT_TYPE | str,
+) -> None:
+    """Send the compact ranking list to chat_id (no-op if books is empty)."""
+    if not books:
+        return
+    await send_chunked_html_messages(
+        bot, chat_id, compact_book_list_lines(books, ctx_or_lang), joiner="\n"
+    )
 
 
 def _parse_list_callback(data: str) -> tuple[str, str | None]:

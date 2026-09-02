@@ -41,13 +41,12 @@ from bookclub.ui import (
     _parse_list_callback,
     _show_list_format_prompt,
     book_card,
-    book_compact_line,
     books_top_n,
     fmt_dt_utc,
     h,
     score_display,
     score_keyboard,
-    send_chunked_html_messages,
+    send_compact_book_list,
 )
 
 
@@ -441,11 +440,7 @@ async def list_choice_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         except Exception as e:
             if "Message to delete not found" not in str(e):
                 raise
-        header = tr(ctx, "list_compact_title", count=len(books))
-        lines = [header] + [
-            book_compact_line(i, book) for i, book in enumerate(books, 1)
-        ]
-        await send_chunked_html_messages(ctx.bot, chat_id, lines, joiner="\n")
+        await send_compact_book_list(ctx.bot, chat_id, books, ctx)
         return
 
     first = books[0]
